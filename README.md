@@ -15,6 +15,8 @@ GCW-Synapse is a Shopify analytics relay service that replaces Elevar by forward
 
 - GET /health
 - GET /diagnostics
+- GET /compatibility/ga4-id
+- GET /compatibility/currency-code
 - POST /webhooks/shopify/orders/create
 - POST /webhooks/shopify/orders/paid
 
@@ -78,6 +80,29 @@ If INGRESS_SHARED_TOKEN is set, requests to /diagnostics and /event must include
 - Value: the same token configured in INGRESS_SHARED_TOKEN
 
 This token does not replace Shopify HMAC validation for webhook routes.
+
+## GA4 Compatibility Variable
+
+GCW-Synapse now includes the first compatibility-variable implementation for `GA4 ID`.
+
+- `GA4_MEASUREMENT_ID` sets the default GA4 Measurement ID.
+- `GA4_MEASUREMENT_ID_BY_SHOP` optionally overrides the value per Shopify shop domain.
+- `GET /compatibility/ga4-id?shop=store.myshopify.com` returns the resolved value.
+
+## Currency Compatibility Variable
+
+GCW-Synapse now includes compatibility logic for `dlv - Global - Currency Code`.
+
+- `SHOP_DEFAULT_CURRENCY` sets the final fallback currency.
+- `GET /compatibility/currency-code` resolves using fallback order:
+	- `ecommerce_currency`
+	- `checkout_currency`
+	- `shop_currency`
+	- `SHOP_DEFAULT_CURRENCY`
+
+Example:
+
+`/compatibility/currency-code?ecommerce_currency=usd&checkout_currency=cad&shop_currency=eur`
 
 ## Local Signed Replay
 

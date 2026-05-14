@@ -2,6 +2,8 @@ import express from "express";
 import { env } from "./config/env";
 import { createIngressTokenMiddleware } from "./lib/ingressAuth";
 import { webhooksRouter } from "./routes/webhooks";
+import { resolveCurrencyCode } from "./services/currencyCode";
+import { resolveGa4MeasurementId } from "./services/ga4Measurement";
 import { getMetricsSnapshot } from "./services/metrics";
 
 const app = express();
@@ -16,6 +18,54 @@ app.get("/diagnostics", requireIngressToken, (_req, res) => {
     ok: true,
     service: "gcw-synapse",
     metrics: getMetricsSnapshot()
+  });
+});
+
+app.get("/compatibility/ga4-id", requireIngressToken, (req, res) => {
+  const shop = typeof req.query.shop === "string" ? req.query.shop : undefined;
+  const measurementId = resolveGa4MeasurementId(shop, env.GA4_MEASUREMENT_ID, env.GA4_MEASUREMENT_ID_BY_SHOP);
+
+  if (!measurementId) {
+    res.status(404).json({
+      ok: false,
+      error: "GA4 measurement ID is not configured",
+      shop
+    });
+    return;
+  }
+
+  res.status(200).json({
+    ok: true,
+    variable: "GA4 ID",
+    shop,
+    measurement_id: measurementId
+  });
+});
+
+app.get("/compatibility/currency-code", requireIngressToken, (req, res) => {
+  const ecommerceCurrency = typeof req.query.ecommerce_currency === "string" ? req.query.ecommerce_currency : undefined;
+  const checkoutCurrencyCode = typeof req.query.checkout_currency === "string" ? req.query.checkout_currency : undefined;
+  const shopCurrency = typeof req.query.shop_currency === "string" ? req.query.shop_currency : undefined;
+
+  const currency = resolveCurrencyCode(
+    {
+      ecommerceCurrency,
+      checkoutCurrencyCode,
+      shopCurrency
+    },
+    env.SHOP_DEFAULT_CURRENCY
+  );
+
+  res.status(200).json({
+    ok: true,
+    variable: "dlv - Global - Currency Code",
+    resolved_currency: currency,
+    sources: {
+      ecommerce_currency: ecommerceCurrency,
+      checkout_currency: checkoutCurrencyCode,
+      shop_currency: shopCurrency,
+      fallback_currency: env.SHOP_DEFAULT_CURRENCY
+    }
   });
 });
 

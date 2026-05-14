@@ -1,16 +1,24 @@
 import type { ShopifyOrder, SynapseEventPayload } from "../types/shopify";
+import { resolveCurrencyCode } from "./currencyCode";
 
 function toNumber(value: string | undefined): number {
   const parsed = Number.parseFloat(value ?? "0");
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-export function mapOrderToPurchase(order: ShopifyOrder): SynapseEventPayload {
+export function mapOrderToPurchase(order: ShopifyOrder, defaultCurrency = "USD"): SynapseEventPayload {
+  const currency = resolveCurrencyCode(
+    {
+      ecommerceCurrency: order.currency
+    },
+    defaultCurrency
+  );
+
   return {
     client_id: order.customer?.id?.toString() ?? "guest",
     user_id: order.customer?.email ?? order.email,
     event_name: "purchase",
-    currency: order.currency,
+    currency,
     value: toNumber(order.total_price),
     tax: toNumber(order.total_tax),
     shipping: toNumber(order.total_shipping_price_set?.shop_money?.amount),

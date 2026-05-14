@@ -41,3 +41,14 @@ test("mapOrderToPurchase maps core purchase fields", () => {
   assert.equal(payload.items[0]?.quantity, 2);
   assert.equal(payload.user_data.address.country, "US");
 });
+
+test("mapOrderToPurchase normalizes currency code", () => {
+  const payload = mapOrderToPurchase({
+    order_number: 999,
+    currency: "usd",
+    total_price: "10.00",
+    line_items: []
+  });
+
+  assert.equal(payload.currency, "USD");
+});

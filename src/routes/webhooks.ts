@@ -71,7 +71,7 @@ function createOrderWebhookHandler(expectedTopic: string) {
   }
 
   try {
-    const payload = mapOrderToPurchase(order);
+    const payload = mapOrderToPurchase(order, env.SHOP_DEFAULT_CURRENCY);
     await forwardToGtmServer(payload);
     idempotencyStore.markProcessed(idempotencyKey);
     incrementCounter("webhooks_forwarded");
