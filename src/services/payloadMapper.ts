@@ -6,7 +6,11 @@ function toNumber(value: string | undefined): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-export function mapOrderToPurchase(order: ShopifyOrder, defaultCurrency = "USD"): SynapseEventPayload {
+export function mapOrderToPurchase(
+  order: ShopifyOrder,
+  defaultCurrency = "USD",
+  eventId?: string
+): SynapseEventPayload {
   const currency = resolveCurrencyCode(
     {
       ecommerceCurrency: order.currency
@@ -17,6 +21,7 @@ export function mapOrderToPurchase(order: ShopifyOrder, defaultCurrency = "USD")
   return {
     client_id: order.customer?.id?.toString() ?? "guest",
     user_id: order.customer?.email ?? order.email,
+    event_id: eventId,
     event_name: "purchase",
     currency,
     value: toNumber(order.total_price),

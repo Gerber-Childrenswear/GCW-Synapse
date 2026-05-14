@@ -52,3 +52,18 @@ test("mapOrderToPurchase normalizes currency code", () => {
 
   assert.equal(payload.currency, "USD");
 });
+
+test("mapOrderToPurchase includes event_id when provided", () => {
+  const payload = mapOrderToPurchase(
+    {
+      order_number: 999,
+      currency: "USD",
+      total_price: "10.00",
+      line_items: []
+    },
+    "USD",
+    "evt-12345"
+  );
+
+  assert.equal(payload.event_id, "evt-12345");
+});

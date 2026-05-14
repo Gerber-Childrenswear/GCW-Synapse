@@ -41,6 +41,7 @@ export type ShopifyOrder = {
 export type SynapseEventPayload = {
   client_id: string;
   user_id?: string | undefined;
+  event_id?: string | undefined;
   event_name: "purchase";
   currency: string;
   value: number;

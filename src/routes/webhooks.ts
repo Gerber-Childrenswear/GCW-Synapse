@@ -5,6 +5,7 @@ import { IdempotencyStore } from "../lib/idempotency";
 import { logError, logInfo, logWarn } from "../lib/logger";
 import { verifyShopifyWebhookHmac } from "../lib/shopifyHmac";
 import { isTopicAccepted, parseAllowedTopics } from "../lib/topicGuard";
+import { resolveEventId } from "../services/eventId";
 import { forwardToGtmServer } from "../services/gtmForwarder";
 import { incrementCounter } from "../services/metrics";
 import { mapOrderToPurchase } from "../services/payloadMapper";
@@ -31,6 +32,7 @@ function createOrderWebhookHandler(expectedTopic: string) {
   const hmacHeader = req.get("X-Shopify-Hmac-Sha256");
   const topic = req.get("X-Shopify-Topic") ?? "unknown-topic";
   const shop = req.get("X-Shopify-Shop-Domain") ?? "unknown-shop";
+  const webhookId = req.get("X-Shopify-Webhook-Id") ?? undefined;
 
   incrementCounter("webhooks_received");
 
@@ -71,7 +73,15 @@ function createOrderWebhookHandler(expectedTopic: string) {
   }
 
   try {
-    const payload = mapOrderToPurchase(order, env.SHOP_DEFAULT_CURRENCY);
+    const eventId = resolveEventId({
+      webhookId,
+      shop,
+      topic,
+      orderNumber: order.order_number,
+      orderName: order.name
+    });
+
+    const payload = mapOrderToPurchase(order, env.SHOP_DEFAULT_CURRENCY, eventId);
     await forwardToGtmServer(payload);
     idempotencyStore.markProcessed(idempotencyKey);
     incrementCounter("webhooks_forwarded");
@@ -80,6 +90,7 @@ function createOrderWebhookHandler(expectedTopic: string) {
       topic,
       shop,
       idempotency_key: idempotencyKey,
+      event_id: payload.event_id,
       transaction_id: payload.transaction_id,
       value: payload.value,
       currency: payload.currency

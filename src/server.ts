@@ -3,6 +3,7 @@ import { env } from "./config/env";
 import { createIngressTokenMiddleware } from "./lib/ingressAuth";
 import { webhooksRouter } from "./routes/webhooks";
 import { resolveCurrencyCode } from "./services/currencyCode";
+import { resolveEventId } from "./services/eventId";
 import { resolveGa4MeasurementId } from "./services/ga4Measurement";
 import { getMetricsSnapshot } from "./services/metrics";
 
@@ -65,6 +66,37 @@ app.get("/compatibility/currency-code", requireIngressToken, (req, res) => {
       checkout_currency: checkoutCurrencyCode,
       shop_currency: shopCurrency,
       fallback_currency: env.SHOP_DEFAULT_CURRENCY
+    }
+  });
+});
+
+app.get("/compatibility/event-id", requireIngressToken, (req, res) => {
+  const webhookId = typeof req.query.webhook_id === "string" ? req.query.webhook_id : undefined;
+  const shop = typeof req.query.shop === "string" ? req.query.shop : undefined;
+  const topic = typeof req.query.topic === "string" ? req.query.topic : undefined;
+  const orderName = typeof req.query.order_name === "string" ? req.query.order_name : undefined;
+  const orderNumberRaw = typeof req.query.order_number === "string" ? req.query.order_number : undefined;
+  const parsedOrderNumber = orderNumberRaw ? Number.parseInt(orderNumberRaw, 10) : undefined;
+  const orderNumber = Number.isFinite(parsedOrderNumber) ? parsedOrderNumber : undefined;
+
+  const eventId = resolveEventId({
+    webhookId,
+    shop,
+    topic,
+    orderNumber,
+    orderName
+  });
+
+  res.status(200).json({
+    ok: true,
+    variable: "dlv - event_id",
+    resolved_event_id: eventId,
+    sources: {
+      webhook_id: webhookId,
+      shop,
+      topic,
+      order_number: orderNumber,
+      order_name: orderName
     }
   });
 });

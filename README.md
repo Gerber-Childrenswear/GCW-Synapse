@@ -17,6 +17,7 @@ GCW-Synapse is a Shopify analytics relay service that replaces Elevar by forward
 - GET /diagnostics
 - GET /compatibility/ga4-id
 - GET /compatibility/currency-code
+- GET /compatibility/event-id
 - POST /webhooks/shopify/orders/create
 - POST /webhooks/shopify/orders/paid
 
@@ -103,6 +104,18 @@ GCW-Synapse now includes compatibility logic for `dlv - Global - Currency Code`.
 Example:
 
 `/compatibility/currency-code?ecommerce_currency=usd&checkout_currency=cad&shop_currency=eur`
+
+## Event ID Compatibility Variable
+
+GCW-Synapse now includes compatibility logic for `dlv - event_id`.
+
+- `GET /compatibility/event-id` resolves using fallback order:
+	- `webhook_id`
+	- deterministic hash from `shop|topic|order_number|order_name`
+
+Example:
+
+`/compatibility/event-id?webhook_id=abc123&shop=store.myshopify.com&topic=orders/create&order_number=1001&order_name=%231001`
 
 ## Local Signed Replay
 
