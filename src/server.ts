@@ -7,6 +7,7 @@ import { resolveCurrencyCode } from "./services/currencyCode";
 import { resolveEventId } from "./services/eventId";
 import { resolveGa4MeasurementId } from "./services/ga4Measurement";
 import { getMetricsSnapshot } from "./services/metrics";
+import { resolveOrderId } from "./services/orderId";
 import { resolveProductIdentifier } from "./services/productIdentifier";
 import { resolvePurchaseProducts } from "./services/purchaseProducts";
 
@@ -227,6 +228,45 @@ app.get("/compatibility/product-identifier", requireIngressToken, (req, res) => 
       variant_id: variantId,
       product_id: productId
     }
+  });
+});
+
+app.get("/compatibility/order-id", requireIngressToken, (req, res) => {
+  const orderNumber = typeof req.query.order_number === "string" ? req.query.order_number : undefined;
+  const orderName = typeof req.query.order_name === "string" ? req.query.order_name : undefined;
+  const transactionId = typeof req.query.transaction_id === "string" ? req.query.transaction_id : undefined;
+
+  const resolvedOrderId = resolveOrderId({
+    orderNumber,
+    orderName,
+    transactionId
+  });
+
+  res.status(200).json({
+    ok: true,
+    variable: "dlv - Thank You Page - Order ID",
+    resolved_order_id: resolvedOrderId,
+    sources: {
+      order_number: orderNumber,
+      order_name: orderName,
+      transaction_id: transactionId
+    }
+  });
+});
+
+app.get("/compatibility/pinterest-id", requireIngressToken, (_req, res) => {
+  if (!env.PINTEREST_ID) {
+    res.status(404).json({
+      ok: false,
+      error: "Pinterest ID is not configured"
+    });
+    return;
+  }
+
+  res.status(200).json({
+    ok: true,
+    variable: "Pinterest ID",
+    pinterest_id: env.PINTEREST_ID
   });
 });
 

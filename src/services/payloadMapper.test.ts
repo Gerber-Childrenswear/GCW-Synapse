@@ -90,3 +90,14 @@ test("mapOrderToPurchase resolves customer identity with fallback", () => {
   assert.equal(payload.user_id, "checkout@example.com");
   assert.equal(payload.user_data.email_address, "checkout@example.com");
 });
+
+test("mapOrderToPurchase falls back to order name for transaction_id", () => {
+  const payload = mapOrderToPurchase({
+    name: "#A1001",
+    currency: "USD",
+    total_price: "25.00",
+    line_items: []
+  });
+
+  assert.equal(payload.transaction_id, "#A1001");
+});

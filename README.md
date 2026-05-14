@@ -23,6 +23,8 @@ GCW-Synapse is a Shopify analytics relay service that replaces Elevar by forward
 - GET /compatibility/purchase-products
 - GET /compatibility/facebook-pixel-id
 - GET /compatibility/product-identifier
+- GET /compatibility/order-id
+- GET /compatibility/pinterest-id
 - POST /webhooks/shopify/orders/create
 - POST /webhooks/shopify/orders/paid
 
@@ -167,6 +169,23 @@ Examples:
 `/compatibility/facebook-pixel-id`
 
 `/compatibility/product-identifier?sku=SKU-123&variant_id=456&product_id=789`
+
+## Order And Pinterest Compatibility
+
+GCW-Synapse now includes compatibility logic for `dlv - Thank You Page - Order ID` and `Pinterest ID`.
+
+- `GET /compatibility/order-id` resolves order id using:
+	- `order_number`
+	- `transaction_id`
+	- `order_name`
+- `PINTEREST_ID` stores the active Pinterest ID.
+- `GET /compatibility/pinterest-id` returns the configured ID.
+
+Examples:
+
+`/compatibility/order-id?order_number=12345&order_name=%2312345`
+
+`/compatibility/pinterest-id`
 
 ## Local Signed Replay
 
