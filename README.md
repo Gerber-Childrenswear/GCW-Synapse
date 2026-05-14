@@ -25,6 +25,9 @@ GCW-Synapse is a Shopify analytics relay service that replaces Elevar by forward
 - GET /compatibility/product-identifier
 - GET /compatibility/order-id
 - GET /compatibility/pinterest-id
+- GET /compatibility/cart-total
+- GET /compatibility/checkout-products
+- GET /compatibility/search-term
 - POST /webhooks/shopify/orders/create
 - POST /webhooks/shopify/orders/paid
 
@@ -186,6 +189,25 @@ Examples:
 `/compatibility/order-id?order_number=12345&order_name=%2312345`
 
 `/compatibility/pinterest-id`
+
+## Cart And Search Compatibility
+
+GCW-Synapse now includes compatibility logic for `dlv - Cart Total`, `dlv - ecommerce.checkout.products`, and `url - Search - Search Term`.
+
+- `GET /compatibility/cart-total` resolves cart total using:
+	- `ecommerce_value`
+	- `checkout_total_price`
+	- `subtotal_price`
+- `GET /compatibility/checkout-products` accepts `line_items_json` and returns canonical checkout item array.
+- `GET /compatibility/search-term` accepts `url` and resolves search term from common query keys (`q`, `query`, `search`, `term`).
+
+Examples:
+
+`/compatibility/cart-total?ecommerce_value=99.95&checkout_total_price=109.95`
+
+`/compatibility/checkout-products?line_items_json=%5B%7B%22sku%22%3A%22SKU-123%22%2C%22title%22%3A%22Footie%22%2C%22price%22%3A%2225.00%22%2C%22quantity%22%3A1%7D%5D`
+
+`/compatibility/search-term?url=https%3A%2F%2Fwww.gerberchildrenswear.com%2Fsearch%3Fq%3Dfootie`
 
 ## Local Signed Replay
 

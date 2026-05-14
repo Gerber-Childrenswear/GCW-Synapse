@@ -2,6 +2,8 @@ import express from "express";
 import { env } from "./config/env";
 import { createIngressTokenMiddleware } from "./lib/ingressAuth";
 import { webhooksRouter } from "./routes/webhooks";
+import { resolveCartTotal } from "./services/cartTotal";
+import { resolveCheckoutProducts } from "./services/checkoutProducts";
 import { resolveCustomerEmail, resolveCustomerId } from "./services/customerIdentity";
 import { resolveCurrencyCode } from "./services/currencyCode";
 import { resolveEventId } from "./services/eventId";
@@ -10,6 +12,7 @@ import { getMetricsSnapshot } from "./services/metrics";
 import { resolveOrderId } from "./services/orderId";
 import { resolveProductIdentifier } from "./services/productIdentifier";
 import { resolvePurchaseProducts } from "./services/purchaseProducts";
+import { resolveSearchTerm } from "./services/searchTerm";
 
 const app = express();
 const requireIngressToken = createIngressTokenMiddleware(env.INGRESS_SHARED_TOKEN);
@@ -268,6 +271,104 @@ app.get("/compatibility/pinterest-id", requireIngressToken, (_req, res) => {
     variable: "Pinterest ID",
     pinterest_id: env.PINTEREST_ID
   });
+});
+
+app.get("/compatibility/cart-total", requireIngressToken, (req, res) => {
+  const ecommerceValue = typeof req.query.ecommerce_value === "string" ? req.query.ecommerce_value : undefined;
+  const checkoutTotalPrice = typeof req.query.checkout_total_price === "string" ? req.query.checkout_total_price : undefined;
+  const subtotalPrice = typeof req.query.subtotal_price === "string" ? req.query.subtotal_price : undefined;
+
+  const resolvedCartTotal = resolveCartTotal({
+    ecommerceValue,
+    checkoutTotalPrice,
+    subtotalPrice
+  });
+
+  res.status(200).json({
+    ok: true,
+    variable: "dlv - Cart Total",
+    resolved_cart_total: resolvedCartTotal,
+    sources: {
+      ecommerce_value: ecommerceValue,
+      checkout_total_price: checkoutTotalPrice,
+      subtotal_price: subtotalPrice
+    }
+  });
+});
+
+app.get("/compatibility/checkout-products", requireIngressToken, (req, res) => {
+  const lineItemsRaw = typeof req.query.line_items_json === "string" ? req.query.line_items_json : "[]";
+
+  let lineItems: Array<{
+    sku?: string;
+    product_id?: number;
+    variant_id?: number;
+    variant_title?: string;
+    product_type?: string;
+    title: string;
+    price: string;
+    quantity: number;
+  }> = [];
+
+  try {
+    const parsed = JSON.parse(lineItemsRaw) as unknown;
+    if (Array.isArray(parsed)) {
+      lineItems = parsed as Array<{
+        sku?: string;
+        product_id?: number;
+        variant_id?: number;
+        variant_title?: string;
+        product_type?: string;
+        title: string;
+        price: string;
+        quantity: number;
+      }>;
+    }
+  } catch {
+    res.status(400).json({
+      ok: false,
+      error: "Invalid line_items_json query value"
+    });
+    return;
+  }
+
+  const products = resolveCheckoutProducts(lineItems);
+
+  res.status(200).json({
+    ok: true,
+    variable: "dlv - ecommerce.checkout.products",
+    resolved_checkout_products: products,
+    count: products.length
+  });
+});
+
+app.get("/compatibility/search-term", requireIngressToken, (req, res) => {
+  const url = typeof req.query.url === "string" ? req.query.url : undefined;
+
+  if (!url) {
+    res.status(400).json({
+      ok: false,
+      error: "Query parameter 'url' is required"
+    });
+    return;
+  }
+
+  try {
+    const parsed = new URL(url);
+    const term = resolveSearchTerm(parsed.searchParams);
+
+    res.status(200).json({
+      ok: true,
+      variable: "url - Search - Search Term",
+      resolved_search_term: term,
+      source_url: url
+    });
+  } catch {
+    res.status(400).json({
+      ok: false,
+      error: "Invalid url query value"
+    });
+  }
 });
 
 app.use(express.json());
