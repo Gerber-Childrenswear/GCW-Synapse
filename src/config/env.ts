@@ -24,7 +24,9 @@ const envSchema = z.object({
   GA4_MEASUREMENT_ID_BY_SHOP: z.string().optional(),
   SHADOW_COMPARE_MAX_RECORDS: z.coerce.number().int().positive().default(5000),
   SHADOW_COMPARE_MISMATCH_ALERT_PCT: z.coerce.number().min(0).max(100).default(5),
-  SHADOW_COMPARE_STORE_PATH: z.string().optional()
+  SHADOW_COMPARE_STORE_PATH: z.string().optional(),
+  CHANNEL_HEALTH_STALE_MINUTES: z.coerce.number().int().positive().default(90),
+  CHANNEL_HEALTH_WARN_FAILURE_PCT: z.coerce.number().min(0).max(100).default(5)
 });
 
 const parsed = envSchema.safeParse(process.env);

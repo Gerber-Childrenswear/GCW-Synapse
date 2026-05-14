@@ -4,6 +4,13 @@ import { createIngressTokenMiddleware } from "./lib/ingressAuth";
 import { webhooksRouter } from "./routes/webhooks";
 import { resolveCartTotal } from "./services/cartTotal";
 import {
+  getChannelHealthSummary,
+  getChannelHelpLinks,
+  getChannelTroubleshooting,
+  getRecentChannelEvents,
+  ingestChannelEvent
+} from "./services/channelHealth";
+import {
   resolveAddToCartCompatibility,
   resolveEcommerceImpressions,
   resolveProductViewDetailsArray
@@ -532,6 +539,104 @@ app.get("/compare/parity", requireIngressToken, (_req, res) => {
     parity,
     counts: summary.counts,
     mismatches_preview: summary.mismatches_preview
+  });
+});
+
+app.post("/compare/channel-event", requireIngressToken, (req, res) => {
+  const body = req.body as {
+    channel?: string;
+    surface?: "pixel" | "server";
+    destination?: string;
+    pixel_id?: string;
+    event_name?: string;
+    transaction_id?: string;
+    status?: "ok" | "error";
+    error_message?: string;
+    observed_at?: string;
+  };
+
+  if (
+    !body.channel ||
+    (body.surface !== "pixel" && body.surface !== "server") ||
+    !body.destination ||
+    !body.event_name ||
+    (body.status !== "ok" && body.status !== "error")
+  ) {
+    res.status(400).json({
+      ok: false,
+      error: "channel, surface, destination, event_name, and status are required"
+    });
+    return;
+  }
+
+  const item = ingestChannelEvent({
+    channel: body.channel,
+    surface: body.surface,
+    destination: body.destination,
+    pixel_id: body.pixel_id,
+    event_name: body.event_name,
+    transaction_id: body.transaction_id,
+    status: body.status,
+    error_message: body.error_message,
+    observed_at: body.observed_at
+  });
+
+  incrementCounter("compare_channel_events_received");
+
+  res.status(202).json({
+    ok: true,
+    status: "channel_event_recorded",
+    item
+  });
+});
+
+app.get("/compare/channels", requireIngressToken, (_req, res) => {
+  const summary = getChannelHealthSummary(env.CHANNEL_HEALTH_STALE_MINUTES, env.CHANNEL_HEALTH_WARN_FAILURE_PCT);
+
+  res.status(200).json({
+    ok: true,
+    runtime_mode: env.RUNTIME_MODE,
+    summary
+  });
+});
+
+app.get("/compare/troubleshoot", requireIngressToken, (_req, res) => {
+  const summary = getChannelHealthSummary(env.CHANNEL_HEALTH_STALE_MINUTES, env.CHANNEL_HEALTH_WARN_FAILURE_PCT);
+  const issues = getChannelTroubleshooting(summary);
+
+  res.status(200).json({
+    ok: true,
+    issues,
+    links: getChannelHelpLinks()
+  });
+});
+
+app.get("/compare/ui-model", requireIngressToken, (req, res) => {
+  const limitRaw = typeof req.query.limit === "string" ? req.query.limit : "100";
+  const parsedLimit = Number.parseInt(limitRaw, 10);
+  const limit = Number.isFinite(parsedLimit) ? parsedLimit : 100;
+
+  const paritySummary = getShadowCompareSummary();
+  const parity = getShadowParityReport(env.SHADOW_COMPARE_MISMATCH_ALERT_PCT);
+  const channelSummary = getChannelHealthSummary(env.CHANNEL_HEALTH_STALE_MINUTES, env.CHANNEL_HEALTH_WARN_FAILURE_PCT);
+  const issues = getChannelTroubleshooting(channelSummary);
+
+  res.status(200).json({
+    ok: true,
+    source_of_truth: "elevar",
+    runtime_mode: env.RUNTIME_MODE,
+    parity,
+    parity_counts: paritySummary.counts,
+    parity_mismatches_preview: paritySummary.mismatches_preview,
+    channels: channelSummary,
+    troubleshooting: {
+      issues,
+      links: getChannelHelpLinks()
+    },
+    recent: {
+      shadow_events: getRecentShadowEvents(limit),
+      channel_events: getRecentChannelEvents(limit)
+    }
   });
 });
 

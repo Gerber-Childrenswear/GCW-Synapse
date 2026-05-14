@@ -8,6 +8,7 @@ type CounterKey =
   | "webhooks_forward_failed"
   | "webhooks_shadow_captured"
   | "compare_elevar_received"
+  | "compare_channel_events_received"
   | "ingress_token_rejected";
 
 type MetricsState = Record<CounterKey, number>;
@@ -24,6 +25,7 @@ const counters: MetricsState = {
   webhooks_forward_failed: 0,
   webhooks_shadow_captured: 0,
   compare_elevar_received: 0,
+  compare_channel_events_received: 0,
   ingress_token_rejected: 0
 };
 

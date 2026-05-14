@@ -35,8 +35,12 @@ GCW-Synapse is a Shopify analytics relay service that replaces Elevar by forward
 - GET /compatibility/add-to-cart
 - GET /compatibility/product-view-details
 - POST /compare/elevar
+- POST /compare/channel-event
 - GET /compare/summary
 - GET /compare/parity
+- GET /compare/channels
+- GET /compare/troubleshoot
+- GET /compare/ui-model
 - GET /compare/recent
 - POST /webhooks/shopify/orders/create
 - POST /webhooks/shopify/orders/paid
@@ -133,6 +137,25 @@ Optional persistence:
 Alert rule:
 
 - `GET /compare/parity` returns `status: alert` when `mismatch_rate_pct > SHADOW_COMPARE_MISMATCH_ALERT_PCT`.
+
+## Troubleshooting API For UI
+
+To support richer troubleshooting UI (Lovable or custom), use these endpoints:
+
+- `POST /compare/channel-event`
+	- Ingest per-destination telemetry from pixel/server checks.
+	- Required fields: `channel`, `surface` (`pixel|server`), `destination`, `event_name`, `status` (`ok|error`).
+- `GET /compare/channels`
+	- Returns per-channel/per-pixel health with status, failure rate, and freshness.
+- `GET /compare/troubleshoot`
+	- Returns issue list with recommendations and platform doc links.
+- `GET /compare/ui-model`
+	- Consolidated payload combining parity, channels, troubleshooting, and recent events for dashboard rendering.
+
+Channel health tuning:
+
+- `CHANNEL_HEALTH_STALE_MINUTES` marks integrations stale after inactivity.
+- `CHANNEL_HEALTH_WARN_FAILURE_PCT` marks warning/critical by failure rate.
 
 ## GA4 Compatibility Variable
 
