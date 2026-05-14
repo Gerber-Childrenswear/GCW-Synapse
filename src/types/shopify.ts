@@ -10,6 +10,9 @@ export type ShopifyAddress = {
 export type ShopifyLineItem = {
   sku?: string;
   product_id?: number;
+  variant_id?: number;
+  variant_title?: string;
+  product_type?: string;
   title: string;
   price: string;
   quantity: number;
@@ -51,8 +54,12 @@ export type SynapseEventPayload = {
   items: Array<{
     item_id?: string | undefined;
     item_name: string;
+    item_variant?: string | undefined;
+    item_category?: string | undefined;
     price: number;
     quantity: number;
+    product_id?: string | undefined;
+    sku?: string | undefined;
   }>;
   user_data: {
     email_address?: string | undefined;

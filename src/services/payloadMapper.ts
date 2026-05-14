@@ -1,6 +1,7 @@
 import type { ShopifyOrder, SynapseEventPayload } from "../types/shopify";
 import { resolveCustomerEmail, resolveCustomerId } from "./customerIdentity";
 import { resolveCurrencyCode } from "./currencyCode";
+import { resolvePurchaseProducts } from "./purchaseProducts";
 
 function toNumber(value: string | undefined): number {
   const parsed = Number.parseFloat(value ?? "0");
@@ -41,12 +42,7 @@ export function mapOrderToPurchase(
     tax: toNumber(order.total_tax),
     shipping: toNumber(order.total_shipping_price_set?.shop_money?.amount),
     transaction_id: order.order_number?.toString() ?? order.name ?? "unknown-order",
-    items: order.line_items.map((item) => ({
-      item_id: item.sku ?? item.product_id?.toString(),
-      item_name: item.title,
-      price: toNumber(item.price),
-      quantity: item.quantity
-    })),
+    items: resolvePurchaseProducts(order.line_items),
     user_data: {
       email_address: resolvedCustomerEmail,
       phone_number: order.phone,

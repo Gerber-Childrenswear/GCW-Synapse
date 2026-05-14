@@ -25,6 +25,8 @@ test("mapOrderToPurchase maps core purchase fields", () => {
     line_items: [
       {
         sku: "SKU-123",
+        variant_title: "Blue / M",
+        product_type: "Onesies",
         title: "Footie",
         price: "49.98",
         quantity: 2
@@ -38,6 +40,8 @@ test("mapOrderToPurchase maps core purchase fields", () => {
   assert.equal(payload.currency, "USD");
   assert.equal(payload.items.length, 1);
   assert.equal(payload.items[0]?.item_id, "SKU-123");
+  assert.equal(payload.items[0]?.item_variant, "Blue / M");
+  assert.equal(payload.items[0]?.item_category, "Onesies");
   assert.equal(payload.items[0]?.quantity, 2);
   assert.equal(payload.user_data.address.country, "US");
 });

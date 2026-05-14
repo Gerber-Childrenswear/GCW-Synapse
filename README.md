@@ -20,6 +20,7 @@ GCW-Synapse is a Shopify analytics relay service that replaces Elevar by forward
 - GET /compatibility/event-id
 - GET /compatibility/customer-id
 - GET /compatibility/customer-email
+- GET /compatibility/purchase-products
 - POST /webhooks/shopify/orders/create
 - POST /webhooks/shopify/orders/paid
 
@@ -136,6 +137,17 @@ Examples:
 `/compatibility/customer-id?customer_id=12345`
 
 `/compatibility/customer-email?customer_email=Customer%40Example.com&checkout_email=checkout%40example.com`
+
+## Purchase Products Compatibility Variable
+
+GCW-Synapse now includes compatibility logic for `dlv - Thank You Page - ecommerce.purchase.products`.
+
+- `GET /compatibility/purchase-products` accepts a `line_items_json` query value.
+- It returns a normalized purchase products array preserving key item fields used by downstream tags.
+
+Example:
+
+`/compatibility/purchase-products?line_items_json=%5B%7B%22sku%22%3A%22SKU-123%22%2C%22title%22%3A%22Footie%22%2C%22price%22%3A%2249.98%22%2C%22quantity%22%3A2%7D%5D`
 
 ## Local Signed Replay
 

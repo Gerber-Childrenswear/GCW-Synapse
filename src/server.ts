@@ -7,6 +7,7 @@ import { resolveCurrencyCode } from "./services/currencyCode";
 import { resolveEventId } from "./services/eventId";
 import { resolveGa4MeasurementId } from "./services/ga4Measurement";
 import { getMetricsSnapshot } from "./services/metrics";
+import { resolvePurchaseProducts } from "./services/purchaseProducts";
 
 const app = express();
 const requireIngressToken = createIngressTokenMiddleware(env.INGRESS_SHARED_TOKEN);
@@ -140,6 +141,52 @@ app.get("/compatibility/customer-email", requireIngressToken, (req, res) => {
       customer_email: customerEmail,
       checkout_email: checkoutEmail
     }
+  });
+});
+
+app.get("/compatibility/purchase-products", requireIngressToken, (req, res) => {
+  const lineItemsRaw = typeof req.query.line_items_json === "string" ? req.query.line_items_json : "[]";
+
+  let lineItems: Array<{
+    sku?: string;
+    product_id?: number;
+    variant_id?: number;
+    variant_title?: string;
+    product_type?: string;
+    title: string;
+    price: string;
+    quantity: number;
+  }> = [];
+
+  try {
+    const parsed = JSON.parse(lineItemsRaw) as unknown;
+    if (Array.isArray(parsed)) {
+      lineItems = parsed as Array<{
+        sku?: string;
+        product_id?: number;
+        variant_id?: number;
+        variant_title?: string;
+        product_type?: string;
+        title: string;
+        price: string;
+        quantity: number;
+      }>;
+    }
+  } catch {
+    res.status(400).json({
+      ok: false,
+      error: "Invalid line_items_json query value"
+    });
+    return;
+  }
+
+  const products = resolvePurchaseProducts(lineItems);
+
+  res.status(200).json({
+    ok: true,
+    variable: "dlv - Thank You Page - ecommerce.purchase.products",
+    resolved_purchase_products: products,
+    count: products.length
   });
 });
 
