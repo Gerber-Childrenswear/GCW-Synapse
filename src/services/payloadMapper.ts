@@ -1,5 +1,6 @@
 import type { ShopifyOrder, SynapseEventPayload } from "../types/shopify";
 import { resolveCustomerEmail, resolveCustomerId } from "./customerIdentity";
+import { normalizeCustomerPhone } from "./customerPhone";
 import { resolveCurrencyCode } from "./currencyCode";
 import { resolveOrderId } from "./orderId";
 import { resolvePurchaseProducts } from "./purchaseProducts";
@@ -49,7 +50,7 @@ export function mapOrderToPurchase(
     items: resolvePurchaseProducts(order.line_items),
     user_data: {
       email_address: resolvedCustomerEmail,
-      phone_number: order.phone,
+      phone_number: normalizeCustomerPhone(order.phone),
       address: {
         first_name: order.customer?.first_name ?? order.billing_address?.first_name,
         last_name: order.customer?.last_name ?? order.billing_address?.last_name,

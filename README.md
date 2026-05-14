@@ -28,6 +28,9 @@ GCW-Synapse is a Shopify analytics relay service that replaces Elevar by forward
 - GET /compatibility/cart-total
 - GET /compatibility/checkout-products
 - GET /compatibility/search-term
+- GET /compatibility/visitor-type
+- GET /compatibility/order-revenue
+- GET /compatibility/customer-phone
 - POST /webhooks/shopify/orders/create
 - POST /webhooks/shopify/orders/paid
 
@@ -208,6 +211,22 @@ Examples:
 `/compatibility/checkout-products?line_items_json=%5B%7B%22sku%22%3A%22SKU-123%22%2C%22title%22%3A%22Footie%22%2C%22price%22%3A%2225.00%22%2C%22quantity%22%3A1%7D%5D`
 
 `/compatibility/search-term?url=https%3A%2F%2Fwww.gerberchildrenswear.com%2Fsearch%3Fq%3Dfootie`
+
+## Visitor And Thank You Compatibility
+
+GCW-Synapse now includes compatibility logic for `dlv - Global - Visitor Type`, `dlv - Thank You Page - Order Revenue`, and `dlv - Thank You Page - Customer Phone Number`.
+
+- `GET /compatibility/visitor-type` resolves visitor type from identity hints (`customer_id`, `customer_email`).
+- `GET /compatibility/order-revenue` resolves thank-you revenue from `ecommerce_value` then `total_price`.
+- `GET /compatibility/customer-phone` normalizes phone values to an E.164-style format.
+
+Examples:
+
+`/compatibility/visitor-type?customer_id=12345`
+
+`/compatibility/order-revenue?ecommerce_value=99.95&total_price=109.95`
+
+`/compatibility/customer-phone?customer_phone=%28212%29%20555-0100`
 
 ## Local Signed Replay
 

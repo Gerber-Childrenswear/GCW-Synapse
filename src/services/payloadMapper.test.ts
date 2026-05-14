@@ -101,3 +101,15 @@ test("mapOrderToPurchase falls back to order name for transaction_id", () => {
 
   assert.equal(payload.transaction_id, "#A1001");
 });
+
+test("mapOrderToPurchase normalizes customer phone to E.164 style", () => {
+  const payload = mapOrderToPurchase({
+    order_number: 222,
+    phone: "(212) 555-0100",
+    currency: "USD",
+    total_price: "1.00",
+    line_items: []
+  });
+
+  assert.equal(payload.user_data.phone_number, "+12125550100");
+});

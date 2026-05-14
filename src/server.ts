@@ -10,9 +10,12 @@ import { resolveEventId } from "./services/eventId";
 import { resolveGa4MeasurementId } from "./services/ga4Measurement";
 import { getMetricsSnapshot } from "./services/metrics";
 import { resolveOrderId } from "./services/orderId";
+import { resolveOrderRevenue } from "./services/orderRevenue";
 import { resolveProductIdentifier } from "./services/productIdentifier";
 import { resolvePurchaseProducts } from "./services/purchaseProducts";
 import { resolveSearchTerm } from "./services/searchTerm";
+import { resolveVisitorType } from "./services/visitorType";
+import { normalizeCustomerPhone } from "./services/customerPhone";
 
 const app = express();
 const requireIngressToken = createIngressTokenMiddleware(env.INGRESS_SHARED_TOKEN);
@@ -369,6 +372,60 @@ app.get("/compatibility/search-term", requireIngressToken, (req, res) => {
       error: "Invalid url query value"
     });
   }
+});
+
+app.get("/compatibility/visitor-type", requireIngressToken, (req, res) => {
+  const customerId = typeof req.query.customer_id === "string" ? req.query.customer_id : undefined;
+  const customerEmail = typeof req.query.customer_email === "string" ? req.query.customer_email : undefined;
+
+  const visitorType = resolveVisitorType({
+    customerId,
+    customerEmail
+  });
+
+  res.status(200).json({
+    ok: true,
+    variable: "dlv - Global - Visitor Type",
+    resolved_visitor_type: visitorType,
+    sources: {
+      customer_id: customerId,
+      customer_email: customerEmail
+    }
+  });
+});
+
+app.get("/compatibility/order-revenue", requireIngressToken, (req, res) => {
+  const ecommerceValue = typeof req.query.ecommerce_value === "string" ? req.query.ecommerce_value : undefined;
+  const totalPrice = typeof req.query.total_price === "string" ? req.query.total_price : undefined;
+
+  const orderRevenue = resolveOrderRevenue({
+    ecommerceValue,
+    totalPrice
+  });
+
+  res.status(200).json({
+    ok: true,
+    variable: "dlv - Thank You Page - Order Revenue",
+    resolved_order_revenue: orderRevenue,
+    sources: {
+      ecommerce_value: ecommerceValue,
+      total_price: totalPrice
+    }
+  });
+});
+
+app.get("/compatibility/customer-phone", requireIngressToken, (req, res) => {
+  const customerPhone = typeof req.query.customer_phone === "string" ? req.query.customer_phone : undefined;
+  const normalizedPhone = normalizeCustomerPhone(customerPhone);
+
+  res.status(200).json({
+    ok: true,
+    variable: "dlv - Thank You Page - Customer Phone Number",
+    resolved_customer_phone: normalizedPhone,
+    sources: {
+      customer_phone: customerPhone
+    }
+  });
 });
 
 app.use(express.json());
