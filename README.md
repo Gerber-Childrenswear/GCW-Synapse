@@ -36,6 +36,7 @@ GCW-Synapse is a Shopify analytics relay service that replaces Elevar by forward
 - GET /compatibility/product-view-details
 - POST /compare/elevar
 - GET /compare/summary
+- GET /compare/parity
 - GET /compare/recent
 - POST /webhooks/shopify/orders/create
 - POST /webhooks/shopify/orders/paid
@@ -114,7 +115,8 @@ Comparison flow:
 1. Synapse captures your mapped payload automatically from Shopify webhooks.
 2. Send Elevar baseline payloads to `POST /compare/elevar` (protected by ingress token).
 3. Review apples-to-apples parity at `GET /compare/summary`.
-4. Inspect recent captured records at `GET /compare/recent?limit=100`.
+4. Review alert-oriented parity at `GET /compare/parity`.
+5. Inspect recent captured records at `GET /compare/recent?limit=100`.
 
 Comparison fields currently tracked per key (`event_name:transaction_id`):
 
@@ -126,6 +128,11 @@ Optional persistence:
 
 - `SHADOW_COMPARE_STORE_PATH` appends captured records to JSONL.
 - `SHADOW_COMPARE_MAX_RECORDS` controls in-memory retention.
+- `SHADOW_COMPARE_MISMATCH_ALERT_PCT` sets alert threshold for mismatch rate (default `5`).
+
+Alert rule:
+
+- `GET /compare/parity` returns `status: alert` when `mismatch_rate_pct > SHADOW_COMPARE_MISMATCH_ALERT_PCT`.
 
 ## GA4 Compatibility Variable
 

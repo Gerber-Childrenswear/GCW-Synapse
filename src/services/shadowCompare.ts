@@ -41,6 +41,15 @@ export type ShadowCompareSummary = {
   }>;
 };
 
+export type ShadowParityReport = {
+  threshold_pct: number;
+  mismatch_rate_pct: number;
+  matched_rate_pct: number;
+  paired_events: number;
+  alert_triggered: boolean;
+  status: "ok" | "alert";
+};
+
 const synapseEvents = new Map<string, ComparableEvent>();
 const elevarEvents = new Map<string, ComparableEvent>();
 const observedOrder: ComparableEvent[] = [];
@@ -253,4 +262,24 @@ export function getShadowCompareSummary(): ShadowCompareSummary {
 export function getRecentShadowEvents(limit = 100): ComparableEvent[] {
   const size = Number.isFinite(limit) ? Math.max(1, Math.min(limit, 500)) : 100;
   return observedOrder.slice(-size).reverse();
+}
+
+export function getShadowParityReport(thresholdPct: number): ShadowParityReport {
+  const summary = getShadowCompareSummary();
+  const paired = summary.counts.paired_events;
+  const mismatched = summary.counts.mismatched_pairs;
+  const matched = summary.counts.matched_pairs;
+
+  const mismatchRatePct = paired > 0 ? (mismatched / paired) * 100 : 0;
+  const matchedRatePct = paired > 0 ? (matched / paired) * 100 : 0;
+  const alertTriggered = mismatchRatePct > thresholdPct;
+
+  return {
+    threshold_pct: thresholdPct,
+    mismatch_rate_pct: Number.parseFloat(mismatchRatePct.toFixed(2)),
+    matched_rate_pct: Number.parseFloat(matchedRatePct.toFixed(2)),
+    paired_events: paired,
+    alert_triggered: alertTriggered,
+    status: alertTriggered ? "alert" : "ok"
+  };
 }

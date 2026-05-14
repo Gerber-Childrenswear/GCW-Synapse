@@ -22,6 +22,7 @@ import { resolveSearchTerm } from "./services/searchTerm";
 import {
   configureShadowCompare,
   getRecentShadowEvents,
+  getShadowParityReport,
   getShadowCompareSummary,
   ingestElevarShadow
 } from "./services/shadowCompare";
@@ -517,6 +518,20 @@ app.get("/compare/summary", requireIngressToken, (_req, res) => {
     source_of_truth: "elevar",
     runtime_mode: env.RUNTIME_MODE,
     summary
+  });
+});
+
+app.get("/compare/parity", requireIngressToken, (_req, res) => {
+  const summary = getShadowCompareSummary();
+  const parity = getShadowParityReport(env.SHADOW_COMPARE_MISMATCH_ALERT_PCT);
+
+  res.status(200).json({
+    ok: true,
+    source_of_truth: "elevar",
+    runtime_mode: env.RUNTIME_MODE,
+    parity,
+    counts: summary.counts,
+    mismatches_preview: summary.mismatches_preview
   });
 });
 
