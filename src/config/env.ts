@@ -17,6 +17,7 @@ const envSchema = z.object({
   ALLOWED_WEBHOOK_TOPICS: z.string().default("orders/create,orders/paid"),
   CUSTOMER_ID_FALLBACK: z.string().min(1).default("guest"),
   SHOP_DEFAULT_CURRENCY: z.string().regex(/^[A-Z]{3}$/i).default("USD"),
+  FACEBOOK_PIXEL_ID: z.string().min(1).optional(),
   GA4_MEASUREMENT_ID: z.string().regex(/^G-[A-Z0-9]+$/i).optional(),
   GA4_MEASUREMENT_ID_BY_SHOP: z.string().optional()
 });

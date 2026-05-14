@@ -21,6 +21,8 @@ GCW-Synapse is a Shopify analytics relay service that replaces Elevar by forward
 - GET /compatibility/customer-id
 - GET /compatibility/customer-email
 - GET /compatibility/purchase-products
+- GET /compatibility/facebook-pixel-id
+- GET /compatibility/product-identifier
 - POST /webhooks/shopify/orders/create
 - POST /webhooks/shopify/orders/paid
 
@@ -148,6 +150,23 @@ GCW-Synapse now includes compatibility logic for `dlv - Thank You Page - ecommer
 Example:
 
 `/compatibility/purchase-products?line_items_json=%5B%7B%22sku%22%3A%22SKU-123%22%2C%22title%22%3A%22Footie%22%2C%22price%22%3A%2249.98%22%2C%22quantity%22%3A2%7D%5D`
+
+## Facebook Pixel And Product Identifier Compatibility
+
+GCW-Synapse now includes compatibility logic for `Facebook - Pixel ID`, `Facebook - product identifier`, and `GA4 - product identifier`.
+
+- `FACEBOOK_PIXEL_ID` stores the active Facebook Pixel ID.
+- `GET /compatibility/facebook-pixel-id` returns the configured pixel id.
+- `GET /compatibility/product-identifier` resolves product identifier using:
+	- `sku`
+	- `variant_id`
+	- `product_id`
+
+Examples:
+
+`/compatibility/facebook-pixel-id`
+
+`/compatibility/product-identifier?sku=SKU-123&variant_id=456&product_id=789`
 
 ## Local Signed Replay
 

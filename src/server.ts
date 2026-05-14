@@ -7,6 +7,7 @@ import { resolveCurrencyCode } from "./services/currencyCode";
 import { resolveEventId } from "./services/eventId";
 import { resolveGa4MeasurementId } from "./services/ga4Measurement";
 import { getMetricsSnapshot } from "./services/metrics";
+import { resolveProductIdentifier } from "./services/productIdentifier";
 import { resolvePurchaseProducts } from "./services/purchaseProducts";
 
 const app = express();
@@ -187,6 +188,45 @@ app.get("/compatibility/purchase-products", requireIngressToken, (req, res) => {
     variable: "dlv - Thank You Page - ecommerce.purchase.products",
     resolved_purchase_products: products,
     count: products.length
+  });
+});
+
+app.get("/compatibility/facebook-pixel-id", requireIngressToken, (_req, res) => {
+  if (!env.FACEBOOK_PIXEL_ID) {
+    res.status(404).json({
+      ok: false,
+      error: "Facebook Pixel ID is not configured"
+    });
+    return;
+  }
+
+  res.status(200).json({
+    ok: true,
+    variable: "Facebook - Pixel ID",
+    pixel_id: env.FACEBOOK_PIXEL_ID
+  });
+});
+
+app.get("/compatibility/product-identifier", requireIngressToken, (req, res) => {
+  const sku = typeof req.query.sku === "string" ? req.query.sku : undefined;
+  const variantId = typeof req.query.variant_id === "string" ? req.query.variant_id : undefined;
+  const productId = typeof req.query.product_id === "string" ? req.query.product_id : undefined;
+
+  const identifier = resolveProductIdentifier({
+    sku,
+    variantId,
+    productId
+  });
+
+  res.status(200).json({
+    ok: true,
+    variable: "Facebook - product identifier / GA4 - product identifier",
+    resolved_product_identifier: identifier,
+    sources: {
+      sku,
+      variant_id: variantId,
+      product_id: productId
+    }
   });
 });
 

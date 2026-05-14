@@ -1,4 +1,5 @@
 import type { ShopifyLineItem } from "../types/shopify";
+import { resolveProductIdentifier } from "./productIdentifier";
 
 export type PurchaseProduct = {
   item_id?: string | undefined;
@@ -23,7 +24,11 @@ function normalizeString(value: string | undefined): string | undefined {
 
 export function resolvePurchaseProducts(lineItems: ShopifyLineItem[]): PurchaseProduct[] {
   return lineItems.map((item) => ({
-    item_id: normalizeString(item.sku) ?? item.variant_id?.toString() ?? item.product_id?.toString(),
+    item_id: resolveProductIdentifier({
+      sku: item.sku,
+      variantId: item.variant_id,
+      productId: item.product_id
+    }),
     item_name: normalizeString(item.title) ?? "unknown-item",
     item_variant: normalizeString(item.variant_title),
     item_category: normalizeString(item.product_type),
