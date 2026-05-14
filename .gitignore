@@ -2,3 +2,5 @@ node_modules/
 dist/
 .env
 npm-debug.log*
+scripts/*.js
+scripts/*.js.map
