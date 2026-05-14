@@ -31,6 +31,9 @@ GCW-Synapse is a Shopify analytics relay service that replaces Elevar by forward
 - GET /compatibility/visitor-type
 - GET /compatibility/order-revenue
 - GET /compatibility/customer-phone
+- GET /compatibility/impressions
+- GET /compatibility/add-to-cart
+- GET /compatibility/product-view-details
 - POST /webhooks/shopify/orders/create
 - POST /webhooks/shopify/orders/paid
 
@@ -227,6 +230,24 @@ Examples:
 `/compatibility/order-revenue?ecommerce_value=99.95&total_price=109.95`
 
 `/compatibility/customer-phone?customer_phone=%28212%29%20555-0100`
+
+## Catalog Compatibility
+
+GCW-Synapse now includes compatibility logic for catalog and product-context variables.
+
+- `GET /compatibility/impressions` resolves `dlv - ecommerce.impressions`.
+- `GET /compatibility/add-to-cart` resolves:
+	- `dlv - Add to Cart - Add Array`
+	- `dlv - Add to Cart - Quantity`
+	- `dlv - Add to Cart - Price`
+	- `dlv - Add to Cart - Category`
+- `GET /compatibility/product-view-details` resolves `dlv - Product View - Details Array`.
+
+All three endpoints accept `line_items_json`.
+
+Example:
+
+`/compatibility/add-to-cart?line_items_json=%5B%7B%22sku%22%3A%22SKU-123%22%2C%22title%22%3A%22Footie%22%2C%22price%22%3A%2225.00%22%2C%22quantity%22%3A2%2C%22product_type%22%3A%22Onesies%22%7D%5D`
 
 ## Local Signed Replay
 

@@ -3,6 +3,11 @@ import { env } from "./config/env";
 import { createIngressTokenMiddleware } from "./lib/ingressAuth";
 import { webhooksRouter } from "./routes/webhooks";
 import { resolveCartTotal } from "./services/cartTotal";
+import {
+  resolveAddToCartCompatibility,
+  resolveEcommerceImpressions,
+  resolveProductViewDetailsArray
+} from "./services/catalogCompatibility";
 import { resolveCheckoutProducts } from "./services/checkoutProducts";
 import { resolveCustomerEmail, resolveCustomerId } from "./services/customerIdentity";
 import { resolveCurrencyCode } from "./services/currencyCode";
@@ -19,6 +24,22 @@ import { normalizeCustomerPhone } from "./services/customerPhone";
 
 const app = express();
 const requireIngressToken = createIngressTokenMiddleware(env.INGRESS_SHARED_TOKEN);
+
+type CompatibilityLineItem = {
+  sku?: string;
+  product_id?: number;
+  variant_id?: number;
+  variant_title?: string;
+  product_type?: string;
+  title: string;
+  price: string;
+  quantity: number;
+};
+
+function parseLineItemsJson(lineItemsRaw: string): CompatibilityLineItem[] {
+  const parsed = JSON.parse(lineItemsRaw) as unknown;
+  return Array.isArray(parsed) ? (parsed as CompatibilityLineItem[]) : [];
+}
 
 app.get("/health", (_req, res) => {
   res.status(200).json({ ok: true, service: "gcw-synapse" });
@@ -155,31 +176,10 @@ app.get("/compatibility/customer-email", requireIngressToken, (req, res) => {
 app.get("/compatibility/purchase-products", requireIngressToken, (req, res) => {
   const lineItemsRaw = typeof req.query.line_items_json === "string" ? req.query.line_items_json : "[]";
 
-  let lineItems: Array<{
-    sku?: string;
-    product_id?: number;
-    variant_id?: number;
-    variant_title?: string;
-    product_type?: string;
-    title: string;
-    price: string;
-    quantity: number;
-  }> = [];
+  let lineItems: CompatibilityLineItem[] = [];
 
   try {
-    const parsed = JSON.parse(lineItemsRaw) as unknown;
-    if (Array.isArray(parsed)) {
-      lineItems = parsed as Array<{
-        sku?: string;
-        product_id?: number;
-        variant_id?: number;
-        variant_title?: string;
-        product_type?: string;
-        title: string;
-        price: string;
-        quantity: number;
-      }>;
-    }
+    lineItems = parseLineItemsJson(lineItemsRaw);
   } catch {
     res.status(400).json({
       ok: false,
@@ -302,31 +302,10 @@ app.get("/compatibility/cart-total", requireIngressToken, (req, res) => {
 app.get("/compatibility/checkout-products", requireIngressToken, (req, res) => {
   const lineItemsRaw = typeof req.query.line_items_json === "string" ? req.query.line_items_json : "[]";
 
-  let lineItems: Array<{
-    sku?: string;
-    product_id?: number;
-    variant_id?: number;
-    variant_title?: string;
-    product_type?: string;
-    title: string;
-    price: string;
-    quantity: number;
-  }> = [];
+  let lineItems: CompatibilityLineItem[] = [];
 
   try {
-    const parsed = JSON.parse(lineItemsRaw) as unknown;
-    if (Array.isArray(parsed)) {
-      lineItems = parsed as Array<{
-        sku?: string;
-        product_id?: number;
-        variant_id?: number;
-        variant_title?: string;
-        product_type?: string;
-        title: string;
-        price: string;
-        quantity: number;
-      }>;
-    }
+    lineItems = parseLineItemsJson(lineItemsRaw);
   } catch {
     res.status(400).json({
       ok: false,
@@ -343,6 +322,73 @@ app.get("/compatibility/checkout-products", requireIngressToken, (req, res) => {
     resolved_checkout_products: products,
     count: products.length
   });
+});
+
+app.get("/compatibility/impressions", requireIngressToken, (req, res) => {
+  const lineItemsRaw = typeof req.query.line_items_json === "string" ? req.query.line_items_json : "[]";
+
+  try {
+    const lineItems = parseLineItemsJson(lineItemsRaw);
+    const impressions = resolveEcommerceImpressions(lineItems);
+
+    res.status(200).json({
+      ok: true,
+      variable: "dlv - ecommerce.impressions",
+      resolved_impressions: impressions,
+      count: impressions.length
+    });
+  } catch {
+    res.status(400).json({
+      ok: false,
+      error: "Invalid line_items_json query value"
+    });
+  }
+});
+
+app.get("/compatibility/add-to-cart", requireIngressToken, (req, res) => {
+  const lineItemsRaw = typeof req.query.line_items_json === "string" ? req.query.line_items_json : "[]";
+
+  try {
+    const lineItems = parseLineItemsJson(lineItemsRaw);
+    const addToCart = resolveAddToCartCompatibility(lineItems);
+
+    res.status(200).json({
+      ok: true,
+      variables: {
+        add_array: "dlv - Add to Cart - Add Array",
+        quantity: "dlv - Add to Cart - Quantity",
+        price: "dlv - Add to Cart - Price",
+        category: "dlv - Add to Cart - Category"
+      },
+      resolved: addToCart
+    });
+  } catch {
+    res.status(400).json({
+      ok: false,
+      error: "Invalid line_items_json query value"
+    });
+  }
+});
+
+app.get("/compatibility/product-view-details", requireIngressToken, (req, res) => {
+  const lineItemsRaw = typeof req.query.line_items_json === "string" ? req.query.line_items_json : "[]";
+
+  try {
+    const lineItems = parseLineItemsJson(lineItemsRaw);
+    const details = resolveProductViewDetailsArray(lineItems);
+
+    res.status(200).json({
+      ok: true,
+      variable: "dlv - Product View - Details Array",
+      resolved_product_view_details: details,
+      count: details.length
+    });
+  } catch {
+    res.status(400).json({
+      ok: false,
+      error: "Invalid line_items_json query value"
+    });
+  }
 });
 
 app.get("/compatibility/search-term", requireIngressToken, (req, res) => {
