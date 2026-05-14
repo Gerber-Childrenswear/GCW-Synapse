@@ -7,6 +7,7 @@ import { verifyShopifyWebhookHmac } from "../lib/shopifyHmac";
 import { isTopicAccepted, parseAllowedTopics } from "../lib/topicGuard";
 import { resolveEventId } from "../services/eventId";
 import { forwardToGtmServer } from "../services/gtmForwarder";
+import { captureSynapseShadow } from "../services/shadowCompare";
 import { incrementCounter } from "../services/metrics";
 import { mapOrderToPurchase } from "../services/payloadMapper";
 import type { ShopifyOrder } from "../types/shopify";
@@ -87,6 +88,26 @@ function createOrderWebhookHandler(expectedTopic: string) {
       eventId,
       env.CUSTOMER_ID_FALLBACK
     );
+
+    if (env.RUNTIME_MODE === "shadow_compare") {
+      await captureSynapseShadow(payload);
+      idempotencyStore.markProcessed(idempotencyKey);
+      incrementCounter("webhooks_shadow_captured");
+
+      logInfo("Webhook captured in shadow_compare mode (no forwarding)", {
+        topic,
+        shop,
+        idempotency_key: idempotencyKey,
+        event_id: payload.event_id,
+        transaction_id: payload.transaction_id,
+        value: payload.value,
+        currency: payload.currency
+      });
+
+      res.status(200).json({ status: "shadow_captured_no_forward" });
+      return;
+    }
+
     await forwardToGtmServer(payload);
     idempotencyStore.markProcessed(idempotencyKey);
     incrementCounter("webhooks_forwarded");

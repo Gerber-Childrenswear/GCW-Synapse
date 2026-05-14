@@ -5,6 +5,7 @@ dotenv.config();
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  RUNTIME_MODE: z.enum(["forward", "shadow_compare"]).default("forward"),
   PORT: z.coerce.number().int().positive().default(4000),
   GTM_SERVER_URL: z.string().url(),
   SHOPIFY_WEBHOOK_SECRET: z.string().min(1),
@@ -20,7 +21,9 @@ const envSchema = z.object({
   FACEBOOK_PIXEL_ID: z.string().min(1).optional(),
   PINTEREST_ID: z.string().min(1).optional(),
   GA4_MEASUREMENT_ID: z.string().regex(/^G-[A-Z0-9]+$/i).optional(),
-  GA4_MEASUREMENT_ID_BY_SHOP: z.string().optional()
+  GA4_MEASUREMENT_ID_BY_SHOP: z.string().optional(),
+  SHADOW_COMPARE_MAX_RECORDS: z.coerce.number().int().positive().default(5000),
+  SHADOW_COMPARE_STORE_PATH: z.string().optional()
 });
 
 const parsed = envSchema.safeParse(process.env);

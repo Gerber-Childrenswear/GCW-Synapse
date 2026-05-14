@@ -13,17 +13,29 @@ import { resolveCustomerEmail, resolveCustomerId } from "./services/customerIden
 import { resolveCurrencyCode } from "./services/currencyCode";
 import { resolveEventId } from "./services/eventId";
 import { resolveGa4MeasurementId } from "./services/ga4Measurement";
-import { getMetricsSnapshot } from "./services/metrics";
+import { getMetricsSnapshot, incrementCounter } from "./services/metrics";
 import { resolveOrderId } from "./services/orderId";
 import { resolveOrderRevenue } from "./services/orderRevenue";
 import { resolveProductIdentifier } from "./services/productIdentifier";
 import { resolvePurchaseProducts } from "./services/purchaseProducts";
 import { resolveSearchTerm } from "./services/searchTerm";
+import {
+  configureShadowCompare,
+  getRecentShadowEvents,
+  getShadowCompareSummary,
+  ingestElevarShadow
+} from "./services/shadowCompare";
 import { resolveVisitorType } from "./services/visitorType";
 import { normalizeCustomerPhone } from "./services/customerPhone";
 
 const app = express();
 const requireIngressToken = createIngressTokenMiddleware(env.INGRESS_SHARED_TOKEN);
+
+configureShadowCompare({
+  runtimeMode: env.RUNTIME_MODE,
+  maxRecords: env.SHADOW_COMPARE_MAX_RECORDS,
+  storePath: env.SHADOW_COMPARE_STORE_PATH
+});
 
 type CompatibilityLineItem = {
   sku?: string;
@@ -475,6 +487,53 @@ app.get("/compatibility/customer-phone", requireIngressToken, (req, res) => {
 });
 
 app.use(express.json());
+
+app.post("/compare/elevar", requireIngressToken, async (req, res) => {
+  try {
+    const event = await ingestElevarShadow(req.body);
+    incrementCounter("compare_elevar_received");
+
+    res.status(202).json({
+      ok: true,
+      status: "baseline_received",
+      runtime_mode: env.RUNTIME_MODE,
+      key: event.key,
+      event_name: event.event_name,
+      transaction_id: event.transaction_id
+    });
+  } catch {
+    res.status(400).json({
+      ok: false,
+      error: "Invalid Elevar baseline payload"
+    });
+  }
+});
+
+app.get("/compare/summary", requireIngressToken, (_req, res) => {
+  const summary = getShadowCompareSummary();
+
+  res.status(200).json({
+    ok: true,
+    source_of_truth: "elevar",
+    runtime_mode: env.RUNTIME_MODE,
+    summary
+  });
+});
+
+app.get("/compare/recent", requireIngressToken, (req, res) => {
+  const limitRaw = typeof req.query.limit === "string" ? req.query.limit : "100";
+  const parsedLimit = Number.parseInt(limitRaw, 10);
+  const limit = Number.isFinite(parsedLimit) ? parsedLimit : 100;
+  const events = getRecentShadowEvents(limit);
+
+  res.status(200).json({
+    ok: true,
+    runtime_mode: env.RUNTIME_MODE,
+    count: events.length,
+    events
+  });
+});
+
 app.post("/event", requireIngressToken, (req, res) => {
   res.status(501).json({
     message: "Use Shopify order webhooks endpoints instead",
