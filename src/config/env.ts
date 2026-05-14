@@ -26,7 +26,10 @@ const envSchema = z.object({
   SHADOW_COMPARE_MISMATCH_ALERT_PCT: z.coerce.number().min(0).max(100).default(5),
   SHADOW_COMPARE_STORE_PATH: z.string().optional(),
   CHANNEL_HEALTH_STALE_MINUTES: z.coerce.number().int().positive().default(90),
-  CHANNEL_HEALTH_WARN_FAILURE_PCT: z.coerce.number().min(0).max(100).default(5)
+  CHANNEL_HEALTH_WARN_FAILURE_PCT: z.coerce.number().min(0).max(100).default(5),
+  LAUNCH_MIN_PAIRED_EVENTS: z.coerce.number().int().positive().default(100),
+  LAUNCH_MAX_WARNING_CHANNELS: z.coerce.number().int().min(0).default(0),
+  LAUNCH_MAX_WEBHOOK_FAILURE_RATE_PCT: z.coerce.number().min(0).max(100).default(2)
 });
 
 const parsed = envSchema.safeParse(process.env);

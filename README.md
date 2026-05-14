@@ -43,6 +43,7 @@ GCW-Synapse is a Shopify analytics relay service that replaces Elevar by forward
 - GET /compare/troubleshoot
 - GET /compare/ui-model
 - GET /compare/recent
+- GET /launch/readiness
 - POST /webhooks/shopify/orders/create
 - POST /webhooks/shopify/orders/paid
 
@@ -160,6 +161,21 @@ Channel health tuning:
 
 - `CHANNEL_HEALTH_STALE_MINUTES` marks integrations stale after inactivity.
 - `CHANNEL_HEALTH_WARN_FAILURE_PCT` marks warning/critical by failure rate.
+
+## Launch Readiness Gate
+
+Use `GET /launch/readiness` to get a strict go/hold report for launch.
+
+- Query: `phase=validation|cutover` (default `validation`)
+- Returns per-check pass/fail with recommendations.
+
+Threshold settings:
+
+- `LAUNCH_MIN_PAIRED_EVENTS`
+- `LAUNCH_MAX_WARNING_CHANNELS`
+- `LAUNCH_MAX_WEBHOOK_FAILURE_RATE_PCT`
+
+The same launch readiness report is included in `GET /compare/ui-model` under `launch_readiness`.
 
 ## GA4 Compatibility Variable
 

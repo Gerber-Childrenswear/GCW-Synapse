@@ -22,6 +22,7 @@ import { resolveCurrencyCode } from "./services/currencyCode";
 import { resolveEventId } from "./services/eventId";
 import { resolveGa4MeasurementId } from "./services/ga4Measurement";
 import { getMetricsSnapshot, incrementCounter } from "./services/metrics";
+import { buildLaunchReadinessReport } from "./services/launchReadiness";
 import { resolveOrderId } from "./services/orderId";
 import { resolveOrderRevenue } from "./services/orderRevenue";
 import { resolveProductIdentifier } from "./services/productIdentifier";
@@ -674,8 +675,28 @@ app.get("/compare/ui-model", requireIngressToken, (req, res) => {
 
   const paritySummary = getShadowCompareSummary();
   const parity = getShadowParityReport(env.SHADOW_COMPARE_MISMATCH_ALERT_PCT);
+  const metrics = getMetricsSnapshot();
   const channelSummary = getChannelHealthSummary(env.CHANNEL_HEALTH_STALE_MINUTES, env.CHANNEL_HEALTH_WARN_FAILURE_PCT);
   const issues = getChannelTroubleshooting(channelSummary);
+  const launchReadiness = buildLaunchReadinessReport({
+    phase: "validation",
+    runtimeMode: env.RUNTIME_MODE,
+    parity,
+    paritySummary,
+    channelSummary,
+    metrics: {
+      webhooks_received: metrics.counters.webhooks_received,
+      webhooks_invalid_signature: metrics.counters.webhooks_invalid_signature,
+      webhooks_invalid_json: metrics.counters.webhooks_invalid_json,
+      webhooks_rejected_topic: metrics.counters.webhooks_rejected_topic,
+      webhooks_forward_failed: metrics.counters.webhooks_forward_failed
+    },
+    thresholds: {
+      minPairedEvents: env.LAUNCH_MIN_PAIRED_EVENTS,
+      maxWarningChannels: env.LAUNCH_MAX_WARNING_CHANNELS,
+      maxWebhookFailureRatePct: env.LAUNCH_MAX_WEBHOOK_FAILURE_RATE_PCT
+    }
+  });
 
   res.status(200).json({
     ok: true,
@@ -689,10 +710,48 @@ app.get("/compare/ui-model", requireIngressToken, (req, res) => {
       issues,
       links: getChannelHelpLinks()
     },
+    launch_readiness: launchReadiness,
     recent: {
       shadow_events: getRecentShadowEvents(limit),
       channel_events: getRecentChannelEvents(limit)
     }
+  });
+});
+
+app.get("/launch/readiness", requireIngressToken, (req, res) => {
+  const phaseQuery = typeof req.query.phase === "string" ? req.query.phase : "validation";
+  const phase = phaseQuery === "cutover" ? "cutover" : "validation";
+
+  const paritySummary = getShadowCompareSummary();
+  const parity = getShadowParityReport(env.SHADOW_COMPARE_MISMATCH_ALERT_PCT);
+  const channelSummary = getChannelHealthSummary(env.CHANNEL_HEALTH_STALE_MINUTES, env.CHANNEL_HEALTH_WARN_FAILURE_PCT);
+  const metrics = getMetricsSnapshot();
+
+  const report = buildLaunchReadinessReport({
+    phase,
+    runtimeMode: env.RUNTIME_MODE,
+    parity,
+    paritySummary,
+    channelSummary,
+    metrics: {
+      webhooks_received: metrics.counters.webhooks_received,
+      webhooks_invalid_signature: metrics.counters.webhooks_invalid_signature,
+      webhooks_invalid_json: metrics.counters.webhooks_invalid_json,
+      webhooks_rejected_topic: metrics.counters.webhooks_rejected_topic,
+      webhooks_forward_failed: metrics.counters.webhooks_forward_failed
+    },
+    thresholds: {
+      minPairedEvents: env.LAUNCH_MIN_PAIRED_EVENTS,
+      maxWarningChannels: env.LAUNCH_MAX_WARNING_CHANNELS,
+      maxWebhookFailureRatePct: env.LAUNCH_MAX_WEBHOOK_FAILURE_RATE_PCT
+    }
+  });
+
+  res.status(200).json({
+    ok: true,
+    source_of_truth: "elevar",
+    runtime_mode: env.RUNTIME_MODE,
+    report
   });
 });
 
