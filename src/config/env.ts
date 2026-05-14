@@ -15,6 +15,7 @@ const envSchema = z.object({
   IDEMPOTENCY_TTL_MS: z.coerce.number().int().positive().default(600000),
   INGRESS_SHARED_TOKEN: z.string().min(8).optional(),
   ALLOWED_WEBHOOK_TOPICS: z.string().default("orders/create,orders/paid"),
+  CUSTOMER_ID_FALLBACK: z.string().min(1).default("guest"),
   SHOP_DEFAULT_CURRENCY: z.string().regex(/^[A-Z]{3}$/i).default("USD"),
   GA4_MEASUREMENT_ID: z.string().regex(/^G-[A-Z0-9]+$/i).optional(),
   GA4_MEASUREMENT_ID_BY_SHOP: z.string().optional()

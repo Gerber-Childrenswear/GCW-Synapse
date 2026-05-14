@@ -1,4 +1,5 @@
 import type { ShopifyOrder, SynapseEventPayload } from "../types/shopify";
+import { resolveCustomerEmail, resolveCustomerId } from "./customerIdentity";
 import { resolveCurrencyCode } from "./currencyCode";
 
 function toNumber(value: string | undefined): number {
@@ -9,8 +10,20 @@ function toNumber(value: string | undefined): number {
 export function mapOrderToPurchase(
   order: ShopifyOrder,
   defaultCurrency = "USD",
-  eventId?: string
+  eventId?: string,
+  fallbackCustomerId = "guest"
 ): SynapseEventPayload {
+  const resolvedCustomerId = resolveCustomerId(
+    {
+      customerId: order.customer?.id
+    },
+    fallbackCustomerId
+  );
+  const resolvedCustomerEmail = resolveCustomerEmail({
+    customerEmail: order.customer?.email,
+    checkoutEmail: order.email
+  });
+
   const currency = resolveCurrencyCode(
     {
       ecommerceCurrency: order.currency
@@ -19,8 +32,8 @@ export function mapOrderToPurchase(
   );
 
   return {
-    client_id: order.customer?.id?.toString() ?? "guest",
-    user_id: order.customer?.email ?? order.email,
+    client_id: resolvedCustomerId,
+    user_id: resolvedCustomerEmail,
     event_id: eventId,
     event_name: "purchase",
     currency,
@@ -35,7 +48,7 @@ export function mapOrderToPurchase(
       quantity: item.quantity
     })),
     user_data: {
-      email_address: order.email,
+      email_address: resolvedCustomerEmail,
       phone_number: order.phone,
       address: {
         first_name: order.customer?.first_name ?? order.billing_address?.first_name,

@@ -2,6 +2,7 @@ import express from "express";
 import { env } from "./config/env";
 import { createIngressTokenMiddleware } from "./lib/ingressAuth";
 import { webhooksRouter } from "./routes/webhooks";
+import { resolveCustomerEmail, resolveCustomerId } from "./services/customerIdentity";
 import { resolveCurrencyCode } from "./services/currencyCode";
 import { resolveEventId } from "./services/eventId";
 import { resolveGa4MeasurementId } from "./services/ga4Measurement";
@@ -97,6 +98,47 @@ app.get("/compatibility/event-id", requireIngressToken, (req, res) => {
       topic,
       order_number: orderNumber,
       order_name: orderName
+    }
+  });
+});
+
+app.get("/compatibility/customer-id", requireIngressToken, (req, res) => {
+  const customerId = typeof req.query.customer_id === "string" ? req.query.customer_id : undefined;
+
+  const resolvedCustomerId = resolveCustomerId(
+    {
+      customerId
+    },
+    env.CUSTOMER_ID_FALLBACK
+  );
+
+  res.status(200).json({
+    ok: true,
+    variable: "dlv - Customer ID",
+    resolved_customer_id: resolvedCustomerId,
+    sources: {
+      customer_id: customerId,
+      fallback_customer_id: env.CUSTOMER_ID_FALLBACK
+    }
+  });
+});
+
+app.get("/compatibility/customer-email", requireIngressToken, (req, res) => {
+  const customerEmail = typeof req.query.customer_email === "string" ? req.query.customer_email : undefined;
+  const checkoutEmail = typeof req.query.checkout_email === "string" ? req.query.checkout_email : undefined;
+
+  const resolvedCustomerEmail = resolveCustomerEmail({
+    customerEmail,
+    checkoutEmail
+  });
+
+  res.status(200).json({
+    ok: true,
+    variable: "dlv - Customer Email",
+    resolved_customer_email: resolvedCustomerEmail,
+    sources: {
+      customer_email: customerEmail,
+      checkout_email: checkoutEmail
     }
   });
 });

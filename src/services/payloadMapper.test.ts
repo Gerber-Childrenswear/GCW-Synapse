@@ -67,3 +67,22 @@ test("mapOrderToPurchase includes event_id when provided", () => {
 
   assert.equal(payload.event_id, "evt-12345");
 });
+
+test("mapOrderToPurchase resolves customer identity with fallback", () => {
+  const payload = mapOrderToPurchase(
+    {
+      order_number: 888,
+      email: "Checkout@Example.com",
+      currency: "USD",
+      total_price: "10.00",
+      line_items: []
+    },
+    "USD",
+    undefined,
+    "guest"
+  );
+
+  assert.equal(payload.client_id, "guest");
+  assert.equal(payload.user_id, "checkout@example.com");
+  assert.equal(payload.user_data.email_address, "checkout@example.com");
+});
