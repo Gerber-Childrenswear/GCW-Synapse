@@ -36,6 +36,7 @@ GCW-Synapse is a Shopify analytics relay service that replaces Elevar by forward
 - GET /compatibility/product-view-details
 - POST /compare/elevar
 - POST /compare/channel-event
+- POST /compare/channel-event/batch
 - GET /compare/summary
 - GET /compare/parity
 - GET /compare/channels
@@ -145,6 +146,9 @@ To support richer troubleshooting UI (Lovable or custom), use these endpoints:
 - `POST /compare/channel-event`
 	- Ingest per-destination telemetry from pixel/server checks.
 	- Required fields: `channel`, `surface` (`pixel|server`), `destination`, `event_name`, `status` (`ok|error`).
+- `POST /compare/channel-event/batch`
+	- Ingest multiple telemetry events in one request using `{ "events": [...] }`.
+	- Returns accepted/rejected counts and per-item validation feedback.
 - `GET /compare/channels`
 	- Returns per-channel/per-pixel health with status, failure rate, and freshness.
 - `GET /compare/troubleshoot`

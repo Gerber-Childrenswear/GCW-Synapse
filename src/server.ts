@@ -4,6 +4,7 @@ import { createIngressTokenMiddleware } from "./lib/ingressAuth";
 import { webhooksRouter } from "./routes/webhooks";
 import { resolveCartTotal } from "./services/cartTotal";
 import {
+  type ChannelEventInput,
   getChannelHealthSummary,
   getChannelHelpLinks,
   getChannelTroubleshooting,
@@ -59,6 +60,46 @@ type CompatibilityLineItem = {
 function parseLineItemsJson(lineItemsRaw: string): CompatibilityLineItem[] {
   const parsed = JSON.parse(lineItemsRaw) as unknown;
   return Array.isArray(parsed) ? (parsed as CompatibilityLineItem[]) : [];
+}
+
+type ChannelEventRequestBody = {
+  channel?: string;
+  surface?: "pixel" | "server";
+  destination?: string;
+  pixel_id?: string;
+  event_name?: string;
+  transaction_id?: string;
+  status?: "ok" | "error";
+  error_message?: string;
+  observed_at?: string;
+};
+
+function parseChannelEventBody(body: ChannelEventRequestBody): { event?: ChannelEventInput; error?: string } {
+  if (
+    !body.channel ||
+    (body.surface !== "pixel" && body.surface !== "server") ||
+    !body.destination ||
+    !body.event_name ||
+    (body.status !== "ok" && body.status !== "error")
+  ) {
+    return {
+      error: "channel, surface, destination, event_name, and status are required"
+    };
+  }
+
+  return {
+    event: {
+      channel: body.channel,
+      surface: body.surface,
+      destination: body.destination,
+      pixel_id: body.pixel_id,
+      event_name: body.event_name,
+      transaction_id: body.transaction_id,
+      status: body.status,
+      error_message: body.error_message,
+      observed_at: body.observed_at
+    }
+  };
 }
 
 app.get("/health", (_req, res) => {
@@ -543,43 +584,17 @@ app.get("/compare/parity", requireIngressToken, (_req, res) => {
 });
 
 app.post("/compare/channel-event", requireIngressToken, (req, res) => {
-  const body = req.body as {
-    channel?: string;
-    surface?: "pixel" | "server";
-    destination?: string;
-    pixel_id?: string;
-    event_name?: string;
-    transaction_id?: string;
-    status?: "ok" | "error";
-    error_message?: string;
-    observed_at?: string;
-  };
+  const parsed = parseChannelEventBody(req.body as ChannelEventRequestBody);
 
-  if (
-    !body.channel ||
-    (body.surface !== "pixel" && body.surface !== "server") ||
-    !body.destination ||
-    !body.event_name ||
-    (body.status !== "ok" && body.status !== "error")
-  ) {
+  if (!parsed.event) {
     res.status(400).json({
       ok: false,
-      error: "channel, surface, destination, event_name, and status are required"
+      error: parsed.error
     });
     return;
   }
 
-  const item = ingestChannelEvent({
-    channel: body.channel,
-    surface: body.surface,
-    destination: body.destination,
-    pixel_id: body.pixel_id,
-    event_name: body.event_name,
-    transaction_id: body.transaction_id,
-    status: body.status,
-    error_message: body.error_message,
-    observed_at: body.observed_at
-  });
+  const item = ingestChannelEvent(parsed.event);
 
   incrementCounter("compare_channel_events_received");
 
@@ -587,6 +602,47 @@ app.post("/compare/channel-event", requireIngressToken, (req, res) => {
     ok: true,
     status: "channel_event_recorded",
     item
+  });
+});
+
+app.post("/compare/channel-event/batch", requireIngressToken, (req, res) => {
+  const body = req.body as { events?: ChannelEventRequestBody[] };
+  const events = Array.isArray(body.events) ? body.events : [];
+
+  if (events.length === 0) {
+    res.status(400).json({
+      ok: false,
+      error: "events array is required"
+    });
+    return;
+  }
+
+  const accepted: ReturnType<typeof ingestChannelEvent>[] = [];
+  const rejected: Array<{ index: number; error: string }> = [];
+
+  for (let i = 0; i < events.length; i += 1) {
+    const parsed = parseChannelEventBody(events[i] ?? {});
+    if (!parsed.event) {
+      rejected.push({ index: i, error: parsed.error ?? "Invalid channel event" });
+      continue;
+    }
+
+    const item = ingestChannelEvent(parsed.event);
+    accepted.push(item);
+    incrementCounter("compare_channel_events_received");
+  }
+
+  const statusCode = rejected.length > 0 ? 207 : 202;
+  res.status(statusCode).json({
+    ok: rejected.length === 0,
+    status: rejected.length === 0 ? "channel_events_recorded" : "channel_events_partially_recorded",
+    counts: {
+      received: events.length,
+      accepted: accepted.length,
+      rejected: rejected.length
+    },
+    accepted,
+    rejected
   });
 });
 
