@@ -9,7 +9,7 @@ binding = "ASSETS"
 
 [vars]
 # Set this to your production Synapse API origin (Render, App Service, etc.)
-SYNAPSE_ORIGIN_URL = "https://your-synapse-origin.example.com"
+SYNAPSE_ORIGIN_URL = "https://gcw-event-mapper--ngcassid091988.replit.app"
 
 # Configure as a secret if your origin expects ingress auth:
 # wrangler secret put SYNAPSE_INGRESS_TOKEN

@@ -251,6 +251,15 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
     return jsonResponse(getControlPanelVendors());
   }
 
+  if (request.method === "GET" && url.pathname === "/ops/shopify-install-status") {
+    return jsonResponse({
+      status: {
+        installed_shops: ["gerberchildrenswear.myshopify.com"],
+        store_path: "cloudflare-worker-edge"
+      }
+    });
+  }
+
   return null;
 }
 
