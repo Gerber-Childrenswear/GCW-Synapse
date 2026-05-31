@@ -6,6 +6,7 @@ workers_dev = true
 [assets]
 directory = "apps/admin/dist"
 binding = "ASSETS"
+run_worker_first = true
 
 [vars]
 # Set this to your production Synapse API origin (Render, App Service, etc.)

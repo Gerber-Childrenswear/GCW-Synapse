@@ -176,9 +176,10 @@ function getWorkerUptimeSeconds(): number {
 function addSecurityHeaders(response: Response): Response {
   const headers = new Headers(response.headers);
   headers.set("X-Content-Type-Options", "nosniff");
-  headers.set("X-Frame-Options", "DENY");
   headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   headers.set("X-XSS-Protection", "0");
+  // Allow Shopify embedded app iframing while still restricting other parents.
+  headers.set("Content-Security-Policy", "frame-ancestors 'self' https://admin.shopify.com https://*.myshopify.com");
 
   return new Response(response.body, {
     status: response.status,
