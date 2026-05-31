@@ -1,0 +1,151 @@
+﻿{
+  "exportFormatVersion": 2,
+  "exportTime": "2026-05-30 10:00:00",
+  "containerVersion": {
+    "path": "accounts/1/containers/1/versions/1",
+    "accountId": "1",
+    "containerId": "1",
+    "containerVersionId": "1",
+    "container": {
+      "publicId": "GTM-TEST"
+    },
+    "tag": [
+      {
+        "accountId": "1",
+        "containerId": "1",
+        "tagId": "10",
+        "name": "Tag - Purchase",
+        "type": "html",
+        "parameter": [
+          {
+            "type": "TEMPLATE",
+            "key": "html",
+            "value": "<script>console.log('{{Var Needed}}')</script>"
+          }
+        ],
+        "firingTriggerId": ["100"],
+        "parentFolderId": "901"
+      },
+      {
+        "accountId": "1",
+        "containerId": "1",
+        "tagId": "11",
+        "name": "Tag - Pageview",
+        "type": "html",
+        "parameter": [
+          {
+            "type": "TEMPLATE",
+            "key": "html",
+            "value": "<script>console.log('pv')</script>"
+          }
+        ],
+        "firingTriggerId": ["101"],
+        "parentFolderId": "902"
+      },
+      {
+        "accountId": "1",
+        "containerId": "1",
+        "tagId": "12",
+        "name": "Tag - Paused",
+        "type": "html",
+        "parameter": [
+          {
+            "type": "TEMPLATE",
+            "key": "html",
+            "value": "<script>console.log('paused')</script>"
+          }
+        ],
+        "firingTriggerId": ["101"],
+        "parentFolderId": "902"
+      }
+    ],
+    "trigger": [
+      {
+        "accountId": "1",
+        "containerId": "1",
+        "triggerId": "100",
+        "name": "Event - Purchase",
+        "type": "CUSTOM_EVENT",
+        "customEventFilter": [
+          {
+            "type": "EQUALS",
+            "parameter": [
+              {
+                "type": "TEMPLATE",
+                "key": "arg0",
+                "value": "{{_event}}"
+              },
+              {
+                "type": "TEMPLATE",
+                "key": "arg1",
+                "value": "dl_purchase"
+              }
+            ]
+          }
+        ],
+        "parentFolderId": "901"
+      },
+      {
+        "accountId": "1",
+        "containerId": "1",
+        "triggerId": "101",
+        "name": "All Pages - Pageview",
+        "type": "PAGEVIEW",
+        "parentFolderId": "902"
+      }
+    ],
+    "variable": [
+      {
+        "accountId": "1",
+        "containerId": "1",
+        "variableId": "200",
+        "name": "Var Needed",
+        "type": "jsm",
+        "parameter": [
+          {
+            "type": "TEMPLATE",
+            "key": "javascript",
+            "value": "function(){return '{{Nested Var}}';}"
+          }
+        ],
+        "parentFolderId": "901"
+      },
+      {
+        "accountId": "1",
+        "containerId": "1",
+        "variableId": "201",
+        "name": "Nested Var",
+        "type": "c",
+        "parameter": [
+          {
+            "type": "TEMPLATE",
+            "key": "value",
+            "value": "nested"
+          }
+        ],
+        "parentFolderId": "901"
+      }
+    ],
+    "folder": [
+      {
+        "accountId": "1",
+        "containerId": "1",
+        "folderId": "901",
+        "name": "Purchase"
+      },
+      {
+        "accountId": "1",
+        "containerId": "1",
+        "folderId": "902",
+        "name": "Global"
+      }
+    ],
+    "builtInVariable": [
+      {
+        "accountId": "1",
+        "containerId": "1",
+        "type": "EVENT"
+      }
+    ]
+  }
+}

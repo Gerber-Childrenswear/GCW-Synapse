@@ -1,0 +1,71 @@
+services:
+  - type: web
+    name: gcw-synapse
+    runtime: node
+    region: ohio
+    plan: starter
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: false
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # ── Required ────────────────────────────────────────────────────────────
+      - key: GTM_SERVER_URL
+        sync: false   # set in Render dashboard
+
+      - key: SHOPIFY_WEBHOOK_SECRET
+        sync: false   # set in Render dashboard
+
+      # ── Admin + signing secrets ──────────────────────────────────────────────
+      - key: INGRESS_SHARED_TOKEN
+        sync: false   # set in Render dashboard — protects /diagnostics /ops/* /compare/* etc.
+
+      - key: GTM_FORWARD_SHARED_SECRET
+        sync: false   # set in Render dashboard — outbound HMAC signing (≥ 16 chars)
+
+      # ── Public pixel boundary ────────────────────────────────────────────────
+      - key: PUBLIC_EVENT_ALLOWED_ORIGINS
+        value: https://www.gerberchildrenswear.com,https://gerberchildrenswear.myshopify.com
+
+      - key: PUBLIC_EVENT_RATE_LIMIT_PER_MINUTE
+        value: "120"
+
+      # ── Runtime mode (start shadow, flip to forward after parity check) ──────
+      - key: RUNTIME_MODE
+        value: shadow_compare
+
+      # ── Launch guard ─────────────────────────────────────────────────────────
+      - key: STRICT_LAUNCH_GUARD
+        value: "true"
+
+      - key: LAUNCH_MAX_DEAD_LETTER_RECORDS
+        value: "0"
+
+      - key: LAUNCH_BLOCK_ON_THEME_CONFLICTS
+        value: "true"
+
+      - key: LAUNCH_THEME_AUDIT_PATH
+        value: docs/gtm/THEME_TRACKING_AUDIT.md
+
+      # ── Sensible production defaults ─────────────────────────────────────────
+      - key: PORT
+        value: "4000"
+
+      - key: SHUTDOWN_TIMEOUT_MS
+        value: "10000"
+
+      - key: ALLOWED_WEBHOOK_TOPICS
+        value: orders/create,orders/paid,refunds/create
+
+      - key: SHOP_DEFAULT_CURRENCY
+        value: USD
+
+      - key: SHADOW_COMPARE_MISMATCH_ALERT_PCT
+        value: "5"
+
+      - key: CHANNEL_HEALTH_STALE_MINUTES
+        value: "90"

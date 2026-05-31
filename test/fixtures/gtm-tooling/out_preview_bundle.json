@@ -1,0 +1,187 @@
+{
+  "exportFormatVersion": 2,
+  "exportTime": "2026-05-31 04:30:09",
+  "containerVersion": {
+    "path": "accounts/1/containers/1/versions/1",
+    "accountId": "1",
+    "containerId": "1",
+    "containerVersionId": "1",
+    "container": {
+      "publicId": "GTM-TEST"
+    },
+    "tag": [
+      {
+        "accountId": "1",
+        "containerId": "1",
+        "tagId": "400000",
+        "name": "Synapse Preview - Tag - Purchase",
+        "type": "html",
+        "parameter": [
+          {
+            "type": "TEMPLATE",
+            "key": "html",
+            "value": "<script>console.log('{{Var Needed}}')</script>"
+          }
+        ],
+        "firingTriggerId": [
+          "300000"
+        ],
+        "parentFolderId": "19901",
+        "paused": true,
+        "notes": "Synapse preview clone of tag 10. Default paused=true for controlled side-by-side validation"
+      },
+      {
+        "accountId": "1",
+        "containerId": "1",
+        "tagId": "400001",
+        "name": "Synapse Preview - Tag - Pageview",
+        "type": "html",
+        "parameter": [
+          {
+            "type": "TEMPLATE",
+            "key": "html",
+            "value": "<script>console.log('pv')</script>"
+          }
+        ],
+        "firingTriggerId": [
+          "300001"
+        ],
+        "parentFolderId": "19901",
+        "paused": true,
+        "notes": "Synapse preview clone of tag 11. Default paused=true for controlled side-by-side validation"
+      }
+    ],
+    "trigger": [
+      {
+        "accountId": "1",
+        "containerId": "1",
+        "triggerId": "300000",
+        "name": "Synapse Preview - Event - Purchase",
+        "type": "CUSTOM_EVENT",
+        "customEventFilter": [
+          {
+            "type": "EQUALS",
+            "parameter": [
+              {
+                "type": "TEMPLATE",
+                "key": "arg0",
+                "value": "{{_event}}"
+              },
+              {
+                "type": "TEMPLATE",
+                "key": "arg1",
+                "value": "gcw_synapse_event"
+              }
+            ]
+          }
+        ],
+        "parentFolderId": "19901",
+        "filter": [
+          {
+            "type": "EQUALS",
+            "parameter": [
+              {
+                "type": "TEMPLATE",
+                "key": "arg0",
+                "value": "{{dlv - Synapse - Event Name}}"
+              },
+              {
+                "type": "TEMPLATE",
+                "key": "arg1",
+                "value": "purchase"
+              }
+            ]
+          }
+        ],
+        "notes": "Synapse preview clone of trigger 100. originalType=CUSTOM_EVENT, mappedEvent=purchase. Fires on gcw_synapse_event and optional event_name mapping"
+      },
+      {
+        "accountId": "1",
+        "containerId": "1",
+        "triggerId": "300001",
+        "name": "Synapse Preview - All Pages - Pageview",
+        "type": "CUSTOM_EVENT",
+        "parentFolderId": "19901",
+        "customEventFilter": [
+          {
+            "type": "EQUALS",
+            "parameter": [
+              {
+                "type": "TEMPLATE",
+                "key": "arg0",
+                "value": "{{_event}}"
+              },
+              {
+                "type": "TEMPLATE",
+                "key": "arg1",
+                "value": "gcw_synapse_event"
+              }
+            ]
+          }
+        ],
+        "filter": [
+          {
+            "type": "EQUALS",
+            "parameter": [
+              {
+                "type": "TEMPLATE",
+                "key": "arg0",
+                "value": "{{dlv - Synapse - Event Name}}"
+              },
+              {
+                "type": "TEMPLATE",
+                "key": "arg1",
+                "value": "page_view"
+              }
+            ]
+          }
+        ],
+        "notes": "Synapse preview clone of trigger 101. originalType=PAGEVIEW, mappedEvent=page_view. Fires on gcw_synapse_event and optional event_name mapping"
+      }
+    ],
+    "variable": [
+      {
+        "accountId": "1",
+        "containerId": "1",
+        "variableId": "19901",
+        "name": "dlv - Synapse - Event Name",
+        "type": "v",
+        "parameter": [
+          {
+            "type": "INTEGER",
+            "key": "dataLayerVersion",
+            "value": "2"
+          },
+          {
+            "type": "BOOLEAN",
+            "key": "setDefaultValue",
+            "value": "false"
+          },
+          {
+            "type": "TEMPLATE",
+            "key": "name",
+            "value": "event_name"
+          }
+        ],
+        "parentFolderId": "19901",
+        "formatValue": {}
+      }
+    ],
+    "folder": [
+      {
+        "accountId": "1",
+        "containerId": "1",
+        "folderId": "19901",
+        "name": "GCW Synapse Side-by-Side Preview",
+        "notes": "Generated preview tags/triggers rewired to gcw_synapse_event. Enable in small batches during validation."
+      }
+    ],
+    "builtInVariable": [
+      {
+        "accountId": "1",
+        "containerId": "1",
+        "type": "EVENT"
+      }
+    ]
+  }
+}

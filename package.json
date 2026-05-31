@@ -1,0 +1,51 @@
+{
+  "name": "gcw-synapse",
+  "version": "1.0.0",
+  "description": "Data Engine replacement for Elevar",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/**/*.test.ts",
+    "gtm:bundle:elevar": "node scripts/generateElevarRebuildBundle.js",
+    "gtm:validate:elevar": "node scripts/validateElevarRebuildBundle.js",
+    "gtm:smoke:elevar": "node scripts/smokeTestElevarBundle.js",
+    "gtm:bundle:synapse-preview": "node scripts/generateSynapsePreviewBundle.js",
+    "gtm:validate:synapse-preview": "node scripts/validateSynapsePreviewBundle.js",
+    "gtm:smoke:synapse-preview": "node scripts/smokeTestElevarBundle.js --bundle docs/gtm/GTM-TKW58K8_synapse_side_by_side_preview_bundle.json --allow-external-refs",
+    "gtm:report:placeholders": "node scripts/generateSynapsePlaceholderReport.js",
+    "replay:webhook:create": "tsx scripts/replayWebhook.ts orders/create",
+    "replay:webhook:paid": "tsx scripts/replayWebhook.ts orders/paid",
+    "replay:dead-letter": "tsx scripts/replayDeadLetter.ts",
+    "replay:dead-letter:dry": "tsx scripts/replayDeadLetter.ts --dry-run",
+    "theme:audit:tracking": "tsx scripts/analyzeThemeTracking.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Gerber-Childrenswear/GCW-Synapse.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Gerber-Childrenswear/GCW-Synapse/issues"
+  },
+  "homepage": "https://github.com/Gerber-Childrenswear/GCW-Synapse#readme",
+  "dependencies": {
+    "axios": "^1.16.1",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.7.0",
+    "@types/supertest": "^7.2.0",
+    "supertest": "^7.2.2",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  }
+}

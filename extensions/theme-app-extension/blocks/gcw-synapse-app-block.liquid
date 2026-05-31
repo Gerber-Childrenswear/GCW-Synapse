@@ -1,0 +1,27 @@
+{% schema %}
+{
+  "name": "GCW Synapse",
+  "target": "body",
+  "settings": [
+    {
+      "type": "text",
+      "id": "synapse_endpoint",
+      "label": "Synapse endpoint",
+      "default": "/event"
+    },
+    {
+      "type": "text",
+      "id": "ingress_token",
+      "label": "Ingress token (optional)",
+      "default": ""
+    }
+  ]
+}
+{% endschema %}
+
+<script>
+  window.GCW_SYNAPSE_ENDPOINT = {{ block.settings.synapse_endpoint | json }};
+  window.GCW_SYNAPSE_INGRESS_TOKEN = {{ block.settings.ingress_token | json }};
+</script>
+
+{{ 'gcw-synapse.js' | asset_url | script_tag }}

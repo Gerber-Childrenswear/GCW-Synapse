@@ -1,0 +1,152 @@
+{
+  "exportFormatVersion": 2,
+  "exportTime": "2026-05-29 18:40:00",
+  "containerVersion": {
+    "path": "accounts/4131312986/containers/9938197/versions/0",
+    "accountId": "4131312986",
+    "containerId": "9938197",
+    "containerVersionId": "0",
+    "folder": [
+      {
+        "accountId": "4131312986",
+        "containerId": "9938197",
+        "folderId": "9901",
+        "name": "GCW Synapse Runtime",
+        "notes": "Companion import for gcw_synapse_event bridge variables/triggers."
+      }
+    ],
+    "variable": [
+      {
+        "accountId": "4131312986",
+        "containerId": "9938197",
+        "variableId": "9901",
+        "name": "dlv - Synapse - Event Name",
+        "type": "v",
+        "parameter": [
+          { "type": "INTEGER", "key": "dataLayerVersion", "value": "2" },
+          { "type": "BOOLEAN", "key": "setDefaultValue", "value": "false" },
+          { "type": "TEMPLATE", "key": "name", "value": "event_name" }
+        ],
+        "parentFolderId": "9901",
+        "formatValue": {}
+      },
+      {
+        "accountId": "4131312986",
+        "containerId": "9938197",
+        "variableId": "9902",
+        "name": "dlv - Synapse - Event ID",
+        "type": "v",
+        "parameter": [
+          { "type": "INTEGER", "key": "dataLayerVersion", "value": "2" },
+          { "type": "BOOLEAN", "key": "setDefaultValue", "value": "false" },
+          { "type": "TEMPLATE", "key": "name", "value": "event_id" }
+        ],
+        "parentFolderId": "9901",
+        "formatValue": {}
+      },
+      {
+        "accountId": "4131312986",
+        "containerId": "9938197",
+        "variableId": "9903",
+        "name": "dlv - Synapse - Runtime Payload",
+        "type": "v",
+        "parameter": [
+          { "type": "INTEGER", "key": "dataLayerVersion", "value": "2" },
+          { "type": "BOOLEAN", "key": "setDefaultValue", "value": "false" },
+          { "type": "TEMPLATE", "key": "name", "value": "gcwSynapse" }
+        ],
+        "parentFolderId": "9901",
+        "formatValue": {}
+      },
+      {
+        "accountId": "4131312986",
+        "containerId": "9938197",
+        "variableId": "9904",
+        "name": "dlv - Synapse - Visitor Type",
+        "type": "v",
+        "parameter": [
+          { "type": "INTEGER", "key": "dataLayerVersion", "value": "2" },
+          { "type": "BOOLEAN", "key": "setDefaultValue", "value": "false" },
+          { "type": "TEMPLATE", "key": "name", "value": "gcwSynapse.customer.visitor_type" }
+        ],
+        "parentFolderId": "9901",
+        "formatValue": {}
+      },
+      {
+        "accountId": "4131312986",
+        "containerId": "9938197",
+        "variableId": "9905",
+        "name": "dlv - Synapse - Consent Analytics",
+        "type": "v",
+        "parameter": [
+          { "type": "INTEGER", "key": "dataLayerVersion", "value": "2" },
+          { "type": "BOOLEAN", "key": "setDefaultValue", "value": "false" },
+          { "type": "TEMPLATE", "key": "name", "value": "gcwSynapse.consent.analytics_storage" }
+        ],
+        "parentFolderId": "9901",
+        "formatValue": {}
+      }
+    ],
+    "trigger": [
+      {
+        "accountId": "4131312986",
+        "containerId": "9938197",
+        "triggerId": "9901",
+        "name": "Event - Synapse Runtime",
+        "type": "CUSTOM_EVENT",
+        "customEventFilter": [
+          {
+            "type": "EQUALS",
+            "parameter": [
+              { "type": "TEMPLATE", "key": "arg0", "value": "{{_event}}" },
+              { "type": "TEMPLATE", "key": "arg1", "value": "gcw_synapse_event" }
+            ]
+          }
+        ],
+        "parentFolderId": "9901"
+      }
+    ],
+    "tag": [
+      {
+        "accountId": "4131312986",
+        "containerId": "9938197",
+        "tagId": "9901",
+        "name": "GCW Synapse - Runtime Bridge to Legacy dl_ Events",
+        "type": "html",
+        "parameter": [
+          {
+            "type": "TEMPLATE",
+            "key": "html",
+            "value": "<script>(function(){var name={{dlv - Synapse - Event Name}};if(!name){return;}var legacy='dl_'+String(name);window.dataLayer=window.dataLayer||[];window.dataLayer.push({event:legacy,event_id:{{dlv - Synapse - Event ID}},gcwSynapse:{{dlv - Synapse - Runtime Payload}}});})();</script>"
+          },
+          {
+            "type": "BOOLEAN",
+            "key": "supportDocumentWrite",
+            "value": "false"
+          }
+        ],
+        "firingTriggerId": ["9901"],
+        "parentFolderId": "9901",
+        "monitoringMetadata": {
+          "type": "MAP"
+        },
+        "consentSettings": {
+          "consentStatus": "NEEDED",
+          "consentType": {
+            "type": "LIST",
+            "list": [
+              { "type": "TEMPLATE", "value": "analytics_storage" }
+            ]
+          }
+        }
+      }
+    ],
+    "builtInVariable": [
+      {
+        "accountId": "4131312986",
+        "containerId": "9938197",
+        "type": "EVENT"
+      }
+    ]
+  }
+}
