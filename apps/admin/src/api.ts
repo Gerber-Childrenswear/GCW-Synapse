@@ -1,15 +1,48 @@
-export type RuntimeSummary = {
-  telemetry: {
+export type RuntimeStatus = {
+  status: string;
+  webhooksReceived: number;
+  eventsGenerated: number;
+  dbConnected: boolean;
+  uptime: number;
+  vendorAdapters: Array<{ name: string; enabled: boolean }>;
+};
+
+export type EventSchema = {
+  eventName: string;
+  description: string;
+  vendors: string[];
+  fields: Array<{
+    name: string;
+    type: string;
+    required: boolean;
+    path: string;
+    description: string;
+    example: string;
+  }>;
+};
+
+export type ShadowStats = {
+  totalComparisons: number;
+  avgMatchScore: number;
+  eventBreakdown: Array<{ event: string; count: number }>;
+};
+
+export type QaChecklistItem = {
+  id: string;
+  category: string;
+  description: string;
+  status: "pending" | "pass" | "fail";
+  notes: string | null;
+};
+
+export type SmokeRunResult = {
+  status: string;
+  runAt: string;
+  summary: {
     total: number;
-    forwarded: number;
-    suppressed: number;
-    duplicate: number;
-    last_event_at?: string;
-  };
-  commerce_shield: {
-    human_sessions: number;
-    bot_sessions: number;
-    suppressed_events: number;
+    pass: number;
+    fail: number;
+    pending: number;
   };
 };
 
@@ -35,17 +68,46 @@ async function request<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-export async function getRuntimeSummary(): Promise<RuntimeSummary> {
-  return request<RuntimeSummary>("/runtime/summary");
+async function requestWithMethod<T>(path: string, method: "GET" | "POST"): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (INGRESS_TOKEN) {
+    headers["X-Synapse-Token"] = INGRESS_TOKEN;
+  }
+
+  const res = await fetch(`${BASE_URL}${path}`, { method, headers });
+  if (!res.ok) {
+    throw new Error(`Request failed: ${path}`);
+  }
+
+  return (await res.json()) as T;
 }
 
-export async function getRuntimeRecent(limit = 50): Promise<unknown[]> {
-  const data = await request<{ events: unknown[] }>(`/runtime/recent?limit=${limit}`);
-  return data.events;
+export async function getRuntimeStatus(): Promise<RuntimeStatus> {
+  return request<RuntimeStatus>("/api/status");
 }
 
-export async function getValidationModel(): Promise<unknown> {
-  return request("/compare/ui-model");
+export async function getEventSchemas(): Promise<EventSchema[]> {
+  return request<EventSchema[]>("/api/events/schemas");
+}
+
+export async function getWebhookLog(limit = 50): Promise<unknown[]> {
+  return request<unknown[]>(`/api/webhooks/log?limit=${limit}`);
+}
+
+export async function getShadowStats(): Promise<ShadowStats> {
+  return request<ShadowStats>("/api/shadow/stats");
+}
+
+export async function getShadowComparisons(limit = 50): Promise<unknown[]> {
+  return request<unknown[]>(`/api/shadow/comparisons?limit=${limit}`);
+}
+
+export async function getQaChecklist(): Promise<QaChecklistItem[]> {
+  return request<QaChecklistItem[]>("/api/qa/checklist");
+}
+
+export async function runQaSmokeTests(): Promise<SmokeRunResult> {
+  return requestWithMethod<SmokeRunResult>("/api/qa/smoke", "POST");
 }
 
 export async function getShopifyInstallStatus(): Promise<ShopifyInstallStatus> {

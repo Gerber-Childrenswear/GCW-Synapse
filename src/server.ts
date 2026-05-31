@@ -45,6 +45,7 @@ import {
   getShadowCompareSummary,
   ingestElevarShadow
 } from "./services/shadowCompare";
+import { getControlPanelChecklist, getControlPanelSchemas, getControlPanelVendors } from "./services/controlPanelData";
 import { resolveVisitorType } from "./services/visitorType";
 import { normalizeCustomerPhone } from "./services/customerPhone";
 import {
@@ -162,6 +163,74 @@ app.get("/runtime/recent", requireIngressToken, (req, res) => {
   res.status(200).json({
     ok: true,
     events: getRuntimeTelemetry(limit)
+  });
+});
+
+app.get("/api/status", requireIngressToken, (_req, res) => {
+  const metrics = getMetricsSnapshot();
+
+  res.status(200).json({
+    status: "ok",
+    webhooksReceived: metrics.counters.webhooks_received,
+    eventsGenerated: metrics.counters.runtime_events_forwarded,
+    dbConnected: true,
+    uptime: Number.parseFloat(process.uptime().toFixed(3)),
+    vendorAdapters: getControlPanelVendors()
+  });
+});
+
+app.get("/api/events/schemas", requireIngressToken, (_req, res) => {
+  res.status(200).json(getControlPanelSchemas());
+});
+
+app.get("/api/webhooks/log", requireIngressToken, (req, res) => {
+  const limitRaw = typeof req.query.limit === "string" ? req.query.limit : "50";
+  const parsedLimit = Number.parseInt(limitRaw, 10);
+  const limit = Number.isFinite(parsedLimit) ? parsedLimit : 50;
+
+  res.status(200).json(getRuntimeTelemetry(limit));
+});
+
+app.get("/api/shadow/stats", requireIngressToken, (_req, res) => {
+  const parity = getShadowParityReport(env.SHADOW_COMPARE_MISMATCH_ALERT_PCT);
+  const counts = getShadowCompareSummary().counts;
+
+  res.status(200).json({
+    totalComparisons: counts.paired_events,
+    avgMatchScore: parity.matched_rate_pct,
+    eventBreakdown: [
+      { event: "paired", count: counts.paired_events },
+      { event: "matched", count: counts.matched_pairs },
+      { event: "mismatched", count: counts.mismatched_pairs },
+      { event: "synapse_only", count: counts.synapse_only },
+      { event: "elevar_only", count: counts.elevar_only }
+    ]
+  });
+});
+
+app.get("/api/shadow/comparisons", requireIngressToken, (req, res) => {
+  const limitRaw = typeof req.query.limit === "string" ? req.query.limit : "50";
+  const parsedLimit = Number.parseInt(limitRaw, 10);
+  const limit = Number.isFinite(parsedLimit) ? parsedLimit : 50;
+
+  res.status(200).json(getRecentShadowEvents(limit));
+});
+
+app.get("/api/qa/checklist", requireIngressToken, (_req, res) => {
+  res.status(200).json(getControlPanelChecklist());
+});
+
+app.post("/api/qa/smoke", requireIngressToken, (_req, res) => {
+  const checklist = getControlPanelChecklist();
+  res.status(200).json({
+    status: "ok",
+    runAt: new Date().toISOString(),
+    summary: {
+      total: checklist.length,
+      pass: checklist.filter((item) => item.status === "pass").length,
+      fail: checklist.filter((item) => item.status === "fail").length,
+      pending: checklist.filter((item) => item.status === "pending").length
+    }
   });
 });
 
