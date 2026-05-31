@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  ApiRequestError,
   getEventSchemas,
   getQaChecklist,
   getRuntimeStatus,
@@ -34,6 +35,73 @@ const NAV_ITEMS: Array<{ id: NavTab; label: string; subtitle: string }> = [
   { id: "qa", label: "QA Smoke Tests", subtitle: "Cutover validation checklist" },
   { id: "edge", label: "Edge Ops", subtitle: "Toggles and route health checks" }
 ];
+
+const SIMPLE_NAV_IDS: NavTab[] = ["runtime", "edge", "qa"];
+
+type FriendlyError = {
+  title: string;
+  why: string;
+  steps: string[];
+};
+
+function getFriendlyError(error: unknown): FriendlyError {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 501) {
+      return {
+        title: "This route is intentionally disabled",
+        why: "The app is running in edge-only mode and this endpoint is blocked on purpose.",
+        steps: [
+          "Use the Edge Ops tab and keep guardrail checks enabled.",
+          "Ignore this if the check expected status is 501.",
+          "If you need this route, switch to a backend-supported mode first."
+        ]
+      };
+    }
+
+    if (error.status === 400) {
+      return {
+        title: "The request format was invalid",
+        why: "One of the fields sent to the API is missing or malformed.",
+        steps: [
+          "Go to Edge Ops and run checks again.",
+          "Turn on Include Write Checks only after base checks are green.",
+          "Reload the page if this keeps happening."
+        ]
+      };
+    }
+
+    if (error.status >= 500) {
+      return {
+        title: "The server had a temporary issue",
+        why: "Cloudflare edge endpoint returned a server error.",
+        steps: [
+          "Wait 10 seconds and click Try Again.",
+          "Run Edge Ops checks to see which endpoint failed.",
+          "If many endpoints fail, redeploy the worker."
+        ]
+      };
+    }
+  }
+
+  const message = error instanceof Error ? error.message : "Unknown error";
+  if (message.toLowerCase().includes("failed to fetch")) {
+    return {
+      title: "Could not reach the app",
+      why: "Your browser could not connect to the Cloudflare worker.",
+      steps: [
+        "Check your internet connection.",
+        "Refresh this page.",
+        "Open Edge Ops and run checks once the page loads."
+      ]
+    };
+  }
+
+  return {
+    title: "Something went wrong",
+    why: message,
+    steps: ["Click Try Again.", "Open Edge Ops and run checks.", "If issue remains, redeploy the app."]
+  };
+}
 
 type EdgeCheckGroup = "core" | "runtime" | "webhooks" | "guardrails";
 
@@ -142,6 +210,82 @@ function PanelHeader({ title, subtitle }: { title: string; subtitle: string }) {
       <h2>{title}</h2>
       <p>{subtitle}</p>
     </header>
+  );
+}
+
+function QuickStartPanel({
+  onGoRuntime,
+  onGoEdge,
+  onGoQa,
+  simpleMode,
+  onToggleSimpleMode
+}: {
+  onGoRuntime: () => void;
+  onGoEdge: () => void;
+  onGoQa: () => void;
+  simpleMode: boolean;
+  onToggleSimpleMode: (checked: boolean) => void;
+}) {
+  return (
+    <section className="panel panel-quickstart">
+      <div className="quickstart-header">
+        <div>
+          <h2>Start Here</h2>
+          <p>Three steps. Follow them in order.</p>
+        </div>
+        <label className="simple-mode-toggle">
+          <input type="checkbox" checked={simpleMode} onChange={(event) => onToggleSimpleMode(event.target.checked)} />
+          <span>Simple Mode</span>
+        </label>
+      </div>
+
+      <div className="quickstart-steps">
+        <button type="button" className="quick-step" onClick={onGoRuntime}>
+          <strong>1. Check Runtime</strong>
+          <span>Look for Connected database and Installed Shopify status.</span>
+        </button>
+        <button type="button" className="quick-step" onClick={onGoEdge}>
+          <strong>2. Run Health Checks</strong>
+          <span>Click Run Health Checks and confirm all pass.</span>
+        </button>
+        <button type="button" className="quick-step" onClick={onGoQa}>
+          <strong>3. Run QA Smoke</strong>
+          <span>Use Run All Smoke Tests before launch changes.</span>
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function ErrorHelpPanel({
+  error,
+  onRetry,
+  onOpenEdge
+}: {
+  error: unknown;
+  onRetry: () => void;
+  onOpenEdge: () => void;
+}) {
+  const friendly = getFriendlyError(error);
+
+  return (
+    <section className="error-banner error-help-panel">
+      <h3>{friendly.title}</h3>
+      <p>{friendly.why}</p>
+      <ol>
+        {friendly.steps.map((step) => (
+          <li key={step}>{step}</li>
+        ))}
+      </ol>
+      <div className="error-help-actions">
+        <button type="button" className="primary" onClick={onRetry}>
+          Try Again
+        </button>
+        <button type="button" className="secondary" onClick={onOpenEdge}>
+          Open Edge Ops
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -530,6 +674,18 @@ function EdgeOpsSection({
         <span className="muted">{lastRunAt ? `Last run: ${new Date(lastRunAt).toLocaleString()}` : "No checks run yet"}</span>
       </div>
 
+      <div className="edge-help-notes">
+        <p>
+          <strong>Pass</strong> means the endpoint returned the expected HTTP code.
+        </p>
+        <p>
+          <strong>501 Guardrail</strong> checks are expected to pass with 501 in edge-only mode.
+        </p>
+        <p>
+          Turn off <strong>Include Write Checks</strong> if you only want read-only checks.
+        </p>
+      </div>
+
       <div className="table-wrap">
         <table>
           <thead>
@@ -579,6 +735,8 @@ function EdgeOpsSection({
 export default function App() {
   const [activeTab, setActiveTab] = useState<NavTab>("runtime");
   const [state, setState] = useState<LoadState>({ loading: true, error: null });
+  const [lastError, setLastError] = useState<unknown>(null);
+  const [simpleMode, setSimpleMode] = useState(true);
 
   const [runtime, setRuntime] = useState<RuntimeStatus | null>(null);
   const [schemas, setSchemas] = useState<EventSchema[]>([]);
@@ -601,7 +759,21 @@ export default function App() {
   const [runningEdgeChecks, setRunningEdgeChecks] = useState(false);
   const [lastEdgeRunAt, setLastEdgeRunAt] = useState<string | null>(null);
 
+  const visibleNavItems = useMemo(
+    () => (simpleMode ? NAV_ITEMS.filter((item) => SIMPLE_NAV_IDS.includes(item.id)) : NAV_ITEMS),
+    [simpleMode]
+  );
+
   useEffect(() => {
+    if (!visibleNavItems.some((item) => item.id === activeTab)) {
+      setActiveTab("runtime");
+    }
+  }, [visibleNavItems, activeTab]);
+
+  function loadControlPanelData(): void {
+    setState({ loading: true, error: null });
+    setLastError(null);
+
     Promise.all([
       getRuntimeStatus(),
       getEventSchemas(),
@@ -620,16 +792,26 @@ export default function App() {
         setChecklist(checklistData);
         setShopifyStatus(shopifyData);
         setState({ loading: false, error: null });
+        setLastError(null);
       })
       .catch((error: unknown) => {
+        const friendly = getFriendlyError(error);
         setState({
           loading: false,
-          error: error instanceof Error ? error.message : "Failed to load Synapse control panel"
+          error: friendly.title
         });
+        setLastError(error);
       });
+  }
+
+  useEffect(() => {
+    loadControlPanelData();
   }, []);
 
-  const activeItem = useMemo(() => NAV_ITEMS.find((item) => item.id === activeTab) ?? NAV_ITEMS[0], [activeTab]);
+  const activeItem = useMemo(
+    () => visibleNavItems.find((item) => item.id === activeTab) ?? visibleNavItems[0],
+    [activeTab, visibleNavItems]
+  );
 
   const selectedEdgeChecks = useMemo(() => {
     const includeGroup = (group: EdgeCheckGroup): boolean => {
@@ -706,10 +888,12 @@ export default function App() {
       setEdgeResults(probes);
       setLastEdgeRunAt(new Date().toISOString());
     } catch (error) {
+      const friendly = getFriendlyError(error);
       setState((prev) => ({
         ...prev,
-        error: error instanceof Error ? error.message : "Edge health checks failed"
+        error: friendly.title
       }));
+      setLastError(error);
     } finally {
       setRunningEdgeChecks(false);
     }
@@ -722,10 +906,12 @@ export default function App() {
         setSmokeResult(result);
       })
       .catch((error: unknown) => {
+        const friendly = getFriendlyError(error);
         setState((prev) => ({
           loading: prev.loading,
-          error: error instanceof Error ? error.message : "Smoke test execution failed"
+          error: friendly.title
         }));
+        setLastError(error);
       })
       .finally(() => {
         setRunningSmoke(false);
@@ -741,7 +927,7 @@ export default function App() {
         </div>
 
         <nav>
-          {NAV_ITEMS.map((item) => (
+          {visibleNavItems.map((item) => (
             <button
               key={item.id}
               type="button"
@@ -758,12 +944,26 @@ export default function App() {
       </aside>
 
       <main className="content">
+        <QuickStartPanel
+          onGoRuntime={() => setActiveTab("runtime")}
+          onGoEdge={() => setActiveTab("edge")}
+          onGoQa={() => setActiveTab("qa")}
+          simpleMode={simpleMode}
+          onToggleSimpleMode={(checked) => setSimpleMode(checked)}
+        />
+
         <header className="page-header">
           <h1>GCW Synapse - Elevar Migration Control Panel</h1>
           <p>{activeItem.subtitle}</p>
         </header>
 
-        {state.error ? <div className="error-banner">{state.error}</div> : null}
+        {state.error && lastError ? (
+          <ErrorHelpPanel
+            error={lastError}
+            onRetry={loadControlPanelData}
+            onOpenEdge={() => setActiveTab("edge")}
+          />
+        ) : null}
         {state.loading ? <div className="loading">Loading control panel...</div> : null}
 
         {!state.loading ? (

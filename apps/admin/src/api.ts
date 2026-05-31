@@ -65,6 +65,20 @@ export type EndpointProbeResult = {
 const BASE_URL = (import.meta.env.VITE_SYNAPSE_BASE_URL as string | undefined) ?? "";
 const INGRESS_TOKEN = (import.meta.env.VITE_SYNAPSE_TOKEN as string | undefined) ?? "";
 
+export class ApiRequestError extends Error {
+  status: number;
+  path: string;
+  bodyText: string;
+
+  constructor(path: string, status: number, bodyText: string) {
+    super(`Request failed (${status}) for ${path}`);
+    this.name = "ApiRequestError";
+    this.status = status;
+    this.path = path;
+    this.bodyText = bodyText;
+  }
+}
+
 async function request<T>(path: string): Promise<T> {
   const headers: Record<string, string> = {};
   if (INGRESS_TOKEN) {
@@ -73,7 +87,8 @@ async function request<T>(path: string): Promise<T> {
 
   const res = await fetch(`${BASE_URL}${path}`, { headers });
   if (!res.ok) {
-    throw new Error(`Request failed: ${path}`);
+    const bodyText = await res.text();
+    throw new ApiRequestError(path, res.status, bodyText);
   }
 
   return (await res.json()) as T;
@@ -87,7 +102,8 @@ async function requestWithMethod<T>(path: string, method: "GET" | "POST"): Promi
 
   const res = await fetch(`${BASE_URL}${path}`, { method, headers });
   if (!res.ok) {
-    throw new Error(`Request failed: ${path}`);
+    const bodyText = await res.text();
+    throw new ApiRequestError(path, res.status, bodyText);
   }
 
   return (await res.json()) as T;
