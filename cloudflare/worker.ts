@@ -21,7 +21,7 @@ const PROXY_PREFIXES = [
   "/webhooks/"
 ];
 
-const workerBootMs = Date.now();
+let workerBootMs: number | null = null;
 const edgeWebhookLog: unknown[] = [];
 const edgeShadowComparisons: unknown[] = [];
 
@@ -48,6 +48,21 @@ function jsonResponse(payload: unknown, status = 200): Response {
       "content-type": "application/json"
     }
   });
+}
+
+function getWorkerUptimeSeconds(): number {
+  const now = Date.now();
+
+  if (
+    workerBootMs === null ||
+    !Number.isFinite(workerBootMs) ||
+    workerBootMs < 946684800000 ||
+    workerBootMs > now
+  ) {
+    workerBootMs = now;
+  }
+
+  return Math.max(1, Math.floor((now - workerBootMs) / 1000));
 }
 
 function addSecurityHeaders(response: Response): Response {
@@ -184,7 +199,7 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
       webhooksReceived: edgeWebhookLog.length,
       eventsGenerated: edgeShadowComparisons.length,
       dbConnected: true,
-      uptime: Math.max(1, Math.floor((Date.now() - workerBootMs) / 1000)),
+      uptime: getWorkerUptimeSeconds(),
       vendorAdapters: getControlPanelVendors()
     });
   }
