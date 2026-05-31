@@ -73,6 +73,43 @@ PowerShell alternative:
 Copy-Item .env.example .env
 ```
 
+## Shopify Internal App Setup
+
+Synapse is set up as an internal Shopify app for your organization, not a public OAuth app.
+The server currently uses the webhook secret and ingress token for runtime security; the Shopify
+app client ID and secret belong in your local `.env` or secret manager and are only needed if you
+add Shopify OAuth or app install flows later.
+
+The backend now exposes a protected status endpoint at `GET /ops/shopify-app` so you can verify
+that the internal app credentials and app URL are wired correctly.
+
+It also exposes a lightweight install flow:
+
+- `GET /auth/shopify/install?shop=your-shop.myshopify.com`
+- `GET /auth/shopify/callback`
+
+Installed shop tokens are stored locally in the token store path you configure with
+`SHOPIFY_TOKEN_STORE_PATH`.
+
+Recommended Shopify dashboard settings:
+
+- App type: internal or custom organization app
+- App URL: your deployed admin UI URL
+- Allowed redirection URLs: only needed if you add OAuth callbacks later
+- Theme app extension and customer events pixel: point them at the deployed Synapse URL
+
+Required backend env vars for the internal app:
+
+- `SHOPIFY_API_KEY`
+- `SHOPIFY_API_SECRET`
+- `SHOPIFY_APP_URL`
+- `SHOPIFY_APP_SCOPES`
+- `SHOPIFY_AUTH_CALLBACK_PATH`
+- `SHOPIFY_TOKEN_STORE_PATH` if you want a persistent token store outside memory
+
+If you want to keep this repo strictly relay-only, you can leave the Shopify API key/secret
+unused until you build the install flow.
+
 ## Production Build
 
 ```bash

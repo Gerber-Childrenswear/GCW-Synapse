@@ -26,6 +26,8 @@ import { resolveCurrencyCode } from "./services/currencyCode";
 import { getDeadLetterSummary } from "./services/deadLetter";
 import { resolveEventId } from "./services/eventId";
 import { forwardToGtmServer } from "./services/gtmForwarder";
+import { completeShopifyInstall, getShopifyInstallStatus, startShopifyInstall } from "./services/shopifyAuth";
+import { getShopifyAppConfig } from "./services/shopifyApp";
 import { resolveGa4MeasurementId } from "./services/ga4Measurement";
 import { getMetricsSnapshot, incrementCounter } from "./services/metrics";
 import { buildOpsAlerts } from "./services/opsAlerts";
@@ -260,6 +262,67 @@ app.get("/ops/dashboard", requireIngressToken, (_req, res) => {
       "If parity.status is alert, stay in shadow_compare until mismatch rate drops."
     ]
   });
+});
+
+app.get("/ops/shopify-app", requireIngressToken, (_req, res) => {
+  const shopifyApp = getShopifyAppConfig();
+
+  res.status(200).json({
+    ok: true,
+    app: {
+      configured: shopifyApp.configured,
+      api_key_present: shopifyApp.api_key_present,
+      app_url: shopifyApp.app_url,
+      scopes: shopifyApp.scopes
+    }
+  });
+});
+
+app.get("/ops/shopify-install-status", requireIngressToken, async (_req, res) => {
+  const status = await getShopifyInstallStatus();
+
+  res.status(200).json({
+    ok: true,
+    status
+  });
+});
+
+app.get("/auth/shopify/install", (req, res) => {
+  const shop = typeof req.query.shop === "string" ? req.query.shop.trim() : "";
+
+  if (!shop) {
+    res.status(400).json({ ok: false, error: "shop query parameter is required" });
+    return;
+  }
+
+  let install;
+  try {
+    install = startShopifyInstall(shop);
+  } catch (error) {
+    res.status(400).json({
+      ok: false,
+      error: error instanceof Error ? error.message : "Failed to start Shopify install"
+    });
+    return;
+  }
+
+  res.status(200).json({
+    ok: true,
+    shop,
+    install_url: install.url
+  });
+});
+
+app.get("/auth/shopify/callback", async (req, res) => {
+  try {
+    const result = await completeShopifyInstall(new URLSearchParams(req.query as Record<string, string>));
+    res.status(200).json({ ok: true, shop: result.shop, scope: result.scope });
+  } catch (error) {
+    res.status(400).json({
+      ok: false,
+      error: error instanceof Error ? error.message : "Shopify install callback failed"
+    });
+  }
 });
 
 app.get("/compatibility/ga4-id", requireIngressToken, (req, res) => {

@@ -11,7 +11,14 @@ import {
   Tabs,
   Text
 } from "@shopify/polaris";
-import { getRuntimeRecent, getRuntimeSummary, getValidationModel, type RuntimeSummary } from "./api";
+import {
+  getRuntimeRecent,
+  getRuntimeSummary,
+  getShopifyInstallStatus,
+  getValidationModel,
+  type RuntimeSummary,
+  type ShopifyInstallStatus
+} from "./api";
 import "./app.css";
 
 type TabKey =
@@ -66,14 +73,16 @@ export default function App() {
   const [summary, setSummary] = useState<RuntimeSummary | null>(null);
   const [recent, setRecent] = useState<unknown[]>([]);
   const [model, setModel] = useState<unknown>(null);
+  const [shopifyStatus, setShopifyStatus] = useState<ShopifyInstallStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([getRuntimeSummary(), getRuntimeRecent(50), getValidationModel()])
-      .then(([runtimeSummary, runtimeRecent, validationModel]) => {
+    Promise.all([getRuntimeSummary(), getRuntimeRecent(50), getValidationModel(), getShopifyInstallStatus()])
+      .then(([runtimeSummary, runtimeRecent, validationModel, installStatus]) => {
         setSummary(runtimeSummary);
         setRecent(runtimeRecent);
         setModel(validationModel);
+        setShopifyStatus(installStatus);
       })
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : "Failed to load Synapse data");
@@ -128,6 +137,20 @@ export default function App() {
                 <Text as="p">Human Sessions: {summary?.commerce_shield.human_sessions ?? 0}</Text>
                 <Text as="p">Bot Sessions: {summary?.commerce_shield.bot_sessions ?? 0}</Text>
                 <Text as="p">Suppressed Events: {summary?.commerce_shield.suppressed_events ?? 0}</Text>
+              </div>
+            </Card>
+          </Layout.Section>
+
+          <Layout.Section variant="oneHalf">
+            <Card>
+              <Text as="h3" variant="headingMd">
+                Shopify App Status
+              </Text>
+              <div className="spacerTop12">
+                <Text as="p">
+                  Installed Shops: {shopifyStatus?.installed_shops.length ? shopifyStatus.installed_shops.join(", ") : "None"}
+                </Text>
+                <Text as="p">Token Store: {shopifyStatus?.store_path ?? "Not configured"}</Text>
               </div>
             </Card>
           </Layout.Section>

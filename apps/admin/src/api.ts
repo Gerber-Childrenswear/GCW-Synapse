@@ -13,6 +13,11 @@ export type RuntimeSummary = {
   };
 };
 
+export type ShopifyInstallStatus = {
+  installed_shops: string[];
+  store_path: string;
+};
+
 const BASE_URL = (import.meta.env.VITE_SYNAPSE_BASE_URL as string | undefined) ?? "http://localhost:4000";
 const INGRESS_TOKEN = (import.meta.env.VITE_SYNAPSE_TOKEN as string | undefined) ?? "";
 
@@ -41,4 +46,9 @@ export async function getRuntimeRecent(limit = 50): Promise<unknown[]> {
 
 export async function getValidationModel(): Promise<unknown> {
   return request("/compare/ui-model");
+}
+
+export async function getShopifyInstallStatus(): Promise<ShopifyInstallStatus> {
+  const data = await request<{ status: ShopifyInstallStatus }>("/ops/shopify-install-status");
+  return data.status;
 }
