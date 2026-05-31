@@ -55,7 +55,7 @@ export type ShopifyInstallStatus = {
   store_path: string;
 };
 
-const BASE_URL = (import.meta.env.VITE_SYNAPSE_BASE_URL as string | undefined) ?? "http://localhost:4000";
+const BASE_URL = (import.meta.env.VITE_SYNAPSE_BASE_URL as string | undefined) ?? "";
 const INGRESS_TOKEN = (import.meta.env.VITE_SYNAPSE_TOKEN as string | undefined) ?? "";
 
 async function request<T>(path: string): Promise<T> {

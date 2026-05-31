@@ -124,7 +124,8 @@ This repo now supports a Cloudflare-hosted control plane using a Worker gateway 
 Architecture:
 
 - Cloudflare Worker serves the built admin UI from `apps/admin/dist`.
-- The same Worker proxies API/webhook/runtime routes to your production Synapse API origin.
+- The same Worker serves core control-plane endpoints natively at the edge.
+- Complex runtime/webhook/compare routes continue to proxy to your production Synapse API origin.
 - Optional ingress token is injected by the Worker, so the browser does not need to store it.
 
 Files:
@@ -153,7 +154,8 @@ npx wrangler secret put SYNAPSE_INGRESS_TOKEN
 
 Notes:
 
-- API paths proxied by the Worker include `/api/*`, `/runtime/*`, `/compare/*`, `/ops/*`, `/auth/*`, `/event`, `/webhooks/*`, and related compatibility endpoints.
+- Native edge endpoints include `/health`, `/api/status`, `/api/events/schemas`, `/api/qa/checklist`, `/api/qa/smoke`, `/api/shadow/stats`, `/api/shadow/comparisons`, `/api/vendors/matrix`.
+- Proxied paths include `/event`, `/runtime/*`, `/compare/*`, `/ops/*`, `/auth/*`, `/compatibility/*`, `/launch/*`, and `/webhooks/*`.
 - SPA routes are supported by serving `index.html` fallback for non-file paths.
 
 ## Tests
