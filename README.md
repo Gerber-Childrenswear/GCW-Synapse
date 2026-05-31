@@ -117,6 +117,45 @@ npm run build
 npm start
 ```
 
+## Cloudflare Hosting (Super Version)
+
+This repo now supports a Cloudflare-hosted control plane using a Worker gateway plus static admin assets.
+
+Architecture:
+
+- Cloudflare Worker serves the built admin UI from `apps/admin/dist`.
+- The same Worker proxies API/webhook/runtime routes to your production Synapse API origin.
+- Optional ingress token is injected by the Worker, so the browser does not need to store it.
+
+Files:
+
+- `wrangler.toml`
+- `cloudflare/worker.ts`
+
+Required configuration:
+
+- `SYNAPSE_ORIGIN_URL` (in `wrangler.toml` vars or environment)
+- Optional Worker secret: `SYNAPSE_INGRESS_TOKEN`
+
+Commands:
+
+```bash
+npm run cf:build
+npm run cf:dev
+npm run cf:deploy
+```
+
+Set Worker secret (optional but recommended when origin requires ingress token):
+
+```bash
+npx wrangler secret put SYNAPSE_INGRESS_TOKEN
+```
+
+Notes:
+
+- API paths proxied by the Worker include `/api/*`, `/runtime/*`, `/compare/*`, `/ops/*`, `/auth/*`, `/event`, `/webhooks/*`, and related compatibility endpoints.
+- SPA routes are supported by serving `index.html` fallback for non-file paths.
+
 ## Tests
 
 ```bash

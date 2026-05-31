@@ -6,9 +6,13 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
+    "admin:build": "npm --prefix apps/admin run build",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test src/**/*.test.ts",
+    "cf:build": "npm run admin:build",
+    "cf:dev": "npm run cf:build && wrangler dev",
+    "cf:deploy": "npm run cf:build && wrangler deploy",
     "gtm:bundle:elevar": "node scripts/generateElevarRebuildBundle.js",
     "gtm:validate:elevar": "node scripts/validateElevarRebuildBundle.js",
     "gtm:smoke:elevar": "node scripts/smokeTestElevarBundle.js",
@@ -46,6 +50,7 @@
     "@types/supertest": "^7.2.0",
     "supertest": "^7.2.2",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "wrangler": "^4.46.0"
   }
 }

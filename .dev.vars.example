@@ -1,0 +1,5 @@
+# Local wrangler dev variables for cloudflare/worker.ts
+# Copy this file to .dev.vars and set real values.
+
+SYNAPSE_ORIGIN_URL=https://your-synapse-origin.example.com
+# SYNAPSE_INGRESS_TOKEN=replace_with_real_token
