@@ -11,7 +11,6 @@ import {
 } from "../src/services/controlPanelData";
 
 const PROXY_PREFIXES = [
-  "/event",
   "/runtime/",
   "/compare/",
   "/ops/",
@@ -24,6 +23,7 @@ const PROXY_PREFIXES = [
 let workerBootMs: number | null = null;
 const edgeWebhookLog: unknown[] = [];
 const edgeShadowComparisons: unknown[] = [];
+let edgeEventsGenerated = 0;
 
 type SmokeTestCase = {
   name: string;
@@ -34,11 +34,24 @@ type SmokeTestCase = {
 };
 
 function shouldProxy(pathname: string): boolean {
-  if (pathname === "/event") {
-    return true;
-  }
-
   return PROXY_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+}
+
+function addCorsHeaders(response: Response, request: Request): Response {
+  const headers = new Headers(response.headers);
+  const origin = request.headers.get("origin");
+
+  headers.set("Access-Control-Allow-Origin", origin ?? "*");
+  headers.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+  headers.set("Access-Control-Allow-Headers", "Content-Type, X-Synapse-Token");
+  headers.set("Access-Control-Max-Age", "86400");
+  headers.set("Vary", "Origin");
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers
+  });
 }
 
 function jsonResponse(payload: unknown, status = 200): Response {
@@ -197,11 +210,54 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
     return jsonResponse({
       status: "ok",
       webhooksReceived: edgeWebhookLog.length,
-      eventsGenerated: edgeShadowComparisons.length,
+      eventsGenerated: edgeEventsGenerated,
       dbConnected: true,
       uptime: getWorkerUptimeSeconds(),
       vendorAdapters: getControlPanelVendors()
     });
+  }
+
+  if (url.pathname === "/event" && request.method === "OPTIONS") {
+    return addCorsHeaders(new Response(null, { status: 204 }), request);
+  }
+
+  if (url.pathname === "/event" && request.method === "POST") {
+    let payload: unknown = null;
+
+    try {
+      payload = await request.json();
+    } catch {
+      return addCorsHeaders(jsonResponse({ ok: false, error: "Invalid JSON payload" }, 400), request);
+    }
+
+    const eventRecord = {
+      receivedAt: new Date().toISOString(),
+      source: "edge-event-endpoint",
+      payload
+    };
+
+    edgeWebhookLog.unshift(eventRecord);
+    edgeShadowComparisons.unshift({
+      type: "synapse_only",
+      comparedAt: eventRecord.receivedAt,
+      score: 100,
+      payload
+    });
+
+    if (edgeWebhookLog.length > 500) {
+      edgeWebhookLog.length = 500;
+    }
+
+    if (edgeShadowComparisons.length > 500) {
+      edgeShadowComparisons.length = 500;
+    }
+
+    edgeEventsGenerated += 1;
+
+    return addCorsHeaders(
+      jsonResponse({ ok: true, accepted: true, eventId: edgeEventsGenerated, receivedAt: eventRecord.receivedAt }),
+      request
+    );
   }
 
   if (request.method === "GET" && url.pathname === "/api/events/schemas") {
