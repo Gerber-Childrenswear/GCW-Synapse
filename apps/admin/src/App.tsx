@@ -295,10 +295,40 @@ function QaSection({
         </button>
         {smokeResult ? (
           <p className="muted">
-            Last run: {new Date(smokeResult.runAt).toLocaleString()} | Pass: {smokeResult.summary.pass} | Fail: {smokeResult.summary.fail}
+            Last run: {new Date(smokeResult.runAt).toLocaleString()} | Pass: {smokeResult.passed} | Fail: {smokeResult.failed} | Total: {smokeResult.total}
           </p>
         ) : null}
       </div>
+
+      {smokeResult ? (
+        <article className="panel-block">
+          <h3>Smoke Test Results</h3>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Status</th>
+                  <th>Test Case</th>
+                  <th>Duration</th>
+                  <th>Error</th>
+                </tr>
+              </thead>
+              <tbody>
+                {smokeResult.results.map((result) => (
+                  <tr key={result.name}>
+                    <td>
+                      <Badge tone={result.passed ? "success" : "danger"}>{result.passed ? "pass" : "fail"}</Badge>
+                    </td>
+                    <td>{result.name}</td>
+                    <td>{`${result.durationMs}ms`}</td>
+                    <td>{result.error ?? "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </article>
+      ) : null}
 
       <article className="panel-block">
         <h3>Manual Checklist</h3>

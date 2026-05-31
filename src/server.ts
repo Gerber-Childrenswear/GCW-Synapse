@@ -46,6 +46,7 @@ import {
   ingestElevarShadow
 } from "./services/shadowCompare";
 import { getControlPanelChecklist, getControlPanelSchemas, getControlPanelVendors } from "./services/controlPanelData";
+import { runQaSmokeTests } from "./services/qaSmoke";
 import { resolveVisitorType } from "./services/visitorType";
 import { normalizeCustomerPhone } from "./services/customerPhone";
 import {
@@ -220,18 +221,25 @@ app.get("/api/qa/checklist", requireIngressToken, (_req, res) => {
   res.status(200).json(getControlPanelChecklist());
 });
 
-app.post("/api/qa/smoke", requireIngressToken, (_req, res) => {
-  const checklist = getControlPanelChecklist();
+app.get("/api/vendors/matrix", requireIngressToken, (_req, res) => {
+  res.status(200).json(getControlPanelVendors());
+});
+
+async function handleQaSmoke(_req: express.Request, res: express.Response): Promise<void> {
+  const result = await runQaSmokeTests();
   res.status(200).json({
-    status: "ok",
-    runAt: new Date().toISOString(),
-    summary: {
-      total: checklist.length,
-      pass: checklist.filter((item) => item.status === "pass").length,
-      fail: checklist.filter((item) => item.status === "fail").length,
-      pending: checklist.filter((item) => item.status === "pending").length
-    }
+    ...result,
+    status: result.failed > 0 ? "warning" : "ok",
+    runAt: new Date().toISOString()
   });
+}
+
+app.get("/api/qa/smoke", requireIngressToken, async (req, res) => {
+  await handleQaSmoke(req, res);
+});
+
+app.post("/api/qa/smoke", requireIngressToken, async (req, res) => {
+  await handleQaSmoke(req, res);
 });
 
 app.get("/ops/dead-letter", requireIngressToken, (_req, res) => {

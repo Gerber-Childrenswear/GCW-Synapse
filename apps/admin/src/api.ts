@@ -38,12 +38,16 @@ export type QaChecklistItem = {
 export type SmokeRunResult = {
   status: string;
   runAt: string;
-  summary: {
-    total: number;
-    pass: number;
-    fail: number;
-    pending: number;
-  };
+  passed: number;
+  failed: number;
+  total: number;
+  results: Array<{
+    name: string;
+    passed: boolean;
+    durationMs: number;
+    error: string | null;
+    detail: Record<string, unknown>;
+  }>;
 };
 
 export type ShopifyInstallStatus = {
