@@ -339,6 +339,30 @@ pre {
   cursor: wait;
 }
 
+.toggle-grid {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.toggle-item {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #fbfdff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.toggle-item input {
+  width: 16px;
+  height: 16px;
+}
+
 .error-banner {
   margin-top: 14px;
   background: #fee2e2;
@@ -369,6 +393,10 @@ pre {
   .schema-layout {
     grid-template-columns: 1fr;
   }
+
+  .toggle-grid {
+    grid-template-columns: repeat(2, minmax(160px, 1fr));
+  }
 }
 
 @media (max-width: 640px) {
@@ -381,6 +409,10 @@ pre {
   }
 
   .stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .toggle-grid {
     grid-template-columns: 1fr;
   }
 }

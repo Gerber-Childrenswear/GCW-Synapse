@@ -7,7 +7,9 @@ import {
   getShadowStats,
   getShopifyInstallStatus,
   getWebhookLog,
+  probeEndpoint,
   runQaSmokeTests,
+  type EndpointProbeResult,
   type EventSchema,
   type QaChecklistItem,
   type RuntimeStatus,
@@ -17,7 +19,7 @@ import {
 } from "./api";
 import "./app.css";
 
-type NavTab = "runtime" | "events" | "webhooks" | "shadow" | "qa";
+type NavTab = "runtime" | "events" | "webhooks" | "shadow" | "qa" | "edge";
 
 type LoadState = {
   loading: boolean;
@@ -29,7 +31,105 @@ const NAV_ITEMS: Array<{ id: NavTab; label: string; subtitle: string }> = [
   { id: "events", label: "Event Schemas", subtitle: "Elevar replacement contracts" },
   { id: "webhooks", label: "Webhook Log", subtitle: "Ingestion and payload trace" },
   { id: "shadow", label: "Shadow Compare", subtitle: "Elevar vs Synapse parity" },
-  { id: "qa", label: "QA Smoke Tests", subtitle: "Cutover validation checklist" }
+  { id: "qa", label: "QA Smoke Tests", subtitle: "Cutover validation checklist" },
+  { id: "edge", label: "Edge Ops", subtitle: "Toggles and route health checks" }
+];
+
+type EdgeCheckGroup = "core" | "runtime" | "webhooks" | "guardrails";
+
+type EdgeCheckDefinition = {
+  id: string;
+  label: string;
+  path: string;
+  method: "GET" | "POST" | "OPTIONS";
+  expectedStatuses: number[];
+  group: EdgeCheckGroup;
+  body?: string;
+  contentType?: string;
+  extraHeaders?: Record<string, string>;
+};
+
+type EdgeToggleState = {
+  includeCore: boolean;
+  includeRuntime: boolean;
+  includeWebhooks: boolean;
+  includeGuardrails: boolean;
+  includeWriteChecks: boolean;
+  autoRefresh: boolean;
+};
+
+type EdgeCheckResult = {
+  id: string;
+  label: string;
+  path: string;
+  method: "GET" | "POST" | "OPTIONS";
+  expectedStatuses: number[];
+  status: number;
+  durationMs: number;
+  ok: boolean;
+  bodyPreview: string;
+};
+
+const EDGE_CHECKS: EdgeCheckDefinition[] = [
+  { id: "health", label: "Health", path: "/health", method: "GET", expectedStatuses: [200], group: "core" },
+  { id: "status", label: "API Status", path: "/api/status", method: "GET", expectedStatuses: [200], group: "core" },
+  { id: "schemas", label: "Event Schemas", path: "/api/events/schemas", method: "GET", expectedStatuses: [200], group: "core" },
+  { id: "qa-checklist", label: "QA Checklist", path: "/api/qa/checklist", method: "GET", expectedStatuses: [200], group: "core" },
+  { id: "runtime-summary", label: "Runtime Summary", path: "/runtime/summary", method: "GET", expectedStatuses: [200], group: "runtime" },
+  { id: "runtime-recent", label: "Runtime Recent", path: "/runtime/recent?limit=5", method: "GET", expectedStatuses: [200], group: "runtime" },
+  { id: "compare-parity", label: "Compare Parity", path: "/compare/parity", method: "GET", expectedStatuses: [200], group: "runtime" },
+  { id: "compare-summary", label: "Compare Summary", path: "/compare/summary", method: "GET", expectedStatuses: [200], group: "runtime" },
+  { id: "compare-channels", label: "Compare Channels", path: "/compare/channels", method: "GET", expectedStatuses: [200], group: "runtime" },
+  { id: "launch-readiness", label: "Launch Readiness", path: "/launch/readiness", method: "GET", expectedStatuses: [200], group: "runtime" },
+  {
+    id: "event-options",
+    label: "Event OPTIONS",
+    path: "/event",
+    method: "OPTIONS",
+    expectedStatuses: [204],
+    group: "webhooks",
+    extraHeaders: {
+      Origin: "https://www.gerberchildrenswear.com",
+      "Access-Control-Request-Method": "POST"
+    }
+  },
+  {
+    id: "event-post",
+    label: "Event POST",
+    path: "/event",
+    method: "POST",
+    expectedStatuses: [200],
+    group: "webhooks",
+    body: JSON.stringify({ event: "dl_view_item", shop: "gerberchildrenswear.myshopify.com" }),
+    contentType: "application/json"
+  },
+  {
+    id: "webhook-post",
+    label: "Webhook POST",
+    path: "/webhooks/orders-create",
+    method: "POST",
+    expectedStatuses: [202],
+    group: "webhooks",
+    body: JSON.stringify({ order_id: "health-check", event: "purchase" }),
+    contentType: "application/json"
+  },
+  { id: "ops-alerts", label: "Ops Alerts", path: "/ops/alerts", method: "GET", expectedStatuses: [200], group: "webhooks" },
+  {
+    id: "guard-auth",
+    label: "Auth Guardrail",
+    path: "/auth/shopify/install?shop=gerberchildrenswear.myshopify.com",
+    method: "GET",
+    expectedStatuses: [501],
+    group: "guardrails"
+  },
+  {
+    id: "guard-compat",
+    label: "Compatibility Guardrail",
+    path: "/compatibility/ga4-id",
+    method: "GET",
+    expectedStatuses: [501],
+    group: "guardrails"
+  }
 ];
 
 function Badge({ tone, children }: { tone: "success" | "warning" | "danger" | "neutral"; children: string }) {
@@ -365,6 +465,117 @@ function QaSection({
   );
 }
 
+function EdgeOpsSection({
+  toggles,
+  onToggle,
+  onRunChecks,
+  running,
+  results,
+  lastRunAt
+}: {
+  toggles: EdgeToggleState;
+  onToggle: (next: Partial<EdgeToggleState>) => void;
+  onRunChecks: () => void;
+  running: boolean;
+  results: EdgeCheckResult[];
+  lastRunAt: string | null;
+}) {
+  const passing = results.filter((result) => result.ok).length;
+  const failing = results.length - passing;
+
+  return (
+    <section className="panel">
+      <PanelHeader title="Edge Ops" subtitle="Toggle route groups and run Cloudflare health checks" />
+
+      <div className="toggle-grid">
+        <label className="toggle-item">
+          <input type="checkbox" checked={toggles.includeCore} onChange={(event) => onToggle({ includeCore: event.target.checked })} />
+          <span>Core APIs</span>
+        </label>
+        <label className="toggle-item">
+          <input type="checkbox" checked={toggles.includeRuntime} onChange={(event) => onToggle({ includeRuntime: event.target.checked })} />
+          <span>Runtime + Compare</span>
+        </label>
+        <label className="toggle-item">
+          <input type="checkbox" checked={toggles.includeWebhooks} onChange={(event) => onToggle({ includeWebhooks: event.target.checked })} />
+          <span>Event + Webhook + Ops</span>
+        </label>
+        <label className="toggle-item">
+          <input
+            type="checkbox"
+            checked={toggles.includeGuardrails}
+            onChange={(event) => onToggle({ includeGuardrails: event.target.checked })}
+          />
+          <span>501 Guardrail Routes</span>
+        </label>
+        <label className="toggle-item">
+          <input
+            type="checkbox"
+            checked={toggles.includeWriteChecks}
+            onChange={(event) => onToggle({ includeWriteChecks: event.target.checked })}
+          />
+          <span>Include Write Checks</span>
+        </label>
+        <label className="toggle-item">
+          <input type="checkbox" checked={toggles.autoRefresh} onChange={(event) => onToggle({ autoRefresh: event.target.checked })} />
+          <span>Auto Refresh (30s)</span>
+        </label>
+      </div>
+
+      <div className="cta-row">
+        <button type="button" className="primary" onClick={onRunChecks} disabled={running}>
+          {running ? "Running Checks..." : "Run Health Checks"}
+        </button>
+        <Badge tone={failing > 0 ? "warning" : "success"}>{`${passing}/${results.length || 0} passing`}</Badge>
+        <span className="muted">{lastRunAt ? `Last run: ${new Date(lastRunAt).toLocaleString()}` : "No checks run yet"}</span>
+      </div>
+
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>Check</th>
+              <th>Method</th>
+              <th>Path</th>
+              <th>HTTP</th>
+              <th>Latency</th>
+              <th>Preview</th>
+            </tr>
+          </thead>
+          <tbody>
+            {results.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="muted center">
+                  Run checks to populate route health.
+                </td>
+              </tr>
+            ) : (
+              results.map((result) => (
+                <tr key={result.id}>
+                  <td>
+                    <Badge tone={result.ok ? "success" : "danger"}>{result.ok ? "pass" : "fail"}</Badge>
+                  </td>
+                  <td>{result.label}</td>
+                  <td>{result.method}</td>
+                  <td>{result.path}</td>
+                  <td>
+                    {result.status} / {result.expectedStatuses.join("|")}
+                  </td>
+                  <td>{`${result.durationMs}ms`}</td>
+                  <td>
+                    <pre>{result.bodyPreview}</pre>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<NavTab>("runtime");
   const [state, setState] = useState<LoadState>({ loading: true, error: null });
@@ -378,6 +589,17 @@ export default function App() {
   const [smokeResult, setSmokeResult] = useState<SmokeRunResult | null>(null);
   const [shopifyStatus, setShopifyStatus] = useState<ShopifyInstallStatus | null>(null);
   const [runningSmoke, setRunningSmoke] = useState(false);
+  const [edgeToggles, setEdgeToggles] = useState<EdgeToggleState>({
+    includeCore: true,
+    includeRuntime: true,
+    includeWebhooks: true,
+    includeGuardrails: true,
+    includeWriteChecks: true,
+    autoRefresh: false
+  });
+  const [edgeResults, setEdgeResults] = useState<EdgeCheckResult[]>([]);
+  const [runningEdgeChecks, setRunningEdgeChecks] = useState(false);
+  const [lastEdgeRunAt, setLastEdgeRunAt] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -408,6 +630,90 @@ export default function App() {
   }, []);
 
   const activeItem = useMemo(() => NAV_ITEMS.find((item) => item.id === activeTab) ?? NAV_ITEMS[0], [activeTab]);
+
+  const selectedEdgeChecks = useMemo(() => {
+    const includeGroup = (group: EdgeCheckGroup): boolean => {
+      if (group === "core") {
+        return edgeToggles.includeCore;
+      }
+      if (group === "runtime") {
+        return edgeToggles.includeRuntime;
+      }
+      if (group === "webhooks") {
+        return edgeToggles.includeWebhooks;
+      }
+      return edgeToggles.includeGuardrails;
+    };
+
+    return EDGE_CHECKS.filter((check) => {
+      if (!includeGroup(check.group)) {
+        return false;
+      }
+      if (!edgeToggles.includeWriteChecks && (check.method === "POST" || check.method === "OPTIONS")) {
+        return false;
+      }
+      return true;
+    });
+  }, [edgeToggles]);
+
+  useEffect(() => {
+    if (!edgeToggles.autoRefresh) {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      if (!runningEdgeChecks) {
+        void runEdgeHealthChecks();
+      }
+    }, 30000);
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, [edgeToggles.autoRefresh, runningEdgeChecks, selectedEdgeChecks]);
+
+  async function runEdgeHealthChecks(): Promise<void> {
+    setRunningEdgeChecks(true);
+
+    try {
+      const checks = selectedEdgeChecks;
+      const probes = await Promise.all(
+        checks.map(async (check): Promise<EdgeCheckResult> => {
+          const response: EndpointProbeResult = await probeEndpoint(check.path, {
+            method: check.method,
+            body: check.body,
+            contentType: check.contentType,
+            extraHeaders: check.extraHeaders
+          });
+
+          const bodyPreview = response.bodyText.length > 180 ? `${response.bodyText.slice(0, 180)}...` : response.bodyText;
+          const ok = check.expectedStatuses.includes(response.status);
+
+          return {
+            id: check.id,
+            label: check.label,
+            path: check.path,
+            method: check.method,
+            expectedStatuses: check.expectedStatuses,
+            status: response.status,
+            durationMs: response.durationMs,
+            ok,
+            bodyPreview
+          };
+        })
+      );
+
+      setEdgeResults(probes);
+      setLastEdgeRunAt(new Date().toISOString());
+    } catch (error) {
+      setState((prev) => ({
+        ...prev,
+        error: error instanceof Error ? error.message : "Edge health checks failed"
+      }));
+    } finally {
+      setRunningEdgeChecks(false);
+    }
+  }
 
   function handleRunSmokeTests(): void {
     setRunningSmoke(true);
@@ -472,6 +778,18 @@ export default function App() {
                 smokeResult={smokeResult}
                 onRunTests={handleRunSmokeTests}
                 running={runningSmoke}
+              />
+            ) : null}
+            {activeTab === "edge" ? (
+              <EdgeOpsSection
+                toggles={edgeToggles}
+                onToggle={(next) => setEdgeToggles((prev) => ({ ...prev, ...next }))}
+                onRunChecks={() => {
+                  void runEdgeHealthChecks();
+                }}
+                running={runningEdgeChecks}
+                results={edgeResults}
+                lastRunAt={lastEdgeRunAt}
               />
             ) : null}
           </>

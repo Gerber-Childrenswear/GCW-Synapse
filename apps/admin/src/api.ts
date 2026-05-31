@@ -55,6 +55,13 @@ export type ShopifyInstallStatus = {
   store_path: string;
 };
 
+export type EndpointProbeResult = {
+  status: number;
+  ok: boolean;
+  durationMs: number;
+  bodyText: string;
+};
+
 const BASE_URL = (import.meta.env.VITE_SYNAPSE_BASE_URL as string | undefined) ?? "";
 const INGRESS_TOKEN = (import.meta.env.VITE_SYNAPSE_TOKEN as string | undefined) ?? "";
 
@@ -117,4 +124,37 @@ export async function runQaSmokeTests(): Promise<SmokeRunResult> {
 export async function getShopifyInstallStatus(): Promise<ShopifyInstallStatus> {
   const data = await request<{ status: ShopifyInstallStatus }>("/ops/shopify-install-status");
   return data.status;
+}
+
+export async function probeEndpoint(
+  path: string,
+  options?: {
+    method?: "GET" | "POST" | "OPTIONS";
+    body?: string;
+    contentType?: string;
+    extraHeaders?: Record<string, string>;
+  }
+): Promise<EndpointProbeResult> {
+  const headers: Record<string, string> = { ...(options?.extraHeaders ?? {}) };
+  if (INGRESS_TOKEN) {
+    headers["X-Synapse-Token"] = INGRESS_TOKEN;
+  }
+  if (options?.contentType) {
+    headers["Content-Type"] = options.contentType;
+  }
+
+  const startedAt = performance.now();
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: options?.method ?? "GET",
+    headers,
+    body: options?.body
+  });
+  const bodyText = await res.text();
+
+  return {
+    status: res.status,
+    ok: res.ok,
+    durationMs: Math.round(performance.now() - startedAt),
+    bodyText
+  };
 }
