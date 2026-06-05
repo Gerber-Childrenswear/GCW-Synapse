@@ -126,6 +126,66 @@ body {
   background: linear-gradient(180deg, #eff6ff 0%, #ffffff 100%);
 }
 
+.wizard-panel {
+  border: 1px solid #c7d2fe;
+  background: linear-gradient(180deg, #eef2ff 0%, #ffffff 100%);
+}
+
+.wizard-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.wizard-header h2 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.wizard-header p {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
+.wizard-grid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.wizard-step-card {
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.wizard-step-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.wizard-step-card strong {
+  font-size: 14px;
+}
+
+.wizard-step-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.wizard-step-card-launch {
+  border-color: #a5b4fc;
+  background: #f8faff;
+}
+
 .quickstart-header {
   display: flex;
   align-items: center;
@@ -684,6 +744,10 @@ pre {
 
   .quickstart-steps {
     grid-template-columns: repeat(2, minmax(150px, 1fr));
+  }
+
+  .wizard-grid {
+    grid-template-columns: 1fr;
   }
 
   .toggle-grid {
