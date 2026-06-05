@@ -31,8 +31,8 @@ const envSchema = z.object({
   SHOPIFY_APP_SCOPES: z.string().default("read_products,read_orders,write_products"),
   SHOPIFY_AUTH_CALLBACK_PATH: z.string().default("/auth/shopify/callback"),
   SHOPIFY_TOKEN_STORE_PATH: z.string().optional(),
-  GTM_SERVER_URL: z.string().url(),
-  SHOPIFY_WEBHOOK_SECRET: z.string().min(1),
+  GTM_SERVER_URL: z.string().url().optional(),
+  SHOPIFY_WEBHOOK_SECRET: z.string().min(1).optional(),
   WEBHOOK_PATH_PREFIX: z.string().default("/webhooks/shopify/orders"),
   REFUNDS_WEBHOOK_PATH_PREFIX: z.string().default("/webhooks/shopify/refunds"),
   JSON_BODY_LIMIT: z.string().default("256kb"),
@@ -71,6 +71,12 @@ const envSchema = z.object({
   LOCAL_ADVISOR_TIMEOUT_MS: z.coerce.number().int().positive().default(30000)
 });
 
+type ParsedEnv = z.infer<typeof envSchema>;
+type RuntimeEnv = ParsedEnv & {
+  GTM_SERVER_URL: string;
+  SHOPIFY_WEBHOOK_SECRET: string;
+};
+
 const parsed = envSchema.safeParse(process.env);
 
 if (!parsed.success) {
@@ -78,4 +84,23 @@ if (!parsed.success) {
   throw new Error("Environment validation failed");
 }
 
-export const env = parsed.data;
+const normalized = {
+  ...parsed.data,
+  GTM_SERVER_URL:
+    parsed.data.GTM_SERVER_URL ??
+    (parsed.data.NODE_ENV === "production" ? undefined : "http://127.0.0.1:3000/g/collect"),
+  SHOPIFY_WEBHOOK_SECRET:
+    parsed.data.SHOPIFY_WEBHOOK_SECRET ??
+    (parsed.data.NODE_ENV === "production" ? undefined : "dev_webhook_secret_do_not_use_in_prod")
+};
+
+if (!normalized.GTM_SERVER_URL || !normalized.SHOPIFY_WEBHOOK_SECRET) {
+  console.error("Missing required runtime configuration for production mode");
+  throw new Error("Environment validation failed");
+}
+
+export const env: RuntimeEnv = {
+  ...normalized,
+  GTM_SERVER_URL: normalized.GTM_SERVER_URL,
+  SHOPIFY_WEBHOOK_SECRET: normalized.SHOPIFY_WEBHOOK_SECRET
+};
