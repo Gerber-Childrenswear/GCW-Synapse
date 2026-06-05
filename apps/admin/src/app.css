@@ -34,6 +34,15 @@ body {
   grid-template-columns: 280px 1fr;
 }
 
+.shell-simple .nav-item small {
+  display: none;
+}
+
+.shell-simple .nav-item {
+  gap: 0;
+  padding: 12px;
+}
+
 .sidebar {
   background: radial-gradient(circle at top right, #1d4ed8 0%, #111827 38%, #0b1120 100%);
   color: #f8fafc;
