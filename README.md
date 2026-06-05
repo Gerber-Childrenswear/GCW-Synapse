@@ -163,6 +163,9 @@ Required configuration:
 - No required origin for edge-only mode.
 - Optional origin for legacy passthrough routes: `SYNAPSE_ORIGIN_URL` (in `wrangler.toml` vars or environment)
 - Optional Worker secret for passthrough mode: `SYNAPSE_INGRESS_TOKEN`
+- Public event origin allowlist: `PUBLIC_EVENT_ALLOWED_ORIGINS` (comma-separated)
+- Public event payload cap in bytes: `PUBLIC_EVENT_MAX_BODY_BYTES`
+- Public event per-IP rate cap per minute: `PUBLIC_EVENT_RATE_LIMIT_PER_MINUTE`
 
 Commands:
 
@@ -183,6 +186,7 @@ Notes:
 - Native edge endpoints include `/health`, `/event`, `/runtime/*`, `/compare/*`, `/launch/readiness`, `/webhooks/*`, `/ops/*`, `/api/status`, `/api/events/schemas`, `/api/qa/checklist`, `/api/qa/smoke`, `/api/shadow/stats`, `/api/shadow/comparisons`, and `/api/vendors/matrix`.
 - In edge-only mode, `/auth/*` and `/compatibility/*` return `501` to avoid hidden dependencies on external backends.
 - SPA routes are supported by serving `index.html` fallback for non-file paths.
+- For free-tier efficiency, non-public internal routes should be accessed with `X-Synapse-Token` when `SYNAPSE_INGRESS_TOKEN` is configured.
 
 ## Tests
 

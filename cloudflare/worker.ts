@@ -2,6 +2,9 @@ type CloudflareEnv = {
   ASSETS: Fetcher;
   SYNAPSE_ORIGIN_URL: string;
   SYNAPSE_INGRESS_TOKEN?: string;
+  PUBLIC_EVENT_ALLOWED_ORIGINS?: string;
+  PUBLIC_EVENT_MAX_BODY_BYTES?: string;
+  PUBLIC_EVENT_RATE_LIMIT_PER_MINUTE?: string;
 };
 
 import {
@@ -15,12 +18,25 @@ const PROXY_PREFIXES = [
   "/compatibility/"
 ];
 
+const INTERNAL_ROUTE_PREFIXES = [
+  "/ops/",
+  "/api/",
+  "/compare/",
+  "/runtime/",
+  "/launch/",
+  "/webhooks/",
+  "/auth/",
+  "/compatibility/"
+];
+
 let workerBootMs: number | null = null;
 const edgeWebhookLog: unknown[] = [];
 const edgeShadowComparisons: unknown[] = [];
 const edgeChannelEvents: Array<Record<string, unknown>> = [];
 let edgeEventsGenerated = 0;
 let edgeEventsSuppressed = 0;
+const eventRateWindowMs = 60_000;
+const eventRateState = new Map<string, { windowStartMs: number; count: number }>();
 
 type SmokeTestCase = {
   name: string;
@@ -37,6 +53,98 @@ function parseLimit(raw: string | null, fallback = 100): number {
   }
 
   return Math.max(1, Math.min(parsed, 500));
+}
+
+function parsePositiveInt(raw: string | undefined, fallback: number): number {
+  if (!raw) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return parsed;
+}
+
+function parseAllowedOrigins(raw: string | undefined): string[] {
+  const configured = (raw ?? "")
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (configured.length > 0) {
+    return configured;
+  }
+
+  return [
+    "https://www.gerberchildrenswear.com",
+    "https://gerberchildrenswear.com",
+    "https://gcw-dev.myshopify.com",
+    "https://gerberchildrenswear.myshopify.com"
+  ];
+}
+
+function isAllowedOrigin(origin: string, allowedOrigins: string[]): boolean {
+  const normalized = origin.trim().toLowerCase();
+  return allowedOrigins.includes(normalized);
+}
+
+function getClientIp(request: Request): string {
+  return request.headers.get("cf-connecting-ip") ?? "unknown";
+}
+
+function checkEventRateLimit(request: Request, env: CloudflareEnv): { allowed: boolean; retryAfterSeconds?: number } {
+  const limit = parsePositiveInt(env.PUBLIC_EVENT_RATE_LIMIT_PER_MINUTE, 120);
+  const now = Date.now();
+  const ip = getClientIp(request);
+  const previous = eventRateState.get(ip);
+
+  if (!previous || now - previous.windowStartMs >= eventRateWindowMs) {
+    eventRateState.set(ip, { windowStartMs: now, count: 1 });
+    return { allowed: true };
+  }
+
+  if (previous.count >= limit) {
+    const retryAfterMs = Math.max(0, eventRateWindowMs - (now - previous.windowStartMs));
+    return {
+      allowed: false,
+      retryAfterSeconds: Math.max(1, Math.ceil(retryAfterMs / 1000))
+    };
+  }
+
+  previous.count += 1;
+  eventRateState.set(ip, previous);
+
+  if (eventRateState.size > 2048) {
+    for (const [key, state] of eventRateState.entries()) {
+      if (now - state.windowStartMs > eventRateWindowMs * 2) {
+        eventRateState.delete(key);
+      }
+      if (eventRateState.size <= 1536) {
+        break;
+      }
+    }
+  }
+
+  return { allowed: true };
+}
+
+function isInternalRoute(pathname: string): boolean {
+  return INTERNAL_ROUTE_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+}
+
+function isInternalRouteExempt(pathname: string, method: string): boolean {
+  if (pathname === "/health" && method === "GET") {
+    return true;
+  }
+
+  if (pathname === "/event" && (method === "POST" || method === "OPTIONS")) {
+    return true;
+  }
+
+  return false;
 }
 
 function getShadowCounts(): {
@@ -132,9 +240,9 @@ function shouldProxy(pathname: string): boolean {
   return PROXY_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
 
-function addCorsHeaders(response: Response, request: Request): Response {
+function addCorsHeaders(response: Response, request: Request, originOverride?: string): Response {
   const headers = new Headers(response.headers);
-  const origin = request.headers.get("origin");
+  const origin = originOverride ?? request.headers.get("origin");
 
   headers.set("Access-Control-Allow-Origin", origin ?? "*");
   headers.set("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -751,6 +859,99 @@ async function serveAsset(request: Request, env: CloudflareEnv): Promise<Respons
 export default {
   async fetch(request: Request, env: CloudflareEnv): Promise<Response> {
     const url = new URL(request.url);
+
+    if (isInternalRoute(url.pathname) && !isInternalRouteExempt(url.pathname, request.method)) {
+      const expectedToken = env.SYNAPSE_INGRESS_TOKEN;
+      const providedToken = request.headers.get("X-Synapse-Token");
+
+      if (expectedToken && providedToken !== expectedToken) {
+        return addSecurityHeaders(jsonResponse({ ok: false, error: "Unauthorized" }, 401));
+      }
+    }
+
+    if (url.pathname === "/event" && request.method === "OPTIONS") {
+      const origin = request.headers.get("origin");
+      const allowedOrigins = parseAllowedOrigins(env.PUBLIC_EVENT_ALLOWED_ORIGINS);
+
+      if (!origin || !isAllowedOrigin(origin, allowedOrigins)) {
+        return addSecurityHeaders(jsonResponse({ ok: false, error: "Origin not allowed" }, 403));
+      }
+
+      return addSecurityHeaders(addCorsHeaders(new Response(null, { status: 204 }), request, origin));
+    }
+
+    if (url.pathname === "/event" && request.method === "POST") {
+      const allowedOrigins = parseAllowedOrigins(env.PUBLIC_EVENT_ALLOWED_ORIGINS);
+      const origin = request.headers.get("origin");
+      if (!origin || !isAllowedOrigin(origin, allowedOrigins)) {
+        return addSecurityHeaders(addCorsHeaders(jsonResponse({ ok: false, error: "Origin not allowed" }, 403), request, origin ?? undefined));
+      }
+
+      const rate = checkEventRateLimit(request, env);
+      if (!rate.allowed) {
+        return addSecurityHeaders(
+          addCorsHeaders(
+            jsonResponse({ ok: false, error: "Rate limit exceeded" }, 429),
+            request,
+            origin
+          )
+        );
+      }
+
+      const maxBodyBytes = parsePositiveInt(env.PUBLIC_EVENT_MAX_BODY_BYTES, 16_384);
+      const contentLengthRaw = request.headers.get("content-length");
+      if (contentLengthRaw) {
+        const contentLength = Number.parseInt(contentLengthRaw, 10);
+        if (Number.isFinite(contentLength) && contentLength > maxBodyBytes) {
+          return addSecurityHeaders(addCorsHeaders(jsonResponse({ ok: false, error: "Payload too large" }, 413), request, origin));
+        }
+      }
+
+      const rawBody = await request.text();
+      const rawBodyBytes = new TextEncoder().encode(rawBody).byteLength;
+      if (rawBodyBytes > maxBodyBytes) {
+        return addSecurityHeaders(addCorsHeaders(jsonResponse({ ok: false, error: "Payload too large" }, 413), request, origin));
+      }
+
+      let payload: unknown = null;
+      try {
+        payload = JSON.parse(rawBody);
+      } catch {
+        return addSecurityHeaders(addCorsHeaders(jsonResponse({ ok: false, error: "Invalid JSON payload" }, 400), request, origin));
+      }
+
+      const eventRecord = {
+        receivedAt: new Date().toISOString(),
+        source: "edge-event-endpoint",
+        payload
+      };
+
+      edgeWebhookLog.unshift(eventRecord);
+      edgeShadowComparisons.unshift({
+        type: "synapse_only",
+        comparedAt: eventRecord.receivedAt,
+        score: 100,
+        payload
+      });
+
+      if (edgeWebhookLog.length > 500) {
+        edgeWebhookLog.length = 500;
+      }
+
+      if (edgeShadowComparisons.length > 500) {
+        edgeShadowComparisons.length = 500;
+      }
+
+      edgeEventsGenerated += 1;
+
+      return addSecurityHeaders(
+        addCorsHeaders(
+          jsonResponse({ ok: true, accepted: true, eventId: edgeEventsGenerated, receivedAt: eventRecord.receivedAt }),
+          request,
+          origin
+        )
+      );
+    }
 
     const native = await handleNativeApi(request);
     if (native) {
