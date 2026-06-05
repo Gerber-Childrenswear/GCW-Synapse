@@ -43,6 +43,8 @@ GCW-Synapse is a Shopify analytics relay service that replaces Elevar by forward
 - POST /compare/elevar
 - POST /compare/channel-event
 - POST /compare/channel-event/batch
+- GET /api/advisor/alerts
+- POST /api/advisor/chat
 - GET /compare/summary
 - GET /compare/parity
 - GET /compare/channels
@@ -72,6 +74,30 @@ PowerShell alternative:
 ```powershell
 Copy-Item .env.example .env
 ```
+
+## Local AI Advisor (Shopify Admin)
+
+GCW-Synapse now includes an in-app advisor tab for operators to ask questions and get proactive alerts about Shopify analytics health, Elevar parity, GTM mappings, and destination issues.
+
+Configuration:
+
+- `LOCAL_ADVISOR_ENABLED` (`true|false`)
+- `LOCAL_ADVISOR_BASE_URL` (default `http://127.0.0.1:11434`)
+- `LOCAL_ADVISOR_MODEL` (for example `qwen2.5:14b-instruct`)
+- `LOCAL_ADVISOR_TIMEOUT_MS`
+
+API:
+
+- `GET /api/advisor/alerts`
+	- Returns prioritized warning/critical advisor alerts.
+- `POST /api/advisor/chat`
+	- Body: `{ "message": "...", "history": [{ "role": "user|assistant", "content": "..." }] }`
+	- Uses local model runtime when enabled, and deterministic fallback guidance when disabled/unavailable.
+
+Notes:
+
+- These routes are protected by `X-Synapse-Token` (`INGRESS_SHARED_TOKEN`) like other admin/ops APIs.
+- Advisor responses are grounded in live Synapse context (`ops alerts`, `runtime summary`, `channel health`, `launch readiness`, `parity report`, recent runtime events).
 
 ## Shopify Internal App Setup
 

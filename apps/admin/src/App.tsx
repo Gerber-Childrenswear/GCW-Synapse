@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  getAdvisorAlerts,
   ApiRequestError,
   getEventSchemas,
   getQaChecklist,
@@ -10,6 +11,9 @@ import {
   getWebhookLog,
   probeEndpoint,
   runQaSmokeTests,
+  sendAdvisorMessage,
+  type AdvisorAlertItem,
+  type AdvisorChatMessage,
   type EndpointProbeResult,
   type EventSchema,
   type QaChecklistItem,
@@ -20,7 +24,7 @@ import {
 } from "./api";
 import "./app.css";
 
-type NavTab = "runtime" | "events" | "webhooks" | "shadow" | "qa" | "edge";
+type NavTab = "runtime" | "advisor" | "events" | "webhooks" | "shadow" | "qa" | "edge";
 
 type LoadState = {
   loading: boolean;
@@ -29,6 +33,7 @@ type LoadState = {
 
 const NAV_ITEMS: Array<{ id: NavTab; label: string; subtitle: string }> = [
   { id: "runtime", label: "Runtime Status", subtitle: "System health and adapter status" },
+  { id: "advisor", label: "Synapse Advisor", subtitle: "Local AI chat and proactive alerts" },
   { id: "events", label: "Event Schemas", subtitle: "Elevar replacement contracts" },
   { id: "webhooks", label: "Webhook Log", subtitle: "Ingestion and payload trace" },
   { id: "shadow", label: "Shadow Compare", subtitle: "Elevar vs Synapse parity" },
@@ -732,6 +737,88 @@ function EdgeOpsSection({
   );
 }
 
+function AdvisorSection({
+  alerts,
+  messages,
+  draft,
+  onDraftChange,
+  onSend,
+  sending
+}: {
+  alerts: AdvisorAlertItem[];
+  messages: AdvisorChatMessage[];
+  draft: string;
+  onDraftChange: (next: string) => void;
+  onSend: () => void;
+  sending: boolean;
+}) {
+  return (
+    <section className="panel">
+      <PanelHeader
+        title="Synapse Advisor"
+        subtitle="Local AI with MCP-style context tools for Shopify, Elevar replacement, GTM, and business analytics ops"
+      />
+
+      <article className="panel-block">
+        <div className="block-header">
+          <h3>Proactive Alerts</h3>
+          <Badge tone={alerts.some((item) => item.severity === "critical") ? "danger" : "warning"}>
+            {`${alerts.length} alerts`}
+          </Badge>
+        </div>
+
+        {alerts.length === 0 ? <p className="muted">No advisor alerts right now.</p> : null}
+        {alerts.length > 0 ? (
+          <div className="advisor-alert-list">
+            {alerts.map((alert, index) => (
+              <article key={`${alert.title}-${index}`} className="advisor-alert-item">
+                <div className="advisor-alert-header">
+                  <strong>{alert.title}</strong>
+                  <Badge tone={alert.severity === "critical" ? "danger" : "warning"}>{alert.severity}</Badge>
+                </div>
+                <p>{alert.message}</p>
+                <p className="muted">Action: {alert.action}</p>
+              </article>
+            ))}
+          </div>
+        ) : null}
+      </article>
+
+      <article className="panel-block">
+        <div className="block-header">
+          <h3>Ask Synapse Advisor</h3>
+          <Badge tone="neutral">Local model</Badge>
+        </div>
+
+        <div className="advisor-chat-window">
+          {messages.length === 0 ? (
+            <p className="muted">Ask questions like: "Why are Meta purchase events warning?" or "Are we ready to cut over from Elevar?"</p>
+          ) : (
+            messages.map((message, index) => (
+              <div key={`${message.role}-${index}`} className={`advisor-message advisor-message-${message.role}`}>
+                <strong>{message.role === "assistant" ? "Advisor" : "You"}</strong>
+                <pre>{message.content}</pre>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="advisor-input-row">
+          <textarea
+            value={draft}
+            onChange={(event) => onDraftChange(event.target.value)}
+            placeholder="Ask about Shopify analytics health, GTM mapping, Elevar parity, theme events, revenue impact..."
+            rows={3}
+          />
+          <button type="button" className="primary" onClick={onSend} disabled={sending || draft.trim().length === 0}>
+            {sending ? "Sending..." : "Ask Advisor"}
+          </button>
+        </div>
+      </article>
+    </section>
+  );
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<NavTab>("runtime");
   const [state, setState] = useState<LoadState>({ loading: true, error: null });
@@ -746,6 +833,10 @@ export default function App() {
   const [checklist, setChecklist] = useState<QaChecklistItem[]>([]);
   const [smokeResult, setSmokeResult] = useState<SmokeRunResult | null>(null);
   const [shopifyStatus, setShopifyStatus] = useState<ShopifyInstallStatus | null>(null);
+  const [advisorAlerts, setAdvisorAlerts] = useState<AdvisorAlertItem[]>([]);
+  const [advisorMessages, setAdvisorMessages] = useState<AdvisorChatMessage[]>([]);
+  const [advisorDraft, setAdvisorDraft] = useState("");
+  const [advisorSending, setAdvisorSending] = useState(false);
   const [runningSmoke, setRunningSmoke] = useState(false);
   const [edgeToggles, setEdgeToggles] = useState<EdgeToggleState>({
     includeCore: true,
@@ -781,9 +872,10 @@ export default function App() {
       getShadowStats(),
       getShadowComparisons(50),
       getQaChecklist(),
-      getShopifyInstallStatus()
+      getShopifyInstallStatus(),
+      getAdvisorAlerts()
     ])
-      .then(([runtimeData, schemaData, webhookData, shadowData, comparisonData, checklistData, shopifyData]) => {
+      .then(([runtimeData, schemaData, webhookData, shadowData, comparisonData, checklistData, shopifyData, advisorData]) => {
         setRuntime(runtimeData);
         setSchemas(schemaData);
         setWebhooks(webhookData);
@@ -791,6 +883,7 @@ export default function App() {
         setComparisons(comparisonData);
         setChecklist(checklistData);
         setShopifyStatus(shopifyData);
+        setAdvisorAlerts(advisorData);
         setState({ loading: false, error: null });
         setLastError(null);
       })
@@ -918,6 +1011,40 @@ export default function App() {
       });
   }
 
+  function handleSendAdvisorMessage(): void {
+    const message = advisorDraft.trim();
+    if (!message) {
+      return;
+    }
+
+    const nextHistory: AdvisorChatMessage[] = [...advisorMessages, { role: "user", content: message }];
+    setAdvisorMessages(nextHistory);
+    setAdvisorDraft("");
+    setAdvisorSending(true);
+
+    sendAdvisorMessage({
+      message,
+      history: nextHistory
+    })
+      .then((result) => {
+        setAdvisorMessages((prev) => [...prev, { role: "assistant", content: result.answer }]);
+        setAdvisorAlerts(result.alerts);
+      })
+      .catch((error: unknown) => {
+        const friendly = getFriendlyError(error);
+        setAdvisorMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: `Advisor error: ${friendly.title}\n${friendly.why}`
+          }
+        ]);
+      })
+      .finally(() => {
+        setAdvisorSending(false);
+      });
+  }
+
   return (
     <div className="shell">
       <aside className="sidebar">
@@ -969,6 +1096,16 @@ export default function App() {
         {!state.loading ? (
           <>
             {activeTab === "runtime" ? <RuntimeSection runtime={runtime} shopifyStatus={shopifyStatus} /> : null}
+            {activeTab === "advisor" ? (
+              <AdvisorSection
+                alerts={advisorAlerts}
+                messages={advisorMessages}
+                draft={advisorDraft}
+                onDraftChange={setAdvisorDraft}
+                onSend={handleSendAdvisorMessage}
+                sending={advisorSending}
+              />
+            ) : null}
             {activeTab === "events" ? <EventSchemasSection schemas={schemas} /> : null}
             {activeTab === "webhooks" ? <WebhookLogSection webhooks={webhooks} /> : null}
             {activeTab === "shadow" ? <ShadowSection stats={shadowStats} comparisons={comparisons} /> : null}

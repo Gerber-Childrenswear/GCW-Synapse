@@ -64,7 +64,11 @@ const envSchema = z.object({
   LAUNCH_BLOCK_ON_THEME_CONFLICTS: boolFromEnv.default(true),
   PUBLIC_EVENT_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(120),
   PUBLIC_EVENT_ALLOWED_ORIGINS: z.string().optional(),
-  SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().positive().default(10000)
+  SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),
+  LOCAL_ADVISOR_ENABLED: boolFromEnv.default(false),
+  LOCAL_ADVISOR_BASE_URL: z.string().url().default("http://127.0.0.1:11434"),
+  LOCAL_ADVISOR_MODEL: z.string().min(1).default("qwen2.5:14b-instruct"),
+  LOCAL_ADVISOR_TIMEOUT_MS: z.coerce.number().int().positive().default(30000)
 });
 
 const parsed = envSchema.safeParse(process.env);

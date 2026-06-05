@@ -57,6 +57,7 @@ import {
   recordRuntimeTelemetry
 } from "./services/runtimeEvents";
 import { evaluateRuntimeEventPolicy } from "./services/runtimeEventPolicy";
+import { buildAdvisorAlerts, getAdvisorAnswer } from "./services/localAdvisor";
 
 const app = express();
 app.disable("x-powered-by");
@@ -87,6 +88,112 @@ type CompatibilityLineItem = {
 function parseLineItemsJson(lineItemsRaw: string): CompatibilityLineItem[] {
   const parsed = JSON.parse(lineItemsRaw) as unknown;
   return Array.isArray(parsed) ? (parsed as CompatibilityLineItem[]) : [];
+}
+
+function buildAdvisorContext() {
+  const metrics = getMetricsSnapshot();
+  const runtimeTelemetry = getRuntimeTelemetrySummary();
+  const deadLetter = getDeadLetterSummary(env.GTM_DEAD_LETTER_PATH);
+
+  const ops = buildOpsAlerts({
+    counters: {
+      webhooks_received: metrics.counters.webhooks_received,
+      webhooks_forwarded: metrics.counters.webhooks_forwarded,
+      webhooks_forward_failed: metrics.counters.webhooks_forward_failed,
+      webhooks_invalid_signature: metrics.counters.webhooks_invalid_signature,
+      refunds_received: metrics.counters.refunds_received,
+      refunds_forwarded: metrics.counters.refunds_forwarded,
+      refunds_forward_failed: metrics.counters.refunds_forward_failed,
+      refunds_invalid_signature: metrics.counters.refunds_invalid_signature,
+      ingress_token_rejected: metrics.counters.ingress_token_rejected,
+      runtime_events_received: metrics.counters.runtime_events_received,
+      runtime_events_rejected_invalid_payload: metrics.counters.runtime_events_rejected_invalid_payload,
+      runtime_events_forwarded: metrics.counters.runtime_events_forwarded,
+      runtime_events_suppressed: metrics.counters.runtime_events_suppressed,
+      gtm_dead_letter_written: metrics.counters.gtm_dead_letter_written
+    },
+    runtimeTelemetry,
+    deadLetter
+  });
+
+  const paritySummary = getShadowCompareSummary();
+  const parity = getShadowParityReport(env.SHADOW_COMPARE_MISMATCH_ALERT_PCT);
+  const channelSummary = getChannelHealthSummary(env.CHANNEL_HEALTH_STALE_MINUTES, env.CHANNEL_HEALTH_WARN_FAILURE_PCT);
+
+  const launchReadiness = buildLaunchReadinessReport({
+    phase: "validation",
+    runtimeMode: env.RUNTIME_MODE,
+    parity,
+    paritySummary,
+    channelSummary,
+    metrics: {
+      webhooks_received: metrics.counters.webhooks_received,
+      webhooks_invalid_signature: metrics.counters.webhooks_invalid_signature,
+      webhooks_invalid_json: metrics.counters.webhooks_invalid_json,
+      webhooks_rejected_topic: metrics.counters.webhooks_rejected_topic,
+      webhooks_forward_failed: metrics.counters.webhooks_forward_failed
+    },
+    thresholds: {
+      minPairedEvents: env.LAUNCH_MIN_PAIRED_EVENTS,
+      maxWarningChannels: env.LAUNCH_MAX_WARNING_CHANNELS,
+      maxWebhookFailureRatePct: env.LAUNCH_MAX_WEBHOOK_FAILURE_RATE_PCT
+    }
+  });
+
+  return {
+    ops,
+    runtime: runtimeTelemetry,
+    channels: {
+      totals: channelSummary.totals,
+      channels: channelSummary.channels.map((item) => {
+        const base = {
+          key: item.key,
+          channel: item.channel,
+          surface: item.surface,
+          destination: item.destination,
+          status: item.status,
+          failure_rate_pct: item.failure_rate_pct,
+          minutes_since_last_event: item.minutes_since_last_event,
+          total_events: item.total_events,
+          error_events: item.error_events
+        };
+
+        return item.last_error_message
+          ? {
+              ...base,
+              last_error_message: item.last_error_message
+            }
+          : base;
+      })
+    },
+    parity: {
+      status: parity.status,
+      mismatch_rate_pct: parity.mismatch_rate_pct,
+      threshold_pct: parity.threshold_pct,
+      paired_events: parity.paired_events
+    },
+    launch: {
+      status: launchReadiness.status,
+      phase: launchReadiness.phase,
+      blockers: launchReadiness.checks.filter((check) => check.status === "fail").map((check) => check.title),
+      recommendations: launchReadiness.checks
+        .filter((check) => check.status === "fail")
+        .map((check) => check.recommendation)
+    },
+    recentRuntimeEvents: getRuntimeTelemetry(25).map((item) => {
+      const base = {
+        at: item.at,
+        event_name: item.event_name,
+        status: item.status
+      };
+
+      return {
+        ...base,
+        ...(item.reason ? { reason: item.reason } : {}),
+        ...(item.source ? { source: item.source } : {})
+      };
+    })
+  };
 }
 
 type ChannelEventRequestBody = {
@@ -937,6 +1044,61 @@ app.post("/compare/channel-event/batch", requireIngressToken, (req, res) => {
     },
     accepted,
     rejected
+  });
+});
+
+app.get("/api/advisor/alerts", requireIngressToken, (_req, res) => {
+  const context = buildAdvisorContext();
+
+  res.status(200).json({
+    ok: true,
+    generated_at: new Date().toISOString(),
+    local_ai_enabled: env.LOCAL_ADVISOR_ENABLED,
+    alerts: buildAdvisorAlerts(context)
+  });
+});
+
+app.post("/api/advisor/chat", requireIngressToken, async (req, res) => {
+  const body = req.body as {
+    message?: string;
+    history?: Array<{ role?: "user" | "assistant"; content?: string }>;
+  };
+
+  const message = typeof body.message === "string" ? body.message.trim() : "";
+  if (!message) {
+    res.status(400).json({ ok: false, error: "message is required" });
+    return;
+  }
+
+  const history = Array.isArray(body.history)
+    ? body.history
+        .filter((item) => (item.role === "user" || item.role === "assistant") && typeof item.content === "string")
+        .map((item) => ({ role: item.role as "user" | "assistant", content: (item.content as string).trim() }))
+        .filter((item) => item.content.length > 0)
+        .slice(-10)
+    : [];
+
+  const context = buildAdvisorContext();
+  const result = await getAdvisorAnswer({
+    message,
+    history,
+    context,
+    config: {
+      enabled: env.LOCAL_ADVISOR_ENABLED,
+      baseUrl: env.LOCAL_ADVISOR_BASE_URL,
+      model: env.LOCAL_ADVISOR_MODEL,
+      timeoutMs: env.LOCAL_ADVISOR_TIMEOUT_MS
+    }
+  });
+
+  res.status(200).json({
+    ok: true,
+    answer: result.answer,
+    model: result.model,
+    fallback_used: result.fallbackUsed,
+    local_ai_enabled: env.LOCAL_ADVISOR_ENABLED,
+    used_tools: result.usedTools,
+    alerts: buildAdvisorAlerts(context).slice(0, 5)
   });
 });
 

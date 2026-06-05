@@ -62,6 +62,27 @@ export type EndpointProbeResult = {
   bodyText: string;
 };
 
+export type AdvisorAlertItem = {
+  severity: "warning" | "critical";
+  title: string;
+  message: string;
+  action: string;
+};
+
+export type AdvisorChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+export type AdvisorChatResponse = {
+  answer: string;
+  model: string;
+  fallback_used: boolean;
+  local_ai_enabled: boolean;
+  used_tools: string[];
+  alerts: AdvisorAlertItem[];
+};
+
 const BASE_URL = (import.meta.env.VITE_SYNAPSE_BASE_URL as string | undefined) ?? "";
 const INGRESS_TOKEN = (import.meta.env.VITE_SYNAPSE_TOKEN as string | undefined) ?? "";
 
@@ -101,6 +122,27 @@ async function requestWithMethod<T>(path: string, method: "GET" | "POST"): Promi
   }
 
   const res = await fetch(`${BASE_URL}${path}`, { method, headers });
+  if (!res.ok) {
+    const bodyText = await res.text();
+    throw new ApiRequestError(path, res.status, bodyText);
+  }
+
+  return (await res.json()) as T;
+}
+
+async function requestJson<T>(path: string, method: "GET" | "POST", body?: unknown): Promise<T> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json"
+  };
+  if (INGRESS_TOKEN) {
+    headers["X-Synapse-Token"] = INGRESS_TOKEN;
+  }
+
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined
+  });
   if (!res.ok) {
     const bodyText = await res.text();
     throw new ApiRequestError(path, res.status, bodyText);
@@ -173,4 +215,16 @@ export async function probeEndpoint(
     durationMs: Math.round(performance.now() - startedAt),
     bodyText
   };
+}
+
+export async function getAdvisorAlerts(): Promise<AdvisorAlertItem[]> {
+  const data = await request<{ alerts: AdvisorAlertItem[] }>("/api/advisor/alerts");
+  return data.alerts;
+}
+
+export async function sendAdvisorMessage(input: {
+  message: string;
+  history: AdvisorChatMessage[];
+}): Promise<AdvisorChatResponse> {
+  return requestJson<AdvisorChatResponse>("/api/advisor/chat", "POST", input);
 }

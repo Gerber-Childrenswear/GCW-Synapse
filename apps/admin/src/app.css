@@ -490,6 +490,79 @@ pre {
   color: var(--muted);
 }
 
+.advisor-alert-list {
+  margin-top: 10px;
+  display: grid;
+  gap: 10px;
+}
+
+.advisor-alert-item {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  background: #fbfdff;
+}
+
+.advisor-alert-item p {
+  margin: 6px 0 0;
+}
+
+.advisor-alert-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.advisor-chat-window {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  background: #f8fbff;
+  max-height: 420px;
+  overflow: auto;
+  display: grid;
+  gap: 10px;
+}
+
+.advisor-message {
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.advisor-message strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.advisor-message-user {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.advisor-message-assistant {
+  border-color: #bfdbfe;
+  background: #f8fbff;
+}
+
+.advisor-input-row {
+  margin-top: 10px;
+  display: grid;
+  gap: 10px;
+}
+
+.advisor-input-row textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  font: inherit;
+}
+
 @media (max-width: 1080px) {
   .shell {
     grid-template-columns: 1fr;
