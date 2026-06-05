@@ -280,7 +280,8 @@ To support richer troubleshooting UI (Lovable or custom), use these endpoints:
 
 - `POST /compare/channel-event`
 	- Ingest per-destination telemetry from pixel/server checks.
-	- Required fields: `channel`, `surface` (`pixel|server`), `destination`, `event_name`, `status` (`ok|error`).
+	- Required fields: `channel`, `surface` (`pixel|server|runtime|webhook`), `destination`, `event_name`, `status` (`ok|error`).
+	- Optional fields: `event_id`, `transaction_id`, `source_theme`, `source_surface`, `pixel_id`, `error_message`, `observed_at`.
 - `POST /compare/channel-event/batch`
 	- Ingest multiple telemetry events in one request using `{ "events": [...] }`.
 	- Returns accepted/rejected counts and per-item validation feedback.
@@ -295,6 +296,62 @@ Channel health tuning:
 
 - `CHANNEL_HEALTH_STALE_MINUTES` marks integrations stale after inactivity.
 - `CHANNEL_HEALTH_WARN_FAILURE_PCT` marks warning/critical by failure rate.
+
+### Destination callback examples
+
+Use these payloads from GTM server tags or post-processing callbacks so Synapse can show per-destination delivery health:
+
+```json
+{
+	"channel": "meta",
+	"surface": "server",
+	"destination": "conversions_api",
+	"event_name": "purchase",
+	"event_id": "evt_purchase_1001",
+	"transaction_id": "#1001",
+	"source_theme": "hyper",
+	"source_surface": "checkout",
+	"status": "ok",
+	"observed_at": "2026-06-05T18:00:00.000Z"
+}
+```
+
+```json
+{
+	"channel": "instagram",
+	"surface": "server",
+	"destination": "meta_conversions_api",
+	"event_name": "purchase",
+	"event_id": "evt_purchase_1001",
+	"transaction_id": "#1001",
+	"source_theme": "expanse",
+	"source_surface": "checkout",
+	"status": "ok",
+	"observed_at": "2026-06-05T18:00:01.000Z"
+}
+```
+
+```json
+{
+	"channel": "reddit",
+	"surface": "server",
+	"destination": "capi",
+	"event_name": "purchase",
+	"event_id": "evt_purchase_1001",
+	"transaction_id": "#1001",
+	"source_theme": "hyper",
+	"source_surface": "checkout",
+	"status": "error",
+	"error_message": "HTTP 429 from Reddit CAPI",
+	"observed_at": "2026-06-05T18:00:02.000Z"
+}
+```
+
+Runtime forwarding health to Server GTM is now auto-recorded by Synapse using:
+
+- `channel=server_gtm`
+- `surface=runtime`
+- `destination=collect`
 
 ## Launch Readiness Gate
 

@@ -4,4 +4,7 @@ dist/
 npm-debug.log*
 scripts/*.js
 scripts/*.js.map
+!scripts/generateElevarRebuildBundle.js
+!scripts/generateSynapsePreviewBundle.js
+!scripts/validateSynapsePreviewBundle.js
 data/

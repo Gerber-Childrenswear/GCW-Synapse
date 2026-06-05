@@ -18,6 +18,10 @@ const productSchema = z
     sku: z.string().optional(),
     name: z.string().optional(),
     category: z.string().optional(),
+    brand: z.string().optional(),
+    product_type: z.string().optional(),
+    variant_title: z.string().optional(),
+    item_list_name: z.string().optional(),
     price: z.number().optional(),
     quantity: z.number().optional()
   })
@@ -28,6 +32,8 @@ const runtimeSchema = z
     event_name: z.enum(REQUIRED_EVENTS),
     event_id: z.string().min(6).max(200).optional(),
     source: z.enum(["theme", "customer_events", "server"]),
+    source_theme: z.enum(["hyper", "expanse", "unknown"]).optional(),
+    source_surface: z.enum(["web", "checkout", "webhook", "unknown"]).optional(),
     customer: z
       .object({
         id: z.string().optional(),
@@ -49,6 +55,8 @@ const runtimeSchema = z
       .object({
         cart_id: z.string().optional(),
         total: z.number().optional(),
+        subtotal: z.number().optional(),
+        discount_total: z.number().optional(),
         currency: z.string().optional(),
         item_count: z.number().optional(),
         items: z.array(productSchema).optional()
@@ -61,7 +69,10 @@ const runtimeSchema = z
         revenue: z.number().optional(),
         shipping: z.number().optional(),
         tax: z.number().optional(),
-        coupon: z.string().optional()
+        coupon: z.string().optional(),
+        currency: z.string().optional(),
+        payment_type: z.string().optional(),
+        shipping_tier: z.string().optional()
       })
       .strict(),
     marketing: z
@@ -70,16 +81,25 @@ const runtimeSchema = z
         user_id: z.string().optional(),
         source: z.string().optional(),
         medium: z.string().optional(),
-        campaign: z.string().optional()
+        campaign: z.string().optional(),
+        term: z.string().optional(),
+        content: z.string().optional(),
+        click_id: z.string().optional(),
+        fbp: z.string().optional(),
+        fbc: z.string().optional(),
+        destinations: z.array(z.string()).optional()
       })
       .strict(),
     session: z
       .object({
         id: z.string().optional(),
         page_url: z.string().url().optional(),
+        page_path: z.string().optional(),
         referrer: z.string().optional(),
         timestamp: z.string().optional(),
-        sequence: z.number().int().nonnegative().optional()
+        sequence: z.number().int().nonnegative().optional(),
+        locale: z.string().optional(),
+        user_agent: z.string().optional()
       })
       .strict(),
     consent: consentSchema

@@ -14,8 +14,19 @@
     purchase: true
   };
 
+  var destinationHintsByEvent = {
+    begin_checkout: ["ga4", "meta", "instagram", "tiktok", "pinterest", "reddit", "triple_whale"],
+    add_shipping_info: ["ga4", "meta", "instagram", "tiktok"],
+    add_payment_info: ["ga4", "meta", "instagram", "tiktok"],
+    purchase: ["ga4", "meta", "instagram", "tiktok", "pinterest", "reddit", "google_ads", "triple_whale", "bloomreach", "commission_junction", "stackadapt"]
+  };
+
   function randomId(prefix) {
     return prefix + "_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+  }
+
+  function destinationHints(eventName) {
+    return destinationHintsByEvent[eventName] || ["ga4", "server_gtm"];
   }
 
   function readConsent(context) {
@@ -64,6 +75,8 @@
       event_name: eventName,
       event_id: payload.marketing.event_id,
       source: "customer_events",
+      source_theme: payload.source_theme || "unknown",
+      source_surface: "checkout",
       customer: payload.customer,
       product: payload.product,
       collection: payload.collection,
@@ -119,32 +132,47 @@
       marketing: {
         event_id: data.eventId || randomId("ce"),
         user_id: data.customer && data.customer.id ? String(data.customer.id) : undefined,
-        source: context.document && context.document.referrer ? context.document.referrer : "direct"
+        source: context.document && context.document.referrer ? context.document.referrer : "direct",
+        medium: data.marketing && data.marketing.medium ? data.marketing.medium : undefined,
+        campaign: data.marketing && data.marketing.campaign ? data.marketing.campaign : undefined,
+        term: data.marketing && data.marketing.term ? data.marketing.term : undefined,
+        content: data.marketing && data.marketing.content ? data.marketing.content : undefined
       },
       session: {
         id: context.sessionId || randomId("checkout"),
         page_url: context.document && context.document.location ? context.document.location.href : undefined,
+        page_path: context.document && context.document.location ? context.document.location.pathname : undefined,
         referrer: context.document && context.document.referrer ? context.document.referrer : "",
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        locale: context.document && context.document.documentElement ? context.document.documentElement.lang : undefined,
+        user_agent: context.navigator && context.navigator.userAgent ? context.navigator.userAgent : undefined
       },
-      consent: readConsent(context)
+      consent: readConsent(context),
+      source_theme: data.theme && typeof data.theme === "string" ? data.theme.toLowerCase() : "unknown"
     };
   }
 
   analytics.subscribe("checkout_started", function (evt) {
-    publish("begin_checkout", basePayload(evt));
+    var payload = basePayload(evt);
+    payload.marketing.destinations = destinationHints("begin_checkout");
+    publish("begin_checkout", payload);
   });
 
   analytics.subscribe("checkout_shipping_info_submitted", function (evt) {
-    publish("add_shipping_info", basePayload(evt));
+    var payload = basePayload(evt);
+    payload.marketing.destinations = destinationHints("add_shipping_info");
+    publish("add_shipping_info", payload);
   });
 
   analytics.subscribe("checkout_payment_info_submitted", function (evt) {
-    publish("add_payment_info", basePayload(evt));
+    var payload = basePayload(evt);
+    payload.marketing.destinations = destinationHints("add_payment_info");
+    publish("add_payment_info", payload);
   });
 
   analytics.subscribe("checkout_completed", function (evt) {
     var payload = basePayload(evt);
+    payload.marketing.destinations = destinationHints("purchase");
     publish("purchase", payload);
   });
 })();

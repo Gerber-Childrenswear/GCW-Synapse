@@ -1,7 +1,7 @@
 # GTM Elevar Active Rebuild Report
 
-- Source GTM: D:\Users\ncassidy\Downloads\GCW-Synapse-main\GCW-Synapse-main\test\fixtures\gtm-tooling\fixture_workspace.json
-- Source matrix: D:\Users\ncassidy\Downloads\GCW-Synapse-main\GCW-Synapse-main\test\fixtures\gtm-tooling\fixture_matrix.csv
+- Source GTM: D:\Users\ncassidy\Desktop\GCW-Synapse\test\fixtures\gtm-tooling\fixture_workspace.json
+- Source matrix: D:\Users\ncassidy\Desktop\GCW-Synapse\test\fixtures\gtm-tooling\fixture_matrix.csv
 - Active matrix rows: 2
 - Active tag names requested: 2
 - Active variable names requested: 1
@@ -12,4 +12,3 @@
 
 - Missing tags: 0
 - Missing variables: 0
-

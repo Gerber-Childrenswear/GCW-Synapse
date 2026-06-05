@@ -18,6 +18,7 @@
     "gtm:smoke:elevar": "node scripts/smokeTestElevarBundle.js",
     "gtm:bundle:synapse-preview": "node scripts/generateSynapsePreviewBundle.js",
     "gtm:validate:synapse-preview": "node scripts/validateSynapsePreviewBundle.js",
+    "gtm:fixtures:regen": "npm run gtm:bundle:elevar -- --gtm test/fixtures/gtm-tooling/fixture_workspace.json --matrix test/fixtures/gtm-tooling/fixture_matrix.csv --out test/fixtures/gtm-tooling/out_elevar_bundle.json --report test/fixtures/gtm-tooling/out_elevar_report.md && npm run gtm:bundle:synapse-preview -- --source-bundle test/fixtures/gtm-tooling/out_elevar_bundle.json --out test/fixtures/gtm-tooling/out_preview_bundle.json --report test/fixtures/gtm-tooling/out_preview_report.md && npm run gtm:validate:synapse-preview -- --source-bundle test/fixtures/gtm-tooling/out_elevar_bundle.json --bundle test/fixtures/gtm-tooling/out_preview_bundle.json",
     "gtm:smoke:synapse-preview": "node scripts/smokeTestElevarBundle.js --bundle docs/gtm/GTM-TKW58K8_synapse_side_by_side_preview_bundle.json --allow-external-refs",
     "gtm:report:placeholders": "node scripts/generateSynapsePlaceholderReport.js",
     "replay:webhook:create": "tsx scripts/replayWebhook.ts orders/create",

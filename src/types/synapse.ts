@@ -40,6 +40,10 @@ export type SynapseProduct = {
   sku?: string;
   name?: string;
   category?: string;
+  brand?: string;
+  product_type?: string;
+  variant_title?: string;
+  item_list_name?: string;
   price?: number;
   quantity?: number;
 };
@@ -53,6 +57,8 @@ export type SynapseCollection = {
 export type SynapseCart = {
   cart_id?: string;
   total?: number;
+  subtotal?: number;
+  discount_total?: number;
   currency?: string;
   item_count?: number;
   items?: SynapseProduct[];
@@ -65,6 +71,9 @@ export type SynapseCheckout = {
   shipping?: number;
   tax?: number;
   coupon?: string;
+  currency?: string;
+  payment_type?: string;
+  shipping_tier?: string;
 };
 
 export type SynapseMarketing = {
@@ -73,20 +82,31 @@ export type SynapseMarketing = {
   source?: string;
   medium?: string;
   campaign?: string;
+  term?: string;
+  content?: string;
+  click_id?: string;
+  fbp?: string;
+  fbc?: string;
+  destinations?: string[];
 };
 
 export type SynapseSession = {
   id?: string;
   page_url?: string;
+  page_path?: string;
   referrer?: string;
   timestamp?: string;
   sequence?: number;
+  locale?: string;
+  user_agent?: string;
 };
 
 export type SynapseRuntimeEvent = {
   event_name: SynapseEventName;
   event_id?: string;
   source: "theme" | "customer_events" | "server";
+  source_theme?: "hyper" | "expanse" | "unknown";
+  source_surface?: "web" | "checkout" | "webhook" | "unknown";
   customer: SynapseCustomer;
   product: SynapseProduct;
   collection: SynapseCollection;

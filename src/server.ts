@@ -91,11 +91,14 @@ function parseLineItemsJson(lineItemsRaw: string): CompatibilityLineItem[] {
 
 type ChannelEventRequestBody = {
   channel?: string;
-  surface?: "pixel" | "server";
+  surface?: "pixel" | "server" | "runtime" | "webhook";
   destination?: string;
   pixel_id?: string;
   event_name?: string;
+  event_id?: string;
   transaction_id?: string;
+  source_theme?: string;
+  source_surface?: string;
   status?: "ok" | "error";
   error_message?: string;
   observed_at?: string;
@@ -104,7 +107,7 @@ type ChannelEventRequestBody = {
 function parseChannelEventBody(body: ChannelEventRequestBody): { event?: ChannelEventInput; error?: string } {
   if (
     !body.channel ||
-    (body.surface !== "pixel" && body.surface !== "server") ||
+    (body.surface !== "pixel" && body.surface !== "server" && body.surface !== "runtime" && body.surface !== "webhook") ||
     !body.destination ||
     !body.event_name ||
     (body.status !== "ok" && body.status !== "error")
@@ -121,7 +124,10 @@ function parseChannelEventBody(body: ChannelEventRequestBody): { event?: Channel
       destination: body.destination,
       pixel_id: body.pixel_id,
       event_name: body.event_name,
+      event_id: body.event_id,
       transaction_id: body.transaction_id,
+      source_theme: body.source_theme,
+      source_surface: body.source_surface,
       status: body.status,
       error_message: body.error_message,
       observed_at: body.observed_at
@@ -1108,6 +1114,9 @@ app.post("/event", publicEventGuard, async (req, res) => {
       event_id: event.event_id ?? event.marketing.event_id,
       timestamp: event.session.timestamp ?? new Date().toISOString(),
       source: event.source,
+      source_theme: event.source_theme ?? "unknown",
+      source_surface: event.source_surface ?? "unknown",
+      destination_hints: event.marketing.destinations ?? [],
       gcwSynapse: {
         customer: event.customer,
         product: event.product,
@@ -1121,6 +1130,19 @@ app.post("/event", publicEventGuard, async (req, res) => {
     };
 
     await forwardToGtmServer(payload);
+
+    ingestChannelEvent({
+      channel: "server_gtm",
+      surface: "runtime",
+      destination: "collect",
+      event_name: event.event_name,
+      event_id: event.event_id ?? event.marketing.event_id,
+      transaction_id: event.checkout.order_id,
+      source_theme: event.source_theme,
+      source_surface: event.source_surface,
+      status: "ok",
+      observed_at: payload.timestamp
+    });
 
     incrementCounter("runtime_events_forwarded");
     recordRuntimeTelemetry({
@@ -1139,6 +1161,29 @@ app.post("/event", publicEventGuard, async (req, res) => {
       event_id: event.event_id ?? event.marketing.event_id
     });
   } catch {
+    const runtimeBody = req.body as Partial<{
+      event_name: string;
+      event_id: string;
+      source_theme: string;
+      source_surface: string;
+      checkout: { order_id?: string };
+      session: { timestamp?: string };
+    }>;
+
+    ingestChannelEvent({
+      channel: "server_gtm",
+      surface: "runtime",
+      destination: "collect",
+      event_name: runtimeBody.event_name ?? "unknown",
+      event_id: runtimeBody.event_id,
+      transaction_id: runtimeBody.checkout?.order_id,
+      source_theme: runtimeBody.source_theme,
+      source_surface: runtimeBody.source_surface,
+      status: "error",
+      error_message: "runtime_forward_or_validation_failed",
+      observed_at: runtimeBody.session?.timestamp
+    });
+
     incrementCounter("runtime_events_rejected_invalid_payload");
     res.status(400).json({
       ok: false,

@@ -1,6 +1,6 @@
 {
   "exportFormatVersion": 2,
-  "exportTime": "2026-05-31 04:30:09",
+  "exportTime": "2026-05-30 10:00:00",
   "containerVersion": {
     "path": "accounts/1/containers/1/versions/1",
     "accountId": "1",
@@ -58,6 +58,7 @@
         "triggerId": "300000",
         "name": "Synapse Preview - Event - Purchase",
         "type": "CUSTOM_EVENT",
+        "parentFolderId": "19901",
         "customEventFilter": [
           {
             "type": "EQUALS",
@@ -75,7 +76,6 @@
             ]
           }
         ],
-        "parentFolderId": "19901",
         "filter": [
           {
             "type": "EQUALS",
@@ -182,6 +182,7 @@
         "containerId": "1",
         "type": "EVENT"
       }
-    ]
+    ],
+    "customTemplate": []
   }
 }

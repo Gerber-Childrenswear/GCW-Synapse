@@ -1,6 +1,6 @@
 # GTM Synapse Side-by-Side Preview Report
 
-- Source bundle: D:\Users\ncassidy\Downloads\GCW-Synapse-main\GCW-Synapse-main\test\fixtures\gtm-tooling\out_elevar_bundle.json
+- Source bundle: D:\Users\ncassidy\Desktop\GCW-Synapse\test\fixtures\gtm-tooling\out_elevar_bundle.json
 - Source active tags: 2
 - Source selected triggers: 2
 - Preview tags generated: 2

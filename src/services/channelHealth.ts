@@ -1,4 +1,4 @@
-type ChannelSurface = "pixel" | "server";
+type ChannelSurface = "pixel" | "server" | "runtime" | "webhook";
 
 type EventStatus = "ok" | "error";
 
@@ -8,7 +8,10 @@ export type ChannelEventInput = {
   destination: string;
   pixel_id?: string | undefined;
   event_name: string;
+  event_id?: string | undefined;
   transaction_id?: string | undefined;
+  source_theme?: string | undefined;
+  source_surface?: string | undefined;
   status: EventStatus;
   error_message?: string | undefined;
   observed_at?: string | undefined;
@@ -166,7 +169,10 @@ export function ingestChannelEvent(input: ChannelEventInput): ChannelHealthItem 
     destination: input.destination.trim(),
     pixel_id: normalizeString(input.pixel_id),
     event_name: input.event_name.trim(),
+    event_id: normalizeString(input.event_id),
     transaction_id: normalizeString(input.transaction_id),
+    source_theme: normalizeString(input.source_theme),
+    source_surface: normalizeString(input.source_surface),
     error_message: normalizeString(input.error_message),
     observed_at: toIsoString(input.observed_at)
   };
