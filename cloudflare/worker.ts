@@ -286,6 +286,10 @@ function addSecurityHeaders(response: Response): Response {
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   headers.set("X-XSS-Protection", "0");
+  const contentType = headers.get("content-type") ?? "";
+  if (contentType.includes("text/html")) {
+    headers.set("Cache-Control", "no-store, no-cache, must-revalidate");
+  }
   // Allow Shopify embedded app iframing while still restricting other parents.
   headers.set("Content-Security-Policy", "frame-ancestors 'self' https://admin.shopify.com https://*.myshopify.com");
 
