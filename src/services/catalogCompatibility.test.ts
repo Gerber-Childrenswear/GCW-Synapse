@@ -33,7 +33,17 @@ test("resolveAddToCartCompatibility returns add array and scalar fields", () => 
   assert.equal(addToCart.add_array.length, 1);
   assert.equal(addToCart.quantity, 2);
   assert.equal(addToCart.price, 25);
+  assert.equal(addToCart.value, 50);
   assert.equal(addToCart.category, "Onesies");
+  assert.equal(addToCart.product_id, "101");
+  assert.equal(addToCart.product_name, "Footie");
+  assert.equal(addToCart.sku, "SKU-123");
+  assert.equal(addToCart.variant_id, "Blue / M");
+  assert.equal(addToCart.facebook_contents[0]?.id, "SKU-123");
+  assert.equal(addToCart.facebook_contents[0]?.quantity, 2);
+  assert.equal(addToCart.ga4_items.length, 1);
+  assert.equal(addToCart.tiktok_contents[0]?.content_id, "SKU-123");
+  assert.equal(addToCart.google_ads_shopify_ids[0], "101");
 });
 
 test("resolveProductViewDetailsArray returns canonical product view array", () => {

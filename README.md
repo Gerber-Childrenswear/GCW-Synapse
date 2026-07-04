@@ -38,6 +38,8 @@ GCW-Synapse is a Shopify analytics relay service that replaces Elevar by forward
 - GET /compatibility/order-revenue
 - GET /compatibility/customer-phone
 - GET /compatibility/impressions
+- GET /compatibility/product-group
+- GET /compatibility/page-title
 - GET /compatibility/add-to-cart
 - GET /compatibility/product-view-details
 - POST /compare/elevar
@@ -45,6 +47,17 @@ GCW-Synapse is a Shopify analytics relay service that replaces Elevar by forward
 - POST /compare/channel-event/batch
 - GET /api/advisor/alerts
 - POST /api/advisor/chat
+- GET /api/events/catalog
+- POST /api/events/validate-runtime
+- GET /api/gtm/placeholders
+- GET /api/gtm/compatibility-matrix
+- GET /api/gtm/compatibility-gaps
+- GET /api/gtm/compatibility-usage
+- GET /api/gtm/compatibility-drilldown
+- GET /api/monitor/weekend
+- GET /api/theme-adapters
+- GET /api/theme-adapters/:key/coverage
+- GET /api/theme-adapters/:key/summary
 - GET /compare/summary
 - GET /compare/parity
 - GET /compare/channels

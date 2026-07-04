@@ -45,7 +45,15 @@ import {
   getShadowCompareSummary,
   ingestElevarShadow
 } from "./services/shadowCompare";
-import { getControlPanelChecklist, getControlPanelSchemas, getControlPanelVendors } from "./services/controlPanelData";
+import {
+  getCanonicalEventCatalog,
+  getControlPanelChecklist,
+  getControlPanelSchemas,
+  getControlPanelVendors,
+  getThemeAdapterCoverage,
+  getThemeAdapterProfiles
+} from "./services/controlPanelData";
+import { summarizeThemeAdapterReadiness } from "./services/controlPanelData";
 import { runQaSmokeTests } from "./services/qaSmoke";
 import { resolveVisitorType } from "./services/visitorType";
 import { normalizeCustomerPhone } from "./services/customerPhone";
@@ -58,6 +66,20 @@ import {
 } from "./services/runtimeEvents";
 import { evaluateRuntimeEventPolicy } from "./services/runtimeEventPolicy";
 import { buildAdvisorAlerts, getAdvisorAnswer } from "./services/localAdvisor";
+import { configureMappingRegistry, getMappingRegistry, replaceMappingRegistry } from "./services/mappingRegistry";
+import { validateRuntimeEventAgainstCatalog } from "./services/runtimeCatalogValidation";
+import { buildPlaceholderMatrixReport } from "./services/gtmPlaceholderMatrix";
+import { buildWeekendMonitorSummary } from "./services/weekendMonitor";
+import { getGtmCompatibilityMatrix, getTopPriorityCompatibilityGaps } from "./services/gtmCompatibilityMatrix";
+import {
+  getCompatibilityUsageByEndpoint,
+  getCompatibilityUsageSummary,
+  getCompatibilityUsageTrend,
+  recordCompatibilityUsage
+} from "./services/compatibilityUsage";
+import { buildCompatibilityFailureDiagnostics } from "./services/compatibilityDiagnostics";
+import { resolveProductGroup } from "./services/productGroup";
+import { resolvePageTitle } from "./services/pageTitle";
 
 const app = express();
 app.disable("x-powered-by");
@@ -72,6 +94,10 @@ configureShadowCompare({
   runtimeMode: env.RUNTIME_MODE,
   maxRecords: env.SHADOW_COMPARE_MAX_RECORDS,
   storePath: env.SHADOW_COMPARE_STORE_PATH
+});
+
+configureMappingRegistry({
+  storePath: env.CONTROL_PANEL_MAPPING_STORE_PATH
 });
 
 type CompatibilityLineItem = {
@@ -297,6 +323,263 @@ app.get("/api/events/schemas", requireIngressToken, (_req, res) => {
   res.status(200).json(getControlPanelSchemas());
 });
 
+app.get("/api/events/catalog", requireIngressToken, (_req, res) => {
+  res.status(200).json(getCanonicalEventCatalog());
+});
+
+app.get("/api/theme-adapters", requireIngressToken, (_req, res) => {
+  res.status(200).json(getThemeAdapterProfiles());
+});
+
+app.get("/api/theme-adapters/:key/coverage", requireIngressToken, async (req, res) => {
+  const adapterKey = req.params.key;
+  if (adapterKey !== "hyper" && adapterKey !== "headless" && adapterKey !== "expanse") {
+    res.status(404).json({ ok: false, error: "Unknown adapter" });
+    return;
+  }
+
+  const registry = await getMappingRegistry();
+  const coverage = getThemeAdapterCoverage(adapterKey, registry.mappings);
+
+  if (!coverage) {
+    res.status(404).json({ ok: false, error: "Unknown adapter" });
+    return;
+  }
+
+  res.status(200).json({
+    ok: true,
+    revision: registry.revision,
+    persistence: {
+      configured: registry.persistenceConfigured,
+      store_path: registry.storePath
+    },
+    coverage
+  });
+});
+
+app.get("/api/theme-adapters/:key/summary", requireIngressToken, async (req, res) => {
+  const adapterKey = req.params.key;
+  if (adapterKey !== "hyper" && adapterKey !== "headless" && adapterKey !== "expanse") {
+    res.status(404).json({ ok: false, error: "Unknown adapter" });
+    return;
+  }
+
+  const registry = await getMappingRegistry();
+  const coverage = getThemeAdapterCoverage(adapterKey, registry.mappings);
+
+  if (!coverage) {
+    res.status(404).json({ ok: false, error: "Unknown adapter" });
+    return;
+  }
+
+  const metrics = getMetricsSnapshot();
+  const readiness = summarizeThemeAdapterReadiness(coverage, {
+    warnings: metrics.counters.runtime_events_validation_warnings,
+    errors: metrics.counters.runtime_events_validation_errors
+  });
+
+  res.status(200).json({
+    ok: true,
+    revision: registry.revision,
+    coverage: coverage.summary,
+    readiness
+  });
+});
+
+app.get("/api/gtm/placeholders", requireIngressToken, (_req, res) => {
+  try {
+    const report = buildPlaceholderMatrixReport();
+    res.status(200).json({ ok: true, report });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error instanceof Error ? error.message : "Failed to build placeholder matrix"
+    });
+  }
+});
+
+app.get("/api/gtm/compatibility-matrix", requireIngressToken, (_req, res) => {
+  res.status(200).json({ ok: true, entries: getGtmCompatibilityMatrix() });
+});
+
+app.get("/api/gtm/compatibility-gaps", requireIngressToken, (req, res) => {
+  const limitRaw = typeof req.query.limit === "string" ? req.query.limit : "10";
+  const parsedLimit = Number.parseInt(limitRaw, 10);
+  const limit = Number.isFinite(parsedLimit) ? parsedLimit : 10;
+
+  res.status(200).json({ ok: true, entries: getTopPriorityCompatibilityGaps(limit) });
+});
+
+app.get("/api/gtm/compatibility-usage", requireIngressToken, (_req, res) => {
+  res.status(200).json({
+    ok: true,
+    entries: getCompatibilityUsageSummary(),
+    by_endpoint: getCompatibilityUsageByEndpoint()
+  });
+});
+
+app.get("/api/gtm/compatibility-drilldown", requireIngressToken, (req, res) => {
+  const eventFamily = typeof req.query.event_family === "string" ? req.query.event_family : undefined;
+  const endpointPath = typeof req.query.endpoint_path === "string" ? req.query.endpoint_path : undefined;
+  const limitRaw = typeof req.query.limit === "string" ? req.query.limit : "20";
+  const parsedLimit = Number.parseInt(limitRaw, 10);
+  const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(parsedLimit, 100)) : 20;
+
+  const hoursRaw = typeof req.query.window_hours === "string" ? req.query.window_hours : "72";
+  const parsedHours = Number.parseInt(hoursRaw, 10);
+  const windowHours = Number.isFinite(parsedHours) ? Math.max(1, Math.min(parsedHours, 24 * 14)) : 72;
+
+  const matrix = getGtmCompatibilityMatrix();
+  const usageByEndpoint = getCompatibilityUsageByEndpoint();
+  const usageMap = new Map(usageByEndpoint.map((row) => [row.endpointPath, row]));
+
+  const filteredHelpers = matrix
+    .filter((entry) => !!entry.endpointPath)
+    .filter((entry) => (!eventFamily ? true : entry.eventFamilies.includes(eventFamily)))
+    .filter((entry) => (!endpointPath ? true : entry.endpointPath === endpointPath))
+    .map((entry) => {
+      const usage = usageMap.get(entry.endpointPath as string);
+      return {
+        priority: entry.priority,
+        legacyVariable: entry.legacyVariable,
+        endpointPath: entry.endpointPath,
+        status: entry.status,
+        externalRefs: entry.externalRefs,
+        eventFamilies: entry.eventFamilies,
+        notes: entry.notes,
+        usage: usage ?? {
+          endpointPath: entry.endpointPath,
+          legacyVariable: entry.legacyVariable,
+          eventFamilies: entry.eventFamilies,
+          okHits: 0,
+          errorHits: 0,
+          totalHits: 0,
+          failureRatePct: 0
+        }
+      };
+    })
+    .sort((left, right) => {
+      const statusRank = { missing: 0, partial: 1, available: 2 } as const;
+      const statusOrder = statusRank[left.status] - statusRank[right.status];
+      if (statusOrder !== 0) {
+        return statusOrder;
+      }
+
+      const priorityRank = { P0: 0, P1: 1, P2: 2, P3: 3 } as const;
+      const byPriority = priorityRank[left.priority] - priorityRank[right.priority];
+      if (byPriority !== 0) {
+        return byPriority;
+      }
+
+      if (right.usage.errorHits !== left.usage.errorHits) {
+        return right.usage.errorHits - left.usage.errorHits;
+      }
+
+      return right.externalRefs - left.externalRefs;
+    })
+    .slice(0, limit);
+
+  const helperEndpointSet = new Set(filteredHelpers.map((item) => item.endpointPath));
+  const trend = getCompatibilityUsageTrend(windowHours).filter((item) => helperEndpointSet.has(item.endpointPath));
+
+  res.status(200).json({
+    ok: true,
+    filters: {
+      event_family: eventFamily,
+      endpoint_path: endpointPath,
+      limit,
+      window_hours: windowHours
+    },
+    helpers: filteredHelpers,
+    trend
+  });
+});
+
+app.get("/api/monitor/weekend", requireIngressToken, async (_req, res) => {
+  try {
+    const metrics = getMetricsSnapshot();
+    const runtimeTelemetry = getRuntimeTelemetrySummary();
+    const deadLetter = getDeadLetterSummary(env.GTM_DEAD_LETTER_PATH);
+    const ops = buildOpsAlerts({
+      counters: {
+        webhooks_received: metrics.counters.webhooks_received,
+        webhooks_forwarded: metrics.counters.webhooks_forwarded,
+        webhooks_forward_failed: metrics.counters.webhooks_forward_failed,
+        webhooks_invalid_signature: metrics.counters.webhooks_invalid_signature,
+        refunds_received: metrics.counters.refunds_received,
+        refunds_forwarded: metrics.counters.refunds_forwarded,
+        refunds_forward_failed: metrics.counters.refunds_forward_failed,
+        refunds_invalid_signature: metrics.counters.refunds_invalid_signature,
+        ingress_token_rejected: metrics.counters.ingress_token_rejected,
+        runtime_events_received: metrics.counters.runtime_events_received,
+        runtime_events_rejected_invalid_payload: metrics.counters.runtime_events_rejected_invalid_payload,
+        runtime_events_forwarded: metrics.counters.runtime_events_forwarded,
+        runtime_events_suppressed: metrics.counters.runtime_events_suppressed,
+        gtm_dead_letter_written: metrics.counters.gtm_dead_letter_written
+      },
+      runtimeTelemetry,
+      deadLetter
+    });
+
+    const paritySummary = getShadowCompareSummary();
+    const parity = getShadowParityReport(env.SHADOW_COMPARE_MISMATCH_ALERT_PCT);
+    const registry = await getMappingRegistry();
+    const hyperCoverage = getThemeAdapterCoverage("hyper", registry.mappings);
+    if (!hyperCoverage) {
+      res.status(500).json({ ok: false, error: "Hyper coverage unavailable" });
+      return;
+    }
+
+    const hyperReadiness = summarizeThemeAdapterReadiness(hyperCoverage, {
+      warnings: metrics.counters.runtime_events_validation_warnings,
+      errors: metrics.counters.runtime_events_validation_errors
+    });
+
+    const channelSummary = getChannelHealthSummary(env.CHANNEL_HEALTH_STALE_MINUTES, env.CHANNEL_HEALTH_WARN_FAILURE_PCT);
+    const topChannelIssues = getChannelTroubleshooting(channelSummary);
+    const placeholderMatrix = buildPlaceholderMatrixReport();
+    const compatibilityFailures = buildCompatibilityFailureDiagnostics({
+      matrix: getGtmCompatibilityMatrix(),
+      usage: getCompatibilityUsageSummary(),
+      limit: 5
+    });
+    const summary = buildWeekendMonitorSummary({
+      parity,
+      paritySummary,
+      hyper: hyperReadiness,
+      placeholderMatrix,
+      compatibilityFailures,
+      channels: channelSummary,
+      topChannelIssues,
+      ops
+    });
+
+    res.status(200).json({ ok: true, generated_at: new Date().toISOString(), summary });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error instanceof Error ? error.message : "Failed to build weekend monitor"
+    });
+  }
+});
+
+app.post("/api/events/validate-runtime", requireIngressToken, (req, res) => {
+  try {
+    const event = parseRuntimeEvent(req.body);
+    const validation = validateRuntimeEventAgainstCatalog(event);
+
+    res.status(validation.valid ? 200 : 422).json({
+      ok: validation.valid,
+      validation
+    });
+  } catch {
+    res.status(400).json({
+      ok: false,
+      error: "Invalid runtime event payload"
+    });
+  }
+});
+
 app.get("/api/webhooks/log", requireIngressToken, (req, res) => {
   const limitRaw = typeof req.query.limit === "string" ? req.query.limit : "50";
   const parsedLimit = Number.parseInt(limitRaw, 10);
@@ -513,6 +796,16 @@ app.get("/auth/shopify/callback", async (req, res) => {
       error: error instanceof Error ? error.message : "Shopify install callback failed"
     });
   }
+});
+
+app.use("/compatibility", (req, res, next) => {
+  res.on("finish", () => {
+    const endpointPath = `${req.baseUrl}${req.path}`;
+    const status = res.statusCode >= 400 ? "error" : "ok";
+    recordCompatibilityUsage(endpointPath, status);
+  });
+
+  next();
 });
 
 app.get("/compatibility/ga4-id", requireIngressToken, (req, res) => {
@@ -805,6 +1098,48 @@ app.get("/compatibility/impressions", requireIngressToken, (req, res) => {
       error: "Invalid line_items_json query value"
     });
   }
+});
+
+app.get("/compatibility/product-group", requireIngressToken, (req, res) => {
+  const lineItemsRaw = typeof req.query.line_items_json === "string" ? req.query.line_items_json : "[]";
+
+  try {
+    const lineItems = parseLineItemsJson(lineItemsRaw);
+    const result = resolveProductGroup(lineItems);
+
+    res.status(200).json({
+      ok: true,
+      variable: "Facebook - product group",
+      resolved_product_group: result.productGroup,
+      source: result.source
+    });
+  } catch {
+    res.status(400).json({
+      ok: false,
+      error: "Invalid line_items_json query value"
+    });
+  }
+});
+
+app.get("/compatibility/page-title", requireIngressToken, (req, res) => {
+  const pageTitle = typeof req.query.page_title === "string" ? req.query.page_title : undefined;
+  const pageUrl = typeof req.query.page_url === "string" ? req.query.page_url : undefined;
+
+  const result = resolvePageTitle({
+    pageTitle,
+    pageUrl
+  });
+
+  res.status(200).json({
+    ok: true,
+    variable: "DOM - Page Title",
+    resolved_page_title: result.pageTitle,
+    source: result.source,
+    sources: {
+      page_title: pageTitle,
+      page_url: pageUrl
+    }
+  });
 });
 
 app.get("/compatibility/add-to-cart", requireIngressToken, (req, res) => {
@@ -1102,6 +1437,61 @@ app.post("/api/advisor/chat", requireIngressToken, async (req, res) => {
   });
 });
 
+app.get("/api/mappings", requireIngressToken, async (_req, res) => {
+  const registry = await getMappingRegistry();
+
+  res.status(200).json({
+    ok: true,
+    mappings: registry.mappings,
+    revision: registry.revision,
+    persistence: {
+      configured: registry.persistenceConfigured,
+      store_path: registry.storePath
+    }
+  });
+});
+
+app.put("/api/mappings", requireIngressToken, async (req, res) => {
+  const body = req.body as { mappings?: unknown; expected_revision?: unknown };
+
+  if (!body || typeof body !== "object") {
+    res.status(400).json({ ok: false, error: "request body is required" });
+    return;
+  }
+
+  const expectedRevision =
+    typeof body.expected_revision === "number" && Number.isFinite(body.expected_revision)
+      ? body.expected_revision
+      : undefined;
+
+  try {
+    const updated =
+      expectedRevision === undefined
+        ? await replaceMappingRegistry(body.mappings ?? {})
+        : await replaceMappingRegistry(body.mappings ?? {}, { expectedRevision });
+
+    res.status(200).json({
+      ok: true,
+      mappings: updated.mappings,
+      revision: updated.revision,
+      saved_at: new Date().toISOString()
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("mapping_revision_conflict:")) {
+      const registry = await getMappingRegistry();
+      res.status(409).json({
+        ok: false,
+        error: "mapping revision conflict",
+        current_revision: registry.revision,
+        current_mappings: registry.mappings
+      });
+      return;
+    }
+
+    throw error;
+  }
+});
+
 app.get("/compare/channels", requireIngressToken, (_req, res) => {
   const summary = getChannelHealthSummary(env.CHANNEL_HEALTH_STALE_MINUTES, env.CHANNEL_HEALTH_WARN_FAILURE_PCT);
 
@@ -1230,6 +1620,15 @@ app.post("/event", publicEventGuard, async (req, res) => {
 
   try {
     const event = parseRuntimeEvent(req.body);
+    const validation = validateRuntimeEventAgainstCatalog(event);
+
+    if (validation.issues.some((issue) => issue.level === "error")) {
+      incrementCounter("runtime_events_validation_errors");
+    }
+
+    if (validation.issues.some((issue) => issue.level === "warning")) {
+      incrementCounter("runtime_events_validation_warnings");
+    }
 
     if (isRuntimeDuplicate(event)) {
       incrementCounter("runtime_events_duplicate");
@@ -1245,7 +1644,8 @@ app.post("/event", publicEventGuard, async (req, res) => {
 
       res.status(200).json({
         ok: true,
-        status: "duplicate_ignored"
+        status: "duplicate_ignored",
+        validation
       });
       return;
     }
@@ -1266,7 +1666,8 @@ app.post("/event", publicEventGuard, async (req, res) => {
       res.status(202).json({
         ok: true,
         status: "suppressed",
-        reason: policy.reason
+        reason: policy.reason,
+        validation
       });
       return;
     }
@@ -1320,7 +1721,8 @@ app.post("/event", publicEventGuard, async (req, res) => {
       ok: true,
       status: "forwarded",
       event_name: event.event_name,
-      event_id: event.event_id ?? event.marketing.event_id
+      event_id: event.event_id ?? event.marketing.event_id,
+      validation
     });
   } catch {
     const runtimeBody = req.body as Partial<{
