@@ -37,7 +37,9 @@
     "gtm:runbook:takeover:strict": "tsx scripts/generateTakeoverRunbook.ts --fail_on_hold",
     "gtm:manifest:takeover": "tsx scripts/generateTakeoverArtifactManifest.ts",
     "gtm:manifest:verify:takeover": "tsx scripts/verifyTakeoverArtifactManifest.ts",
-    "gtm:manifest:verify:takeover:strict": "tsx scripts/verifyTakeoverArtifactManifest.ts --fail_on_mismatch"
+    "gtm:manifest:verify:takeover:strict": "tsx scripts/verifyTakeoverArtifactManifest.ts --fail_on_mismatch",
+    "gtm:release-signal:takeover": "tsx scripts/generateTakeoverReleaseSignal.ts",
+    "gtm:release-signal:takeover:strict": "tsx scripts/generateTakeoverReleaseSignal.ts --fail_on_hold"
   },
   "repository": {
     "type": "git",

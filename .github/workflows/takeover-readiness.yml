@@ -98,12 +98,18 @@ jobs:
         continue-on-error: true
         run: npm run gtm:manifest:verify:takeover:strict
 
+      - name: Generate takeover release signal
+        id: release_signal
+        if: always()
+        continue-on-error: true
+        run: npm run gtm:release-signal:takeover:strict
+
       - name: Evaluate strict results
         id: strict
         if: always()
         shell: bash
         run: |
-          if [[ "${{ steps.cutover.outcome }}" == "success" && "${{ steps.verify.outcome }}" == "success" && "${{ steps.confidence.outcome }}" == "success" && "${{ steps.runbook.outcome }}" == "success" && "${{ steps.manifest.outcome }}" == "success" && "${{ steps.manifest_verify.outcome }}" == "success" ]]; then
+          if [[ "${{ steps.cutover.outcome }}" == "success" && "${{ steps.verify.outcome }}" == "success" && "${{ steps.confidence.outcome }}" == "success" && "${{ steps.runbook.outcome }}" == "success" && "${{ steps.manifest.outcome }}" == "success" && "${{ steps.manifest_verify.outcome }}" == "success" && "${{ steps.release_signal.outcome }}" == "success" ]]; then
             echo "strict_failed=false" >> "$GITHUB_OUTPUT"
           else
             echo "strict_failed=true" >> "$GITHUB_OUTPUT"
@@ -237,6 +243,6 @@ jobs:
         if: always() && steps.strict.outputs.strict_failed == 'true'
         shell: bash
         run: |
-          echo "Strict readiness checks failed (cutover=${{ steps.cutover.outcome }}, verify=${{ steps.verify.outcome }}, confidence=${{ steps.confidence.outcome }}, runbook=${{ steps.runbook.outcome }}, manifest=${{ steps.manifest.outcome }}, manifest_verify=${{ steps.manifest_verify.outcome }})."
+          echo "Strict readiness checks failed (cutover=${{ steps.cutover.outcome }}, verify=${{ steps.verify.outcome }}, confidence=${{ steps.confidence.outcome }}, runbook=${{ steps.runbook.outcome }}, manifest=${{ steps.manifest.outcome }}, manifest_verify=${{ steps.manifest_verify.outcome }}, release_signal=${{ steps.release_signal.outcome }})."
           echo "Current consecutive failure streak: ${{ steps.streak.outputs.streak }}"
           exit 1
