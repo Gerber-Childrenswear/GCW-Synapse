@@ -392,6 +392,7 @@ The guard fails when either of these conditions is true:
 
 - No successful `takeover-readiness` run exists yet
 - The latest successful `takeover-readiness` run is older than the configured freshness threshold
+- The latest successful `takeover-readiness` run validated a different commit than the release tag points to
 
 Required repository secrets:
 

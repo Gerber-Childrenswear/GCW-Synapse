@@ -85,6 +85,21 @@ jobs:
               return;
             }
 
+            const releaseSha = context.sha;
+            const readinessSha = latestSuccess.head_sha || null;
+
+            if (!readinessSha) {
+              core.setFailed("Release blocked: latest successful takeover-readiness run is missing head SHA metadata.");
+              return;
+            }
+
+            if (releaseSha && readinessSha !== releaseSha) {
+              core.setFailed(
+                `Release blocked: latest successful takeover-readiness run validated ${readinessSha}, but current release ref points at ${releaseSha}.`
+              );
+              return;
+            }
+
             core.info(
-              `Release guard passed. Consecutive takeover-readiness failures: ${streak} (threshold ${threshold}). Latest success age: ${ageHours.toFixed(1)}h (threshold ${freshnessHours}h).`
+              `Release guard passed. Consecutive takeover-readiness failures: ${streak} (threshold ${threshold}). Latest success age: ${ageHours.toFixed(1)}h (threshold ${freshnessHours}h). Validated SHA: ${readinessSha}.`
             );
