@@ -117,7 +117,7 @@
           {
             "type": "TEMPLATE",
             "key": "html",
-            "value": "<script>(function(){var name={{dlv - Synapse - Event Name}};if(!name){return;}var legacy='dl_'+String(name);window.dataLayer=window.dataLayer||[];window.dataLayer.push({event:legacy,event_id:{{dlv - Synapse - Event ID}},gcwSynapse:{{dlv - Synapse - Runtime Payload}}});})();</script>"
+            "value": "<script>(function(){var name={{dlv - Synapse - Event Name}};if(!name){return;}var payload={{dlv - Synapse - Runtime Payload}}||{};var legacy='dl_'+String(name);var entry={event:legacy,event_id:{{dlv - Synapse - Event ID}},gcwSynapse:payload};if(String(name)==='user_data'){entry.user_properties={visitor_type:payload.customer&&payload.customer.visitor_type,customer_id:payload.customer&&payload.customer.id,customer_email:payload.customer&&payload.customer.email,user_consent:(payload.consent&&(payload.consent.ad_user_data||payload.consent.analytics_storage))||'unknown'};entry.ecommerce={cart_total:payload.cart&&payload.cart.total!=null?String(payload.cart.total):undefined,currency:payload.cart&&payload.cart.currency};}window.dataLayer=window.dataLayer||[];window.dataLayer.push(entry);})();</script>"
           },
           {
             "type": "BOOLEAN",

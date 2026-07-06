@@ -132,6 +132,29 @@ describe("runtimeEvents", () => {
     assert.equal(event.source_surface, "webhook");
   });
 
+  it("parses user_data runtime payload", () => {
+    const userDataPayload = {
+      ...payload,
+      event_name: "user_data",
+      event_id: "evt_user_data_001",
+      cart: {
+        cart_id: "cart_abc",
+        total: 59.98,
+        currency: "USD",
+        item_count: 2
+      },
+      marketing: {
+        event_id: "evt_user_data_001",
+        user_id: "1"
+      }
+    };
+
+    const event = parseRuntimeEvent(userDataPayload);
+    assert.equal(event.event_name, "user_data");
+    assert.equal(event.cart.total, 59.98);
+    assert.equal(event.marketing.user_id, "1");
+  });
+
   it("detects duplicate event_id within dedupe window", () => {
     const first = parseRuntimeEvent(payload);
     const second = parseRuntimeEvent(payload);

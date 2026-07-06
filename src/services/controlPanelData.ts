@@ -109,7 +109,7 @@ const EVENT_SCHEMAS: EventSchema[] = [
   {
     eventName: "dl_user_data",
     description:
-      "Fired on every page load. Sets user_properties context for all downstream events. Elevar placeholder - logic executed on Elevar backend.",
+      "Fired on every page load. Sets user_properties context for all downstream events. Emitted by the theme pixel as user_data and bridged to dl_user_data in GTM.",
     fields: [
       ...USER_CONTEXT_FIELDS,
       {
