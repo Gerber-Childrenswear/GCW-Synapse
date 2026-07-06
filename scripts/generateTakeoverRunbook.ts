@@ -153,6 +153,10 @@ function buildDecisionPacket(input: {
         ];
 
   const manifestPath = path.resolve(path.dirname(input.sourcePaths.cutoverStatusPath), "takeover-artifact-manifest-latest.json");
+  const sourcePaths = {
+    ...input.sourcePaths,
+    manifestPath
+  };
 
   const executiveSummary =
     verdict === "go"
@@ -168,17 +172,7 @@ function buildDecisionPacket(input: {
     highlights,
     blockers,
     nextActions,
-    sources: input.sourcePaths
-      ? {
-          ...input.sourcePaths,
-          manifestPath
-        }
-      : {
-          cutoverStatusPath: input.sourcePaths.cutoverStatusPath,
-          takeoverVerifyPath: input.sourcePaths.takeoverVerifyPath,
-          confidencePath: input.sourcePaths.confidencePath,
-          manifestPath
-        }
+    sources: sourcePaths
   };
 }
 

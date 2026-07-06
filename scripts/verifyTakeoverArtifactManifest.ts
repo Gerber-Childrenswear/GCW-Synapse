@@ -75,11 +75,24 @@ async function main(): Promise<void> {
 
   for (const artifact of manifest.artifacts) {
     const filePath = path.isAbsolute(artifact.path) ? artifact.path : path.resolve(manifest.artifact_dir, artifact.path);
-    const data = await readFile(filePath);
-    const actualSha256 = sha256Of(data);
-    const actualSizeBytes = data.byteLength;
-    const status: "match" | "mismatch" =
-      actualSha256 === artifact.sha256 && actualSizeBytes === artifact.sizeBytes ? "match" : "mismatch";
+    let actualSha256 = "";
+    let actualSizeBytes = 0;
+    let status: "match" | "mismatch" = "mismatch";
+
+    try {
+      const data = await readFile(filePath);
+      actualSha256 = sha256Of(data);
+      actualSizeBytes = data.byteLength;
+      status = actualSha256 === artifact.sha256 && actualSizeBytes === artifact.sizeBytes ? "match" : "mismatch";
+    } catch (error) {
+      if (error instanceof Error && "code" in error && (error as { code?: string }).code === "ENOENT") {
+        actualSha256 = "missing";
+        actualSizeBytes = 0;
+        status = "mismatch";
+      } else {
+        throw error;
+      }
+    }
 
     results.push({
       name: artifact.name,
