@@ -80,6 +80,12 @@ jobs:
           npm run gtm:confidence:takeover:strict -- \
             --min_confidence_pct "${{ inputs.min_confidence_pct }}"
 
+      - name: Generate takeover decision runbook
+        id: runbook
+        if: always()
+        continue-on-error: true
+        run: npm run gtm:runbook:takeover
+
       - name: Evaluate strict results
         id: strict
         if: always()

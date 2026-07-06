@@ -32,7 +32,9 @@
     "gtm:verify:takeover:strict": "tsx scripts/verifyTakeoverReadiness.ts --fail_on_hold --fail_on_contract_drift",
     "gtm:notify:takeover": "tsx scripts/notifyTakeoverStatus.ts",
     "gtm:confidence:takeover": "tsx scripts/computeTakeoverConfidence.ts",
-    "gtm:confidence:takeover:strict": "tsx scripts/computeTakeoverConfidence.ts --fail_on_low_confidence"
+    "gtm:confidence:takeover:strict": "tsx scripts/computeTakeoverConfidence.ts --fail_on_low_confidence",
+    "gtm:runbook:takeover": "tsx scripts/generateTakeoverRunbook.ts",
+    "gtm:runbook:takeover:strict": "tsx scripts/generateTakeoverRunbook.ts --fail_on_hold"
   },
   "repository": {
     "type": "git",

@@ -318,6 +318,23 @@ Supported flags:
 - `--min_confidence_pct` (default 95)
 - `--fail_on_low_confidence`
 
+## Takeover Decision Runbook
+
+Generate a leadership-ready GO/HOLD packet from latest cutover, verification, and confidence artifacts:
+
+- Command: `npm run gtm:runbook:takeover`
+- Strict command (fails on HOLD verdict): `npm run gtm:runbook:takeover:strict`
+- Output artifacts:
+	- timestamped `docs/reports/cutover/takeover-runbook-<timestamp>.json`
+	- timestamped `docs/reports/cutover/takeover-runbook-<timestamp>.md`
+	- stable `docs/reports/cutover/takeover-runbook-latest.json`
+	- stable `docs/reports/cutover/takeover-runbook-latest.md`
+
+Supported flags:
+
+- `--out_dir`
+- `--fail_on_hold`
+
 ## GitHub Automation
 
 This repo includes a scheduled/manual readiness workflow:
@@ -332,9 +349,10 @@ What it runs:
 1. `npm run gtm:report:cutover:strict`
 2. `npm run gtm:verify:takeover:strict`
 3. `npm run gtm:confidence:takeover:strict`
-4. Uploads `docs/reports/cutover/` as workflow artifacts
-5. Optionally posts webhook status with `npm run gtm:notify:takeover`
-6. Auto-opens or updates a GitHub issue titled `Takeover readiness regression` when strict checks fail
+4. `npm run gtm:runbook:takeover`
+5. Uploads `docs/reports/cutover/` as workflow artifacts
+6. Optionally posts webhook status with `npm run gtm:notify:takeover`
+7. Auto-opens or updates a GitHub issue titled `Takeover readiness regression` when strict checks fail
 
 Required repository secrets:
 
