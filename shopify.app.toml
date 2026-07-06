@@ -4,7 +4,7 @@
 # 3. shopify app deploy
 
 name = "GCW Synapse"
-client_id = "REPLACE_WITH_SHOPIFY_CLIENT_ID"
+client_id = "7d011b70562512bd84b85bd3f9a6e68d"
 application_url = "https://gcw-synapse-super.gcw-synapse.workers.dev"
 embedded = true
 

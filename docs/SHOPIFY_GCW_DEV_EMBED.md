@@ -23,10 +23,10 @@ If **GCW Synapse** is missing from the App embeds list, the theme extension was 
 
 ## Deep link (fastest path when extension is deployed)
 
-Replace `YOUR_CLIENT_ID` with the app **Client ID** from Partners → App setup → Client credentials:
+Replace `YOUR_CLIENT_ID` with the app **Client ID** from Partners → App setup → Client credentials (`7d011b70562512bd84b85bd3f9a6e68d` for GCW Synapse):
 
 ```
-https://gcw-dev.myshopify.com/admin/themes/current/editor?context=apps&activateAppId=YOUR_CLIENT_ID/gcw-synapse-app-block
+https://gcw-dev.myshopify.com/admin/themes/current/editor?context=apps&activateAppId=7d011b70562512bd84b85bd3f9a6e68d/gcw-synapse-app-block
 ```
 
 That opens the theme editor with the embed pre-selected; click **Save**.
