@@ -26,11 +26,14 @@ npm run lean:verify:dev
 
 ### Shopify gcw-dev admin
 
-1. **Online Store → Themes → Customize → App embeds**
+See **[SHOPIFY_GCW_DEV_EMBED.md](SHOPIFY_GCW_DEV_EMBED.md)** if the app is installed but **GCW Synapse** does not appear under App embeds.
+
+1. **Online Store → Themes → Customize → App embeds** (puzzle icon — not page “Apps” blocks)
 2. Enable **GCW Synapse**
 3. Endpoint: `https://gcw-synapse-super.gcw-synapse.workers.dev/event`
 4. Ingress token: **leave blank**
-5. If Elevar/Triple Whale are on the dev theme, disable one — avoid double-firing while testing
+5. If the embed is missing entirely, run `shopify app deploy` (theme extension not released to the store)
+6. If Elevar/Triple Whale are on the dev theme, disable one — avoid double-firing while testing
 
 ### GTM Preview on gcw-dev
 

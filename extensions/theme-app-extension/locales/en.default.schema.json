@@ -1,0 +1,15 @@
+{
+  "blocks": {
+    "gcw-synapse-app-block": {
+      "name": "GCW Synapse",
+      "settings": {
+        "synapse_endpoint": {
+          "label": "Synapse endpoint"
+        },
+        "ingress_token": {
+          "label": "Ingress token (optional)"
+        }
+      }
+    }
+  }
+}
