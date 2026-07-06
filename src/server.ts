@@ -80,6 +80,7 @@ import {
 import { buildCompatibilityFailureDiagnostics } from "./services/compatibilityDiagnostics";
 import { resolveProductGroup } from "./services/productGroup";
 import { resolvePageTitle } from "./services/pageTitle";
+import { buildGtmGoLiveGateReport, normalizeGtmGoLiveThresholds } from "./services/gtmGoLiveGate";
 
 const app = express();
 app.disable("x-powered-by");
@@ -492,6 +493,87 @@ app.get("/api/gtm/compatibility-drilldown", requireIngressToken, (req, res) => {
     },
     helpers: filteredHelpers,
     trend
+  });
+});
+
+app.get("/api/gtm/go-live-gate", requireIngressToken, (req, res) => {
+  const parseNumber = (value: unknown): number | undefined => {
+    if (typeof value !== "string") {
+      return undefined;
+    }
+
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  };
+
+  const thresholdOverrides: Partial<ReturnType<typeof normalizeGtmGoLiveThresholds>> = {};
+
+  const minCoveragePct = parseNumber(req.query.min_coverage_pct);
+  if (minCoveragePct !== undefined) {
+    thresholdOverrides.minCoveragePct = minCoveragePct;
+  }
+
+  const maxNonAvailableHelpers = parseNumber(req.query.max_non_available_helpers);
+  if (maxNonAvailableHelpers !== undefined) {
+    thresholdOverrides.maxNonAvailableHelpers = maxNonAvailableHelpers;
+  }
+
+  const minPairedEvents = parseNumber(req.query.min_paired_events);
+  if (minPairedEvents !== undefined) {
+    thresholdOverrides.minPairedEvents = minPairedEvents;
+  }
+
+  const maxMismatchRatePct = parseNumber(req.query.max_mismatch_rate_pct);
+  if (maxMismatchRatePct !== undefined) {
+    thresholdOverrides.maxMismatchRatePct = maxMismatchRatePct;
+  }
+
+  const maxCriticalChannels = parseNumber(req.query.max_critical_channels);
+  if (maxCriticalChannels !== undefined) {
+    thresholdOverrides.maxCriticalChannels = maxCriticalChannels;
+  }
+
+  const maxWarningChannels = parseNumber(req.query.max_warning_channels);
+  if (maxWarningChannels !== undefined) {
+    thresholdOverrides.maxWarningChannels = maxWarningChannels;
+  }
+
+  const maxCompatibilityFailureRatePct = parseNumber(req.query.max_compat_failure_rate_pct);
+  if (maxCompatibilityFailureRatePct !== undefined) {
+    thresholdOverrides.maxCompatibilityFailureRatePct = maxCompatibilityFailureRatePct;
+  }
+
+  const maxCompatibilityErrorHits = parseNumber(req.query.max_compat_error_hits);
+  if (maxCompatibilityErrorHits !== undefined) {
+    thresholdOverrides.maxCompatibilityErrorHits = maxCompatibilityErrorHits;
+  }
+
+  const thresholds = normalizeGtmGoLiveThresholds(thresholdOverrides);
+
+  const matrix = getGtmCompatibilityMatrix();
+  const paritySummary = getShadowCompareSummary();
+  const parity = getShadowParityReport(env.SHADOW_COMPARE_MISMATCH_ALERT_PCT);
+  const channels = getChannelHealthSummary(env.CHANNEL_HEALTH_STALE_MINUTES, env.CHANNEL_HEALTH_WARN_FAILURE_PCT);
+  const compatibilityFailures = buildCompatibilityFailureDiagnostics({
+    matrix,
+    usage: getCompatibilityUsageSummary(),
+    limit: 25
+  });
+
+  const report = buildGtmGoLiveGateReport({
+    thresholds,
+    matrix,
+    compatibilityFailures,
+    parity,
+    paritySummary,
+    channels
+  });
+
+  res.status(200).json({
+    ok: true,
+    generated_at: new Date().toISOString(),
+    thresholds,
+    report
   });
 });
 
