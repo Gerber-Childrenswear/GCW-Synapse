@@ -554,3 +554,154 @@ export function getControlPanelChecklist(): QaChecklistItem[] {
 export function getControlPanelVendors(): Array<{ name: VendorName; enabled: boolean }> {
   return CONTROL_PANEL_VENDORS.map((name) => ({ name, enabled: true }));
 }
+
+export type ThemeAdapterKey = "hyper" | "expanse" | "headless";
+
+export type ThemeAdapterProfile = {
+  key: ThemeAdapterKey;
+  label: string;
+  expectedRuntimeEvents: string[];
+};
+
+export type ThemeAdapterCoverage = {
+  adapter: ThemeAdapterKey;
+  summary: {
+    expected_events: number;
+    mapped_events: number;
+    coverage_pct: number;
+  };
+  events: Array<{
+    runtimeEvent: string;
+    catalogEvent: string | null;
+    mapped: boolean;
+  }>;
+};
+
+export type ThemeAdapterReadinessSummary = {
+  adapter: ThemeAdapterKey;
+  status: "ready" | "in_progress" | "blocked";
+  validation: {
+    warnings: number;
+    errors: number;
+  };
+  recommendations: string[];
+  topGaps: string[];
+};
+
+const THEME_ADAPTER_PROFILES: ThemeAdapterProfile[] = [
+  {
+    key: "hyper",
+    label: "Hyper",
+    expectedRuntimeEvents: [
+      "user_data",
+      "page_view",
+      "view_item",
+      "view_item_list",
+      "view_search_results",
+      "add_to_cart",
+      "view_cart",
+      "begin_checkout",
+      "add_shipping_info",
+      "add_payment_info"
+    ]
+  },
+  {
+    key: "expanse",
+    label: "Expanse",
+    expectedRuntimeEvents: [
+      "user_data",
+      "page_view",
+      "view_item",
+      "view_item_list",
+      "view_search_results",
+      "add_to_cart",
+      "view_cart",
+      "begin_checkout",
+      "add_shipping_info",
+      "add_payment_info"
+    ]
+  },
+  {
+    key: "headless",
+    label: "Headless",
+    expectedRuntimeEvents: [
+      "user_data",
+      "page_view",
+      "view_item",
+      "add_to_cart",
+      "begin_checkout",
+      "purchase"
+    ]
+  }
+];
+
+export function getThemeAdapterProfiles(): ThemeAdapterProfile[] {
+  return THEME_ADAPTER_PROFILES;
+}
+
+export function getThemeAdapterCoverage(
+  adapterKey: ThemeAdapterKey,
+  mappings: Record<string, string>
+): ThemeAdapterCoverage | null {
+  const profile = THEME_ADAPTER_PROFILES.find((entry) => entry.key === adapterKey);
+  if (!profile) {
+    return null;
+  }
+
+  const events = profile.expectedRuntimeEvents.map((runtimeEvent) => {
+    const catalogEvent = mappings[runtimeEvent] ?? null;
+    return {
+      runtimeEvent,
+      catalogEvent,
+      mapped: Boolean(catalogEvent)
+    };
+  });
+
+  const mappedEvents = events.filter((event) => event.mapped).length;
+
+  return {
+    adapter: adapterKey,
+    summary: {
+      expected_events: profile.expectedRuntimeEvents.length,
+      mapped_events: mappedEvents,
+      coverage_pct:
+        profile.expectedRuntimeEvents.length > 0
+          ? Number.parseFloat(((mappedEvents / profile.expectedRuntimeEvents.length) * 100).toFixed(2))
+          : 0
+    },
+    events
+  };
+}
+
+export function summarizeThemeAdapterReadiness(
+  coverage: ThemeAdapterCoverage,
+  validation: { warnings: number; errors: number }
+): ThemeAdapterReadinessSummary {
+  const topGaps = coverage.events.filter((event) => !event.mapped).map((event) => event.runtimeEvent);
+  const recommendations: string[] = [];
+
+  if (topGaps.length > 0) {
+    recommendations.push(`Map missing runtime events in /api/mappings: ${topGaps.join(", ")}.`);
+  }
+
+  if (validation.errors > 0) {
+    recommendations.push("Resolve runtime catalog validation errors before cutover.");
+  }
+
+  if (validation.warnings > 0) {
+    recommendations.push("Review runtime catalog validation warnings in GTM Preview.");
+  }
+
+  let status: ThemeAdapterReadinessSummary["status"] = "ready";
+  if (validation.errors > 0 || topGaps.length > 0) {
+    status = validation.errors > 0 ? "blocked" : "in_progress";
+  }
+
+  return {
+    adapter: coverage.adapter,
+    status,
+    validation,
+    recommendations,
+    topGaps
+  };
+}

@@ -46,7 +46,6 @@ import {
   ingestElevarShadow
 } from "./services/shadowCompare";
 import {
-  getCanonicalEventCatalog,
   getControlPanelChecklist,
   getControlPanelSchemas,
   getControlPanelVendors,
@@ -54,6 +53,7 @@ import {
   getThemeAdapterProfiles
 } from "./services/controlPanelData";
 import { summarizeThemeAdapterReadiness } from "./services/controlPanelData";
+import { getCanonicalEventCatalog } from "./services/runtimeCatalogValidation";
 import { runQaSmokeTests } from "./services/qaSmoke";
 import { resolveVisitorType } from "./services/visitorType";
 import { normalizeCustomerPhone } from "./services/customerPhone";
@@ -98,7 +98,9 @@ configureShadowCompare({
 });
 
 configureMappingRegistry({
-  storePath: env.CONTROL_PANEL_MAPPING_STORE_PATH
+  ...(env.CONTROL_PANEL_MAPPING_STORE_PATH
+    ? { storePath: env.CONTROL_PANEL_MAPPING_STORE_PATH }
+    : {})
 });
 
 type CompatibilityLineItem = {

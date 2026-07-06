@@ -23,6 +23,8 @@ type CounterKey =
   | "runtime_events_forwarded"
   | "runtime_events_suppressed"
   | "runtime_events_duplicate"
+  | "runtime_events_validation_warnings"
+  | "runtime_events_validation_errors"
   | "public_event_origin_rejected"
   | "public_event_rate_limited"
   | "gtm_dead_letter_written";
@@ -56,6 +58,8 @@ const counters: MetricsState = {
   runtime_events_forwarded: 0,
   runtime_events_suppressed: 0,
   runtime_events_duplicate: 0,
+  runtime_events_validation_warnings: 0,
+  runtime_events_validation_errors: 0,
   public_event_origin_rejected: 0,
   public_event_rate_limited: 0,
   gtm_dead_letter_written: 0

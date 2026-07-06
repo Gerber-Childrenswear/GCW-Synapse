@@ -1,6 +1,6 @@
 type CloudflareEnv = {
   ASSETS: Fetcher;
-  SYNAPSE_ORIGIN_URL: string;
+  SYNAPSE_ORIGIN_URL?: string;
   SYNAPSE_INGRESS_TOKEN?: string;
   PUBLIC_EVENT_ALLOWED_ORIGINS?: string;
   PUBLIC_EVENT_MAX_BODY_BYTES?: string;

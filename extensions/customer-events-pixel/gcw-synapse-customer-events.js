@@ -2,7 +2,7 @@
 (function () {
   "use strict";
 
-  var endpoint = "https://gcw-synapse.your-domain.com/event";
+  var endpoint = "https://gcw-synapse-super.gcw-synapse.workers.dev/event";
   var ingressToken = "";
   var dedupeTtlMs = 1200;
   var lastSentByKey = {};

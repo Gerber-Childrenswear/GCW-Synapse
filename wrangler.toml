@@ -9,8 +9,6 @@ binding = "ASSETS"
 run_worker_first = true
 
 [vars]
-# Set this to your production Synapse API origin (Render, App Service, etc.)
-SYNAPSE_ORIGIN_URL = "https://your-synapse-origin.example.com"
 PUBLIC_EVENT_ALLOWED_ORIGINS = "https://www.gerberchildrenswear.com,https://gerberchildrenswear.com,https://gcw-dev.myshopify.com,https://gerberchildrenswear.myshopify.com"
 PUBLIC_EVENT_MAX_BODY_BYTES = "16384"
 PUBLIC_EVENT_RATE_LIMIT_PER_MINUTE = "120"

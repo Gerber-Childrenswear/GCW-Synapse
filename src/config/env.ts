@@ -68,7 +68,8 @@ const envSchema = z.object({
   LOCAL_ADVISOR_ENABLED: boolFromEnv.default(false),
   LOCAL_ADVISOR_BASE_URL: z.string().url().default("http://127.0.0.1:11434"),
   LOCAL_ADVISOR_MODEL: z.string().min(1).default("qwen2.5:14b-instruct"),
-  LOCAL_ADVISOR_TIMEOUT_MS: z.coerce.number().int().positive().default(30000)
+  LOCAL_ADVISOR_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
+  CONTROL_PANEL_MAPPING_STORE_PATH: z.string().optional()
 });
 
 type ParsedEnv = z.infer<typeof envSchema>;
