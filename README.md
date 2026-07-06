@@ -296,6 +296,28 @@ Optional flags:
 - `--webhook_url`
 - `--out_dir`
 
+## Takeover Confidence Index
+
+Compute a single weighted confidence score from cutover gate + contract verification artifacts:
+
+- Command: `npm run gtm:confidence:takeover`
+- Strict command (fails below threshold): `npm run gtm:confidence:takeover:strict`
+- Output artifacts:
+	- timestamped `docs/reports/cutover/takeover-confidence-<timestamp>.json`
+	- stable `docs/reports/cutover/takeover-confidence-latest.json`
+
+Scoring model:
+
+- 70% from gate readiness score
+- 30% from contract pass rate
+- penalties when gate is HOLD or contract status is FAIL
+
+Supported flags:
+
+- `--out_dir`
+- `--min_confidence_pct` (default 95)
+- `--fail_on_low_confidence`
+
 ## GitHub Automation
 
 This repo includes a scheduled/manual readiness workflow:
@@ -309,9 +331,10 @@ What it runs:
 
 1. `npm run gtm:report:cutover:strict`
 2. `npm run gtm:verify:takeover:strict`
-3. Uploads `docs/reports/cutover/` as workflow artifacts
-4. Optionally posts webhook status with `npm run gtm:notify:takeover`
-5. Auto-opens or updates a GitHub issue titled `Takeover readiness regression` when strict checks fail
+3. `npm run gtm:confidence:takeover:strict`
+4. Uploads `docs/reports/cutover/` as workflow artifacts
+5. Optionally posts webhook status with `npm run gtm:notify:takeover`
+6. Auto-opens or updates a GitHub issue titled `Takeover readiness regression` when strict checks fail
 
 Required repository secrets:
 

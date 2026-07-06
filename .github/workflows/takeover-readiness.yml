@@ -24,6 +24,10 @@ on:
         description: Gate threshold override
         required: false
         default: ""
+      min_confidence_pct:
+        description: Confidence threshold override
+        required: false
+        default: ""
   schedule:
     - cron: "0 */6 * * *"
 
@@ -69,12 +73,19 @@ jobs:
           SYNAPSE_INGRESS_TOKEN: ${{ secrets.SYNAPSE_INGRESS_TOKEN }}
         run: npm run gtm:verify:takeover:strict
 
+      - name: Compute strict takeover confidence
+        id: confidence
+        continue-on-error: true
+        run: |
+          npm run gtm:confidence:takeover:strict -- \
+            --min_confidence_pct "${{ inputs.min_confidence_pct }}"
+
       - name: Evaluate strict results
         id: strict
         if: always()
         shell: bash
         run: |
-          if [[ "${{ steps.cutover.outcome }}" == "success" && "${{ steps.verify.outcome }}" == "success" ]]; then
+          if [[ "${{ steps.cutover.outcome }}" == "success" && "${{ steps.verify.outcome }}" == "success" && "${{ steps.confidence.outcome }}" == "success" ]]; then
             echo "strict_failed=false" >> "$GITHUB_OUTPUT"
           else
             echo "strict_failed=true" >> "$GITHUB_OUTPUT"
@@ -178,6 +189,6 @@ jobs:
         if: always() && steps.strict.outputs.strict_failed == 'true'
         shell: bash
         run: |
-          echo "Strict readiness checks failed (cutover=${{ steps.cutover.outcome }}, verify=${{ steps.verify.outcome }})."
+          echo "Strict readiness checks failed (cutover=${{ steps.cutover.outcome }}, verify=${{ steps.verify.outcome }}, confidence=${{ steps.confidence.outcome }})."
           echo "Current consecutive failure streak: ${{ steps.streak.outputs.streak }}"
           exit 1
