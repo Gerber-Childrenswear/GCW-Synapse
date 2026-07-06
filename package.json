@@ -34,7 +34,8 @@
     "gtm:confidence:takeover": "tsx scripts/computeTakeoverConfidence.ts",
     "gtm:confidence:takeover:strict": "tsx scripts/computeTakeoverConfidence.ts --fail_on_low_confidence",
     "gtm:runbook:takeover": "tsx scripts/generateTakeoverRunbook.ts",
-    "gtm:runbook:takeover:strict": "tsx scripts/generateTakeoverRunbook.ts --fail_on_hold"
+    "gtm:runbook:takeover:strict": "tsx scripts/generateTakeoverRunbook.ts --fail_on_hold",
+    "gtm:manifest:takeover": "tsx scripts/generateTakeoverArtifactManifest.ts"
   },
   "repository": {
     "type": "git",

@@ -86,6 +86,12 @@ jobs:
         continue-on-error: true
         run: npm run gtm:runbook:takeover
 
+      - name: Generate takeover artifact manifest
+        id: manifest
+        if: always()
+        continue-on-error: true
+        run: npm run gtm:manifest:takeover
+
       - name: Evaluate strict results
         id: strict
         if: always()
@@ -195,6 +201,6 @@ jobs:
         if: always() && steps.strict.outputs.strict_failed == 'true'
         shell: bash
         run: |
-          echo "Strict readiness checks failed (cutover=${{ steps.cutover.outcome }}, verify=${{ steps.verify.outcome }}, confidence=${{ steps.confidence.outcome }})."
+          echo "Strict readiness checks failed (cutover=${{ steps.cutover.outcome }}, verify=${{ steps.verify.outcome }}, confidence=${{ steps.confidence.outcome }}, runbook=${{ steps.runbook.outcome }}, manifest=${{ steps.manifest.outcome }})."
           echo "Current consecutive failure streak: ${{ steps.streak.outputs.streak }}"
           exit 1

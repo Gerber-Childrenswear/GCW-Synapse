@@ -57,6 +57,7 @@ type DecisionPacket = {
     cutoverStatusPath: string;
     takeoverVerifyPath: string;
     confidencePath: string;
+    manifestPath: string;
   };
 };
 
@@ -151,6 +152,8 @@ function buildDecisionPacket(input: {
           "Require confidence index to meet threshold before attempting production cutover again."
         ];
 
+  const manifestPath = path.resolve(path.dirname(input.sourcePaths.cutoverStatusPath), "takeover-artifact-manifest-latest.json");
+
   const executiveSummary =
     verdict === "go"
       ? "All automated readiness controls are green. Synapse is approved to take over Elevar under the configured thresholds."
@@ -166,6 +169,16 @@ function buildDecisionPacket(input: {
     blockers,
     nextActions,
     sources: input.sourcePaths
+      ? {
+          ...input.sourcePaths,
+          manifestPath
+        }
+      : {
+          cutoverStatusPath: input.sourcePaths.cutoverStatusPath,
+          takeoverVerifyPath: input.sourcePaths.takeoverVerifyPath,
+          confidencePath: input.sourcePaths.confidencePath,
+          manifestPath
+        }
   };
 }
 
@@ -208,6 +221,7 @@ function renderRunbookMarkdown(packet: DecisionPacket): string {
   lines.push(`- Cutover Status: ${packet.sources.cutoverStatusPath}`);
   lines.push(`- Takeover Verification: ${packet.sources.takeoverVerifyPath}`);
   lines.push(`- Confidence Snapshot: ${packet.sources.confidencePath}`);
+  lines.push(`- Artifact Manifest: ${packet.sources.manifestPath}`);
 
   return lines.join("\n");
 }
