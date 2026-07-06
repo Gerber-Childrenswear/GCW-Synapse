@@ -219,6 +219,39 @@ Use these endpoints to quickly identify and action issues before they impact rep
 - `GET /ops/dashboard`
 	- One payload for launch monitoring: status, alerts, parity, runtime, channels, dead-letter, and next actions.
 
+## GTM Cutover Report
+
+Generate a timestamped cutover decision artifact from the go-live gate endpoint:
+
+- Command: `npm run gtm:report:cutover`
+- Output directory: `docs/reports/cutover/`
+- Output files: one `.json` and one `.md` per run
+
+Required auth/input:
+
+- `SYNAPSE_INGRESS_TOKEN` or `INGRESS_SHARED_TOKEN`
+- Optional base URL override: `SYNAPSE_BASE_URL` (default `http://127.0.0.1:3000`)
+
+Threshold override examples:
+
+```bash
+npm run gtm:report:cutover -- --min_coverage_pct 98 --max_mismatch_rate_pct 3 --min_paired_events 500
+```
+
+Supported override flags:
+
+- `--min_coverage_pct`
+- `--max_non_available_helpers`
+- `--min_paired_events`
+- `--max_mismatch_rate_pct`
+- `--max_critical_channels`
+- `--max_warning_channels`
+- `--max_compat_failure_rate_pct`
+- `--max_compat_error_hits`
+- `--base_url`
+- `--token`
+- `--out_dir`
+
 ## Strict Launch Guard
 
 To prevent risky go-lives, enable strict startup blocking:

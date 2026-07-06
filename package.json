@@ -25,7 +25,8 @@
     "replay:webhook:paid": "tsx scripts/replayWebhook.ts orders/paid",
     "replay:dead-letter": "tsx scripts/replayDeadLetter.ts",
     "replay:dead-letter:dry": "tsx scripts/replayDeadLetter.ts --dry-run",
-    "theme:audit:tracking": "tsx scripts/analyzeThemeTracking.ts"
+    "theme:audit:tracking": "tsx scripts/analyzeThemeTracking.ts",
+    "gtm:report:cutover": "tsx scripts/generateCutoverReport.ts"
   },
   "repository": {
     "type": "git",
