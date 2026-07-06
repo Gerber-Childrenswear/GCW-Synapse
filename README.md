@@ -8,11 +8,12 @@ Production Worker: `https://gcw-synapse-super.gcw-synapse.workers.dev`
 
 ```bash
 npm ci && npm --prefix apps/admin ci
-npm run lean:verify          # health + critical event probes
-npm run lean:deploy          # Cloudflare deploy (needs CLOUDFLARE_API_TOKEN)
+npm run lean:verify:dev        # default — gcw-dev.myshopify.com
+npm run lean:verify:prod       # production origins
+npm run lean:deploy            # Cloudflare deploy (needs CLOUDFLARE_API_TOKEN)
 ```
 
-Then in Shopify: enable **GCW Synapse** app embed → endpoint `/event`. In GTM-TKW58K8: import `docs/gtm/GTM-TKW58K8_synapse_runtime_companion_import.json`. GTM Preview: confirm `dl_user_data`, `dl_view_item`, `dl_add_to_cart`, `dl_purchase`.
+**gcw-dev first:** enable GCW Synapse app embed on `gcw-dev.myshopify.com` → endpoint `/event`. GTM Preview on dev storefront. Then promote to production.
 
 Advanced cutover gates, shadow-compare, and Render/Node origin are optional — see README sections below.
 

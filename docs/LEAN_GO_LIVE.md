@@ -1,12 +1,60 @@
 # Lean Synapse Go-Live
 
-**Goal:** Own your Shopify → GTM analytics pipe without Elevar — accurate client events, optional server purchases later, no cutover PhD.
+**Goal:** Own your Shopify → GTM analytics pipe without Elevar — accurate client events, optional server purchases later.
 
-Production Worker (Gerber): `https://gcw-synapse-super.gcw-synapse.workers.dev`
+**Validate on gcw-dev first**, then promote to production. Same Worker serves both shops.
+
+Worker URL: `https://gcw-synapse-super.gcw-synapse.workers.dev`
 
 ---
 
-## Architecture (all you need)
+## Phase 0 — Map on gcw-dev (do this first)
+
+The Shopify app / theme extension is only installed on **gcw-dev** today. Use it as the staging ground.
+
+| Setting | gcw-dev value |
+|---|---|
+| Shop | `gcw-dev.myshopify.com` |
+| Storefront origin | `https://gcw-dev.myshopify.com` |
+| Synapse `/event` URL | `https://gcw-synapse-super.gcw-synapse.workers.dev/event` |
+
+### Verify Worker accepts gcw-dev traffic
+
+```bash
+npm run lean:verify:dev
+```
+
+### Shopify gcw-dev admin
+
+1. **Online Store → Themes → Customize → App embeds**
+2. Enable **GCW Synapse**
+3. Endpoint: `https://gcw-synapse-super.gcw-synapse.workers.dev/event`
+4. Ingress token: **leave blank**
+5. If Elevar/Triple Whale are on the dev theme, disable one — avoid double-firing while testing
+
+### GTM Preview on gcw-dev
+
+Use the **same web container** (`GTM-TKW58K8`) or your dev GTM container if you have one.
+
+1. Import `docs/gtm/GTM-TKW58K8_synapse_runtime_companion_import.json` (once)
+2. GTM Preview → connect to `https://gcw-dev.myshopify.com`
+3. Confirm: `dl_user_data`, `dl_view_item`, `dl_add_to_cart`, `dl_purchase`
+
+### Promote to production
+
+When gcw-dev Preview is green:
+
+```bash
+npm run lean:verify:prod
+```
+
+Repeat theme embed on production theme with the same endpoint. See **Phase 1** below.
+
+---
+
+## Phase 1 — Production (after gcw-dev is green)
+
+### Architecture
 
 ```
 Shopify theme pixel  ──POST /event──►  Cloudflare Worker (Synapse)
@@ -119,8 +167,10 @@ Until then, **checkout pixel + browser purchase** covers most client-side tags.
 ## Commands
 
 ```bash
-npm run lean:verify          # health + critical /event probes
-npm run lean:deploy          # build + Cloudflare deploy
+npm run lean:verify:dev        # gcw-dev storefront origin (default)
+npm run lean:verify:prod       # gerberchildrenswear.com origins
+npm run lean:verify            # same as lean:verify:dev
+npm run lean:deploy            # build + Cloudflare deploy
 npm test                     # 119 tests
 ```
 

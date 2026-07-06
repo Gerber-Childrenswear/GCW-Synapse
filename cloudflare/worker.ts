@@ -821,7 +821,7 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
   if (request.method === "GET" && url.pathname === "/ops/shopify-install-status") {
     return jsonResponse({
       status: {
-        installed_shops: ["gerberchildrenswear.myshopify.com"],
+        installed_shops: ["gcw-dev.myshopify.com", "gerberchildrenswear.myshopify.com"],
         store_path: "cloudflare-worker-edge"
       }
     });

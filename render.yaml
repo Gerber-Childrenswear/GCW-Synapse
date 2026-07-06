@@ -29,7 +29,7 @@ services:
 
       # ── Public pixel boundary ────────────────────────────────────────────────
       - key: PUBLIC_EVENT_ALLOWED_ORIGINS
-        value: https://www.gerberchildrenswear.com,https://gerberchildrenswear.myshopify.com
+        value: https://www.gerberchildrenswear.com,https://gerberchildrenswear.com,https://gcw-dev.myshopify.com,https://gerberchildrenswear.myshopify.com
 
       - key: PUBLIC_EVENT_RATE_LIMIT_PER_MINUTE
         value: "120"

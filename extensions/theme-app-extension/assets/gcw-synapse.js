@@ -307,6 +307,9 @@
     payload.source = "theme";
     payload.source_theme = detectTheme();
     payload.source_surface = "web";
+    if (window.Shopify && typeof window.Shopify.shop === "string") {
+      payload.shop = window.Shopify.shop;
+    }
     payload.marketing = merge(collectMarketingContext(), payload.marketing || {});
     payload.marketing.destinations = destinationHints(eventName);
     payload.event_id = payload.marketing && payload.marketing.event_id ? payload.marketing.event_id : randomId("evt");

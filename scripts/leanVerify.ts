@@ -1,10 +1,30 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-type LeanConfig = {
-  productionBaseUrl: string;
+export type LeanEnvironment = {
+  label: string;
+  shopifyShop: string;
   storefrontOrigins: string[];
+  themeEmbedEndpoint: string;
+  customerEventsPixelEndpoint: string;
+  notes?: string;
+};
+
+export type LeanConfig = {
+  defaultEnvironment: string;
+  workerBaseUrl: string;
+  gtmWebContainerImport: string;
   criticalRuntimeEvents: string[];
+  environments: Record<string, LeanEnvironment>;
+};
+
+export type ResolvedLeanTarget = {
+  environment: string;
+  baseUrl: string;
+  origin: string;
+  shopifyShop: string;
+  criticalRuntimeEvents: string[];
+  themeEmbedEndpoint: string;
 };
 
 type CheckResult = {
@@ -40,10 +60,39 @@ export function loadLeanConfig(configPath = path.join(process.cwd(), "lean.confi
   return JSON.parse(raw) as LeanConfig;
 }
 
-export function buildSampleEvent(eventName: string, origin: string): Record<string, unknown> {
+export function resolveLeanTarget(
+  config: LeanConfig,
+  options?: { environment?: string; baseUrl?: string; origin?: string }
+): ResolvedLeanTarget {
+  const environment = options?.environment ?? config.defaultEnvironment;
+  const envConfig = config.environments[environment];
+
+  if (!envConfig) {
+    throw new Error(`Unknown lean environment "${environment}". Available: ${Object.keys(config.environments).join(", ")}`);
+  }
+
+  const baseUrl = (options?.baseUrl ?? config.workerBaseUrl).replace(/\/$/, "");
+  const origin = options?.origin ?? envConfig.storefrontOrigins[0];
+
+  if (!origin) {
+    throw new Error(`No storefront origin configured for environment "${environment}"`);
+  }
+
+  return {
+    environment,
+    baseUrl,
+    origin,
+    shopifyShop: envConfig.shopifyShop,
+    criticalRuntimeEvents: config.criticalRuntimeEvents,
+    themeEmbedEndpoint: envConfig.themeEmbedEndpoint
+  };
+}
+
+export function buildSampleEvent(eventName: string, origin: string, shopifyShop?: string): Record<string, unknown> {
   return {
     event_name: eventName,
     source: "theme",
+    shop: shopifyShop,
     customer: {
       id: "lean-verify-customer",
       email: "lean.verify@example.com",
@@ -105,15 +154,19 @@ async function runCheck(name: string, fn: () => Promise<string>): Promise<CheckR
 async function main(): Promise<void> {
   const args = parseArgMap(process.argv.slice(2));
   const config = loadLeanConfig(args.get("config"));
-  const baseUrl = (args.get("base_url") ?? config.productionBaseUrl).replace(/\/$/, "");
-  const origin = args.get("origin") ?? config.storefrontOrigins[0] ?? "https://www.gerberchildrenswear.com";
+  const target = resolveLeanTarget(config, {
+    environment: args.get("env"),
+    baseUrl: args.get("base_url"),
+    origin: args.get("origin")
+  });
   const token = args.get("token") ?? process.env.SYNAPSE_INGRESS_TOKEN ?? process.env.INGRESS_SHARED_TOKEN;
+  const envConfig = config.environments[target.environment];
 
   const checks: CheckResult[] = [];
 
   checks.push(
     await runCheck("health", async () => {
-      const response = await fetch(`${baseUrl}/health`);
+      const response = await fetch(`${target.baseUrl}/health`);
       const body = await response.text();
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${body}`);
@@ -122,16 +175,16 @@ async function main(): Promise<void> {
     })
   );
 
-  for (const eventName of config.criticalRuntimeEvents) {
+  for (const eventName of target.criticalRuntimeEvents) {
     checks.push(
       await runCheck(`event:${eventName}`, async () => {
-        const response = await fetch(`${baseUrl}/event`, {
+        const response = await fetch(`${target.baseUrl}/event`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Origin: origin
+            Origin: target.origin
           },
-          body: JSON.stringify(buildSampleEvent(eventName, origin))
+          body: JSON.stringify(buildSampleEvent(eventName, target.origin, target.shopifyShop))
         });
         const body = await response.text();
         if (!response.ok) {
@@ -145,7 +198,7 @@ async function main(): Promise<void> {
   if (token) {
     checks.push(
       await runCheck("launch_readiness", async () => {
-        const response = await fetch(`${baseUrl}/launch/readiness`, {
+        const response = await fetch(`${target.baseUrl}/launch/readiness`, {
           headers: {
             "X-Synapse-Token": token
           }
@@ -161,8 +214,11 @@ async function main(): Promise<void> {
 
   const failed = checks.filter((check) => !check.passed);
 
-  console.log(`Lean verify — ${baseUrl}`);
-  console.log(`Origin probe: ${origin}`);
+  console.log(`Lean verify — ${target.baseUrl}`);
+  console.log(`Environment: ${target.environment} (${envConfig?.label ?? "unknown"})`);
+  console.log(`Shop: ${target.shopifyShop}`);
+  console.log(`Origin probe: ${target.origin}`);
+  console.log(`Theme embed endpoint: ${target.themeEmbedEndpoint}`);
   for (const check of checks) {
     console.log(`${check.passed ? "PASS" : "FAIL"}  ${check.name}  ${check.detail}`);
   }
@@ -172,7 +228,8 @@ async function main(): Promise<void> {
     return;
   }
 
-  console.log("\nAll lean checks passed. Next: enable Shopify theme embed + import GTM runtime bridge (see docs/LEAN_GO_LIVE.md).");
+  console.log("\nAll lean checks passed for this environment.");
+  console.log("gcw-dev next: enable GCW Synapse app embed on gcw-dev theme, then GTM Preview (docs/LEAN_GO_LIVE.md).");
 }
 
 main().catch((error) => {

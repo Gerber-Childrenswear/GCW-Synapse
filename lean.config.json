@@ -1,13 +1,29 @@
 {
-  "productionBaseUrl": "https://gcw-synapse-super.gcw-synapse.workers.dev",
-  "storefrontOrigins": [
-    "https://www.gerberchildrenswear.com",
-    "https://gerberchildrenswear.myshopify.com"
-  ],
+  "defaultEnvironment": "dev",
+  "workerBaseUrl": "https://gcw-synapse-super.gcw-synapse.workers.dev",
   "gtmWebContainerImport": "docs/gtm/GTM-TKW58K8_synapse_runtime_companion_import.json",
   "criticalRuntimeEvents": ["user_data", "view_item", "add_to_cart", "purchase"],
-  "shopify": {
-    "themeEmbedEndpointSetting": "https://gcw-synapse-super.gcw-synapse.workers.dev/event",
-    "customerEventsPixelEndpoint": "https://gcw-synapse-super.gcw-synapse.workers.dev/event"
+  "environments": {
+    "dev": {
+      "label": "gcw-dev (validate here first)",
+      "shopifyShop": "gcw-dev.myshopify.com",
+      "storefrontOrigins": [
+        "https://gcw-dev.myshopify.com"
+      ],
+      "themeEmbedEndpoint": "https://gcw-synapse-super.gcw-synapse.workers.dev/event",
+      "customerEventsPixelEndpoint": "https://gcw-synapse-super.gcw-synapse.workers.dev/event",
+      "notes": "Shopify app + theme extension live on gcw-dev only. Same Worker serves dev and prod via CORS allowlist."
+    },
+    "production": {
+      "label": "Gerber production",
+      "shopifyShop": "gerberchildrenswear.myshopify.com",
+      "storefrontOrigins": [
+        "https://www.gerberchildrenswear.com",
+        "https://gerberchildrenswear.myshopify.com"
+      ],
+      "themeEmbedEndpoint": "https://gcw-synapse-super.gcw-synapse.workers.dev/event",
+      "customerEventsPixelEndpoint": "https://gcw-synapse-super.gcw-synapse.workers.dev/event",
+      "notes": "Promote only after gcw-dev GTM Preview is green."
+    }
   }
 }
