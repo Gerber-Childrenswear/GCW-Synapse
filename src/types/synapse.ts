@@ -1,4 +1,5 @@
 export const REQUIRED_EVENTS = [
+  "user_data",
   "page_view",
   "view_item",
   "view_item_list",

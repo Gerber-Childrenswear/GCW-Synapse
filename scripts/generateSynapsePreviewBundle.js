@@ -45,6 +45,12 @@ function inferMappedEventName(triggerName) {
   if (normalized.includes("purchase")) {
     return "purchase";
   }
+  if (normalized.includes("user_data") || normalized.includes("user data")) {
+    return "user_data";
+  }
+  if (normalized.includes("pagevisit") && normalized.includes("dl_user_data")) {
+    return "user_data";
+  }
   if (normalized.includes("pageview") || normalized.includes("page view")) {
     return "page_view";
   }

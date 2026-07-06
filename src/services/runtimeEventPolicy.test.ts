@@ -52,4 +52,16 @@ describe("evaluateRuntimeEventPolicy", () => {
     assert.equal(decision.allowed, false);
     assert.equal(decision.reason, "suppressed_marketing_consent");
   });
+
+  it("allows user_data when analytics consent is granted without ad consent", () => {
+    const event = buildEvent();
+    event.event_name = "user_data";
+    event.consent.ad_storage = "denied";
+    event.consent.ad_user_data = "denied";
+    event.consent.ad_personalization = "denied";
+
+    const decision = evaluateRuntimeEventPolicy(event);
+
+    assert.deepEqual(decision, { allowed: true });
+  });
 });
