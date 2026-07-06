@@ -226,14 +226,21 @@ async function main(): Promise<void> {
   const basename = `cutover-gate-${stamp.compact}`;
   const jsonPath = path.resolve(outDir, `${basename}.json`);
   const mdPath = path.resolve(outDir, `${basename}.md`);
+  const latestJsonPath = path.resolve(outDir, "cutover-gate-latest.json");
+  const latestMdPath = path.resolve(outDir, "cutover-gate-latest.md");
+  const markdown = renderMarkdown(payload, endpoint);
 
   await mkdir(outDir, { recursive: true });
   await writeFile(jsonPath, JSON.stringify(payload, null, 2), "utf8");
-  await writeFile(mdPath, renderMarkdown(payload, endpoint), "utf8");
+  await writeFile(mdPath, markdown, "utf8");
+  await writeFile(latestJsonPath, JSON.stringify(payload, null, 2), "utf8");
+  await writeFile(latestMdPath, markdown, "utf8");
 
   console.log(`Cutover report generated:`);
   console.log(`- JSON: ${jsonPath}`);
   console.log(`- Markdown: ${mdPath}`);
+  console.log(`- Latest JSON: ${latestJsonPath}`);
+  console.log(`- Latest Markdown: ${latestMdPath}`);
   console.log(`- Status: ${payload.report.status.toUpperCase()}`);
   console.log(`- Readiness Score: ${payload.report.readinessScorePct}%`);
 }

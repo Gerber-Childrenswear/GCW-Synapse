@@ -225,7 +225,10 @@ Generate a timestamped cutover decision artifact from the go-live gate endpoint:
 
 - Command: `npm run gtm:report:cutover`
 - Output directory: `docs/reports/cutover/`
-- Output files: one `.json` and one `.md` per run
+- Output files: timestamped `.json` and `.md` per run
+- Stable latest files refreshed each run:
+	- `docs/reports/cutover/cutover-gate-latest.json`
+	- `docs/reports/cutover/cutover-gate-latest.md`
 
 Required auth/input:
 
