@@ -9,7 +9,7 @@
     "admin:build": "npm --prefix apps/admin run build",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/**/*.test.ts",
+    "test": "tsx --test src/**/*.test.ts scripts/**/*.test.ts",
     "cf:build": "npm run admin:build",
     "cf:dev": "npm run cf:build && wrangler dev",
     "cf:deploy": "npm run cf:build && wrangler deploy",
@@ -39,7 +39,9 @@
     "gtm:manifest:verify:takeover": "tsx scripts/verifyTakeoverArtifactManifest.ts",
     "gtm:manifest:verify:takeover:strict": "tsx scripts/verifyTakeoverArtifactManifest.ts --fail_on_mismatch",
     "gtm:release-signal:takeover": "tsx scripts/generateTakeoverReleaseSignal.ts",
-    "gtm:release-signal:takeover:strict": "tsx scripts/generateTakeoverReleaseSignal.ts --fail_on_hold"
+    "gtm:release-signal:takeover:strict": "tsx scripts/generateTakeoverReleaseSignal.ts --fail_on_hold",
+    "gtm:consistency:takeover": "tsx scripts/verifyTakeoverArtifactConsistency.ts",
+    "gtm:consistency:takeover:strict": "tsx scripts/verifyTakeoverArtifactConsistency.ts --fail_on_mismatch"
   },
   "repository": {
     "type": "git",

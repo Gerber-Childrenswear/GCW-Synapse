@@ -104,12 +104,18 @@ jobs:
         continue-on-error: true
         run: npm run gtm:release-signal:takeover:strict
 
+      - name: Verify takeover artifact consistency
+        id: consistency
+        if: always()
+        continue-on-error: true
+        run: npm run gtm:consistency:takeover:strict
+
       - name: Evaluate strict results
         id: strict
         if: always()
         shell: bash
         run: |
-          if [[ "${{ steps.cutover.outcome }}" == "success" && "${{ steps.verify.outcome }}" == "success" && "${{ steps.confidence.outcome }}" == "success" && "${{ steps.runbook.outcome }}" == "success" && "${{ steps.manifest.outcome }}" == "success" && "${{ steps.manifest_verify.outcome }}" == "success" && "${{ steps.release_signal.outcome }}" == "success" ]]; then
+          if [[ "${{ steps.cutover.outcome }}" == "success" && "${{ steps.verify.outcome }}" == "success" && "${{ steps.confidence.outcome }}" == "success" && "${{ steps.runbook.outcome }}" == "success" && "${{ steps.manifest.outcome }}" == "success" && "${{ steps.manifest_verify.outcome }}" == "success" && "${{ steps.release_signal.outcome }}" == "success" && "${{ steps.consistency.outcome }}" == "success" ]]; then
             echo "strict_failed=false" >> "$GITHUB_OUTPUT"
           else
             echo "strict_failed=true" >> "$GITHUB_OUTPUT"
@@ -166,6 +172,31 @@ jobs:
               ].join("\n");
             }
 
+            const consistencySummaryPath = path.join(process.env.GITHUB_WORKSPACE || process.cwd(), "docs", "reports", "cutover", "takeover-artifact-consistency-latest.json");
+            let consistencyDetails = "";
+
+            try {
+              const summary = JSON.parse(fs.readFileSync(consistencySummaryPath, "utf8"));
+              const failingChecks = summary.checks
+                .filter((check) => check.status === "fail")
+                .map((check) => `- ${check.name}: ${check.details}`);
+
+              consistencyDetails = [
+                "",
+                "Artifact consistency verification:",
+                `- Status: ${summary.status.toUpperCase()}`,
+                `- Checks: ${summary.checksPassed} pass / ${summary.checksFailed} fail`,
+                ...(failingChecks.length > 0 ? ["- Failing checks:", ...failingChecks] : ["- Failing checks: none"])
+              ].join("\n");
+            } catch (error) {
+              consistencyDetails = [
+                "",
+                "Artifact consistency verification:",
+                "- Status: unavailable",
+                `- Summary path: ${consistencySummaryPath}`
+              ].join("\n");
+            }
+
             const body = [
               "Strict takeover readiness checks failed.",
               "",
@@ -174,7 +205,8 @@ jobs:
               `- Branch: ${context.ref}`,
               "",
               "Review workflow artifacts in docs/reports/cutover and resolve failing gate/contract checks.",
-              manifestDetails
+              manifestDetails,
+              consistencyDetails
             ].join("\n");
 
             const { data: issues } = await github.rest.issues.listForRepo({
@@ -243,6 +275,6 @@ jobs:
         if: always() && steps.strict.outputs.strict_failed == 'true'
         shell: bash
         run: |
-          echo "Strict readiness checks failed (cutover=${{ steps.cutover.outcome }}, verify=${{ steps.verify.outcome }}, confidence=${{ steps.confidence.outcome }}, runbook=${{ steps.runbook.outcome }}, manifest=${{ steps.manifest.outcome }}, manifest_verify=${{ steps.manifest_verify.outcome }}, release_signal=${{ steps.release_signal.outcome }})."
+          echo "Strict readiness checks failed (cutover=${{ steps.cutover.outcome }}, verify=${{ steps.verify.outcome }}, confidence=${{ steps.confidence.outcome }}, runbook=${{ steps.runbook.outcome }}, manifest=${{ steps.manifest.outcome }}, manifest_verify=${{ steps.manifest_verify.outcome }}, release_signal=${{ steps.release_signal.outcome }}, consistency=${{ steps.consistency.outcome }})."
           echo "Current consecutive failure streak: ${{ steps.streak.outputs.streak }}"
           exit 1
