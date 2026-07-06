@@ -258,6 +258,24 @@ Supported override flags:
 - `--out_dir`
 - `--fail_on_hold` (causes non-zero exit code when gate result is HOLD)
 
+## Takeover Verification
+
+Run endpoint contract checks plus gate status validation as one verification pass:
+
+- Command: `npm run gtm:verify:takeover`
+- Strict command (fails on HOLD or contract drift): `npm run gtm:verify:takeover:strict`
+- Output artifacts:
+	- timestamped `docs/reports/cutover/takeover-verify-<timestamp>.json`
+	- stable `docs/reports/cutover/takeover-verify-latest.json`
+
+Supported override flags:
+
+- `--base_url`
+- `--token`
+- `--out_dir`
+- `--fail_on_hold`
+- `--fail_on_contract_drift`
+
 ## Strict Launch Guard
 
 To prevent risky go-lives, enable strict startup blocking:
