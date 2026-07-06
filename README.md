@@ -379,6 +379,20 @@ What it runs:
 8. Optionally posts webhook status with `npm run gtm:notify:takeover`
 9. Auto-opens or updates a GitHub issue titled `Takeover readiness regression` when strict checks fail
 
+## Release Tag Guard
+
+Production tags are blocked unless takeover readiness is both green and recent.
+
+- Workflow: `.github/workflows/release-tag-guard.yml`
+- Protected tag patterns: `v*`, `release-*`
+- Failure streak threshold: `HOLD_STREAK_THRESHOLD` (default `3`)
+- Freshness threshold: `SUCCESS_FRESHNESS_HOURS` (default `24`)
+
+The guard fails when either of these conditions is true:
+
+- No successful `takeover-readiness` run exists yet
+- The latest successful `takeover-readiness` run is older than the configured freshness threshold
+
 Required repository secrets:
 
 - `SYNAPSE_BASE_URL`

@@ -16,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       HOLD_STREAK_THRESHOLD: "3"
+      SUCCESS_FRESHNESS_HOURS: "24"
 
     steps:
       - name: Check takeover readiness streak
@@ -23,6 +24,7 @@ jobs:
         with:
           script: |
             const threshold = Number(process.env.HOLD_STREAK_THRESHOLD || "3");
+            const freshnessHours = Number(process.env.SUCCESS_FRESHNESS_HOURS || "24");
             const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -33,6 +35,7 @@ jobs:
 
             let streak = 0;
             let sawSuccess = false;
+            let latestSuccess = null;
             for (const run of runs) {
               if (run.status !== "completed") {
                 continue;
@@ -42,6 +45,7 @@ jobs:
                 streak += 1;
               } else if (run.conclusion === "success") {
                 sawSuccess = true;
+                latestSuccess = run;
                 break;
               }
 
@@ -60,4 +64,27 @@ jobs:
               return;
             }
 
-            core.info(`Release guard passed. Consecutive takeover-readiness failures: ${streak} (threshold ${threshold}).`);
+            if (!latestSuccess?.updated_at) {
+              core.setFailed("Release blocked: latest successful takeover-readiness run is missing completion metadata.");
+              return;
+            }
+
+            const successCompletedAt = new Date(latestSuccess.updated_at);
+            const ageMs = Date.now() - successCompletedAt.getTime();
+            const ageHours = ageMs / (1000 * 60 * 60);
+
+            if (!Number.isFinite(ageHours)) {
+              core.setFailed("Release blocked: could not compute readiness success age.");
+              return;
+            }
+
+            if (ageHours > freshnessHours) {
+              core.setFailed(
+                `Release blocked: latest successful takeover-readiness run is stale (${ageHours.toFixed(1)}h old, threshold ${freshnessHours}h).`
+              );
+              return;
+            }
+
+            core.info(
+              `Release guard passed. Consecutive takeover-readiness failures: ${streak} (threshold ${threshold}). Latest success age: ${ageHours.toFixed(1)}h (threshold ${freshnessHours}h).`
+            );
