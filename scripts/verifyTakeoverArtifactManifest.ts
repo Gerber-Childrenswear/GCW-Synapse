@@ -12,6 +12,15 @@ type ArtifactEntry = {
 type Manifest = {
   generated_at: string;
   artifact_dir: string;
+  provenance: {
+    source: "github_actions" | "local";
+    gitSha: string | null;
+    gitRef: string | null;
+    workflowName: string | null;
+    workflowRunId: string | null;
+    workflowAttempt: string | null;
+    actor: string | null;
+  };
   artifacts: ArtifactEntry[];
 };
 
@@ -109,6 +118,7 @@ async function main(): Promise<void> {
   const summary = {
     generated_at: new Date().toISOString(),
     manifest_path: manifestPath,
+    provenance: manifest.provenance,
     artifact_count: manifest.artifacts.length,
     match_count: results.length - mismatches.length,
     mismatch_count: mismatches.length,
@@ -124,6 +134,12 @@ async function main(): Promise<void> {
   console.log(`- Summary: ${summaryPath}`);
   console.log(`- Status: ${summary.status.toUpperCase()}`);
   console.log(`- Artifacts checked: ${summary.artifact_count}`);
+  if (summary.provenance.gitSha) {
+    console.log(`- Git SHA: ${summary.provenance.gitSha}`);
+  }
+  if (summary.provenance.workflowRunId) {
+    console.log(`- Workflow Run ID: ${summary.provenance.workflowRunId}`);
+  }
 
   if (failOnMismatch && mismatches.length > 0) {
     const names = mismatches.map((result) => result.name).join(", ");

@@ -12,8 +12,29 @@ type ArtifactEntry = {
 type Manifest = {
   generated_at: string;
   artifact_dir: string;
+  provenance: {
+    source: "github_actions" | "local";
+    gitSha: string | null;
+    gitRef: string | null;
+    workflowName: string | null;
+    workflowRunId: string | null;
+    workflowAttempt: string | null;
+    actor: string | null;
+  };
   artifacts: ArtifactEntry[];
 };
+
+function readProvenance(): Manifest["provenance"] {
+  return {
+    source: process.env.GITHUB_ACTIONS === "true" ? "github_actions" : "local",
+    gitSha: process.env.GITHUB_SHA ?? null,
+    gitRef: process.env.GITHUB_REF ?? null,
+    workflowName: process.env.GITHUB_WORKFLOW ?? null,
+    workflowRunId: process.env.GITHUB_RUN_ID ?? null,
+    workflowAttempt: process.env.GITHUB_RUN_ATTEMPT ?? null,
+    actor: process.env.GITHUB_ACTOR ?? null
+  };
+}
 
 function parseArgMap(argv: string[]): Record<string, string> {
   const map: Record<string, string> = {};
@@ -85,6 +106,7 @@ async function main(): Promise<void> {
   const manifest: Manifest = {
     generated_at: new Date().toISOString(),
     artifact_dir: path.resolve(outDir),
+    provenance: readProvenance(),
     artifacts
   };
 
@@ -98,6 +120,12 @@ async function main(): Promise<void> {
   console.log(`- JSON: ${jsonPath}`);
   console.log(`- Latest: ${latestPath}`);
   console.log(`- Artifacts hashed: ${artifacts.length}`);
+  if (manifest.provenance.gitSha) {
+    console.log(`- Git SHA: ${manifest.provenance.gitSha}`);
+  }
+  if (manifest.provenance.workflowRunId) {
+    console.log(`- Workflow Run ID: ${manifest.provenance.workflowRunId}`);
+  }
 }
 
 main().catch((error) => {
