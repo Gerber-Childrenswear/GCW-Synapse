@@ -1,0 +1,5 @@
+credentials.json
+gtm-config.json
+*.json.key
+service-account*.json
+.env

@@ -1,0 +1,40 @@
+{
+  "description": "GCW GTM container registry for Cursor MCP (user-gtm). Update when adding containers.",
+  "defaultAccountByPublicId": {
+    "GTM-TKW58K8": "4131312986",
+    "GTM-N45F3JCC": "6348717123"
+  },
+  "containers": [
+    {
+      "publicId": "GTM-TKW58K8",
+      "label": "Web / pixel (Synapse, Elevar compat, Bloomreach)",
+      "accountId": "4131312986",
+      "containerId": "9938197",
+      "usageContext": "WEB",
+      "defaultWorkspaceId": "197",
+      "synapseImport": "docs/gtm/GTM-TKW58K8_synapse_runtime_companion_import.json",
+      "tagManagerUrl": "https://tagmanager.google.com/#/container/accounts/4131312986/containers/9938197/workspaces",
+      "editPolicy": "Synapse runtime bridge + placeholder migration. Do not batch-delete Elevar entities until Bloomreach gates pass."
+    },
+    {
+      "publicId": "GTM-N45F3JCC",
+      "label": "Server GTM (sGTM — Reddit CAPI, GA4 server, Commerce Shield)",
+      "accountId": "6348717123",
+      "containerId": "248775717",
+      "usageContext": "SERVER",
+      "defaultWorkspaceId": "40",
+      "tagManagerUrl": "https://tagmanager.google.com/#/container/accounts/6348717123/containers/248775717/workspaces",
+      "editPolicy": "Commerce Shield / bot forwarder / server-side vendor tags. Commerce Shield automation targets this container only."
+    },
+    {
+      "publicId": "GTM-TKW58K8",
+      "label": "Web container — gcw-dev validation workspace",
+      "accountId": "4131312986",
+      "containerId": "9938197",
+      "usageContext": "WEB",
+      "defaultWorkspaceName": "Synapse Preview",
+      "notes": "Same physical container as production web; use a dedicated workspace for gcw-dev GTM Preview before publish.",
+      "tagManagerUrl": "https://tagmanager.google.com/#/container/accounts/4131312986/containers/9938197/workspaces"
+    }
+  ]
+}
