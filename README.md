@@ -1,5 +1,23 @@
 # GCW-Synapse
 
+Lean Elevar replacement for Shopify → GTM (web + server). **Start here:** [docs/LEAN_GO_LIVE.md](docs/LEAN_GO_LIVE.md)
+
+## Lean quick start
+
+Production Worker: `https://gcw-synapse-super.gcw-synapse.workers.dev`
+
+```bash
+npm ci && npm --prefix apps/admin ci
+npm run lean:verify          # health + critical event probes
+npm run lean:deploy          # Cloudflare deploy (needs CLOUDFLARE_API_TOKEN)
+```
+
+Then in Shopify: enable **GCW Synapse** app embed → endpoint `/event`. In GTM-TKW58K8: import `docs/gtm/GTM-TKW58K8_synapse_runtime_companion_import.json`. GTM Preview: confirm `dl_user_data`, `dl_view_item`, `dl_add_to_cart`, `dl_purchase`.
+
+Advanced cutover gates, shadow-compare, and Render/Node origin are optional — see README sections below.
+
+---
+
 GCW-Synapse is a Shopify analytics relay service that replaces Elevar by forwarding signed Shopify order and refund webhooks to your Server GTM endpoint.
 
 ## What It Does

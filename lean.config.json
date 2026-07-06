@@ -1,0 +1,13 @@
+{
+  "productionBaseUrl": "https://gcw-synapse-super.gcw-synapse.workers.dev",
+  "storefrontOrigins": [
+    "https://www.gerberchildrenswear.com",
+    "https://gerberchildrenswear.myshopify.com"
+  ],
+  "gtmWebContainerImport": "docs/gtm/GTM-TKW58K8_synapse_runtime_companion_import.json",
+  "criticalRuntimeEvents": ["user_data", "view_item", "add_to_cart", "purchase"],
+  "shopify": {
+    "themeEmbedEndpointSetting": "https://gcw-synapse-super.gcw-synapse.workers.dev/event",
+    "customerEventsPixelEndpoint": "https://gcw-synapse-super.gcw-synapse.workers.dev/event"
+  }
+}

@@ -13,6 +13,8 @@
     "cf:build": "npm run admin:build",
     "cf:dev": "npm run cf:build && wrangler dev",
     "cf:deploy": "npm run cf:build && wrangler deploy",
+    "lean:deploy": "bash scripts/deploy-cloudflare.sh",
+    "lean:verify": "tsx scripts/leanVerify.ts",
     "gtm:bundle:elevar": "node scripts/generateElevarRebuildBundle.js",
     "gtm:validate:elevar": "node scripts/validateElevarRebuildBundle.js",
     "gtm:smoke:elevar": "node scripts/smokeTestElevarBundle.js",
