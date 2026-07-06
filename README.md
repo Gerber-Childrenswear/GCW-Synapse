@@ -224,11 +224,13 @@ Use these endpoints to quickly identify and action issues before they impact rep
 Generate a timestamped cutover decision artifact from the go-live gate endpoint:
 
 - Command: `npm run gtm:report:cutover`
+- Strict CI command (fails when gate is HOLD): `npm run gtm:report:cutover:strict`
 - Output directory: `docs/reports/cutover/`
 - Output files: timestamped `.json` and `.md` per run
 - Stable latest files refreshed each run:
 	- `docs/reports/cutover/cutover-gate-latest.json`
 	- `docs/reports/cutover/cutover-gate-latest.md`
+	- `docs/reports/cutover/cutover-gate-status.json` (machine-readable status snapshot for dashboards/alerts)
 
 Required auth/input:
 
@@ -254,6 +256,7 @@ Supported override flags:
 - `--base_url`
 - `--token`
 - `--out_dir`
+- `--fail_on_hold` (causes non-zero exit code when gate result is HOLD)
 
 ## Strict Launch Guard
 

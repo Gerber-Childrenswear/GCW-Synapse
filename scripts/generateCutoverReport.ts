@@ -51,6 +51,15 @@ type ApiResponse = {
   report: GateReport;
 };
 
+type LatestStatusSnapshot = {
+  generated_at: string;
+  status: "go" | "hold";
+  readinessScorePct: number;
+  checksPassed: number;
+  checksFailed: number;
+  endpoint: string;
+};
+
 function parseArgMap(argv: string[]): Record<string, string> {
   const map: Record<string, string> = {};
 
@@ -191,6 +200,7 @@ function renderMarkdown(payload: ApiResponse, endpoint: string): string {
 
 async function main(): Promise<void> {
   const args = parseArgMap(process.argv.slice(2));
+  const failOnHold = args.fail_on_hold === "true";
 
   const baseUrl = args.base_url ?? process.env.SYNAPSE_BASE_URL ?? "http://127.0.0.1:3000";
   const ingressToken = args.token ?? process.env.SYNAPSE_INGRESS_TOKEN ?? process.env.INGRESS_SHARED_TOKEN;
@@ -228,21 +238,37 @@ async function main(): Promise<void> {
   const mdPath = path.resolve(outDir, `${basename}.md`);
   const latestJsonPath = path.resolve(outDir, "cutover-gate-latest.json");
   const latestMdPath = path.resolve(outDir, "cutover-gate-latest.md");
+  const latestStatusPath = path.resolve(outDir, "cutover-gate-status.json");
   const markdown = renderMarkdown(payload, endpoint);
+
+  const latestStatus: LatestStatusSnapshot = {
+    generated_at: payload.generated_at,
+    status: payload.report.status,
+    readinessScorePct: payload.report.readinessScorePct,
+    checksPassed: payload.report.summary.checksPassed,
+    checksFailed: payload.report.summary.checksFailed,
+    endpoint
+  };
 
   await mkdir(outDir, { recursive: true });
   await writeFile(jsonPath, JSON.stringify(payload, null, 2), "utf8");
   await writeFile(mdPath, markdown, "utf8");
   await writeFile(latestJsonPath, JSON.stringify(payload, null, 2), "utf8");
   await writeFile(latestMdPath, markdown, "utf8");
+  await writeFile(latestStatusPath, JSON.stringify(latestStatus, null, 2), "utf8");
 
   console.log(`Cutover report generated:`);
   console.log(`- JSON: ${jsonPath}`);
   console.log(`- Markdown: ${mdPath}`);
   console.log(`- Latest JSON: ${latestJsonPath}`);
   console.log(`- Latest Markdown: ${latestMdPath}`);
+  console.log(`- Latest Status JSON: ${latestStatusPath}`);
   console.log(`- Status: ${payload.report.status.toUpperCase()}`);
   console.log(`- Readiness Score: ${payload.report.readinessScorePct}%`);
+
+  if (failOnHold && payload.report.status === "hold") {
+    throw new Error("Cutover gate returned HOLD and --fail_on_hold was enabled.");
+  }
 }
 
 main().catch((error) => {

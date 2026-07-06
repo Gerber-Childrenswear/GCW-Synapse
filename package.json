@@ -26,7 +26,8 @@
     "replay:dead-letter": "tsx scripts/replayDeadLetter.ts",
     "replay:dead-letter:dry": "tsx scripts/replayDeadLetter.ts --dry-run",
     "theme:audit:tracking": "tsx scripts/analyzeThemeTracking.ts",
-    "gtm:report:cutover": "tsx scripts/generateCutoverReport.ts"
+    "gtm:report:cutover": "tsx scripts/generateCutoverReport.ts",
+    "gtm:report:cutover:strict": "tsx scripts/generateCutoverReport.ts --fail_on_hold"
   },
   "repository": {
     "type": "git",
