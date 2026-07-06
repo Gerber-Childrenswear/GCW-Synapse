@@ -16,27 +16,26 @@ container. All three are reachable once `user-gtm` is connected.
 
 ## Quick setup (recommended — hosted MCP, full read/write)
 
-1. Open **Cursor → Settings → Tools & MCP** (or Cloud Agent → Integrations & MCP).
-2. Confirm **`user-gtm`** appears from `.cursor/mcp.json` at repo root:
-   ```json
-   {
-     "mcpServers": {
-       "user-gtm": {
-         "url": "https://mcp.gtmeditor.com/authorize"
-       }
-     }
-   }
-   ```
-3. Click **Connect** / **Authorize** and sign in with the Google account that has
-   **Administrator** on both GTM accounts above.
-4. In chat, ask: *"List my GTM containers"* — you should see `GTM-TKW58K8` and
-   `GTM-N45F3JCC`.
+### Local IDE (you may already be done)
 
-### Cloud Agents
+If **Cursor Settings → Tools & MCP** already lists GTM authenticated with the
+admin Google account, skip OAuth — use chat to edit containers directly.
 
-Project `.cursor/mcp.json` is picked up automatically. If `user-gtm` is missing in a
-cloud run, add the same URL under **Dashboard → Integrations & MCP → Add server**
-for your team, then re-run the agent.
+### Cloud Agents (separate step)
+
+Personal MCP settings **do not** apply to Cloud Agents. Add Team MCP:
+
+1. **Cursor Dashboard → Integrations & MCP → Team MCP Servers**
+2. URL: `https://mcp.gtmeditor.com/authorize`
+3. Re-run or start a new cloud agent on this repo
+
+### First-time local connect
+
+1. Open **Cursor → Settings → Tools & MCP** (or confirm project `.cursor/mcp.json`).
+2. Confirm **`user-gtm`** points to `https://mcp.gtmeditor.com/authorize`.
+3. Click **Connect** / **Authorize** with the Google account that has GTM
+   **Administrator** on accounts `4131312986` and `6348717123`.
+4. In chat: *"List my GTM containers"* — expect `GTM-TKW58K8` and `GTM-N45F3JCC`.
 
 ## Edit policies (do not skip)
 

@@ -1,8 +1,16 @@
 # GTM MCP setup for Cursor
 
-Use this when agents need to **edit** GTM (not just import JSON from `docs/gtm/`).
+## Already connected in Cursor Settings?
 
-## One-time connect
+If **Settings → Tools & MCP** already shows a GTM server authenticated with the
+admin Google account, you are set for **local IDE / desktop Agent** work. You do
+**not** need to connect again on your machine.
+
+This cloud agent run does **not** inherit your personal MCP config. Check the tool
+list at the top of chat: if there is no `user-gtm` / GTM server, the agent cannot
+edit containers until Team MCP is wired (below).
+
+## One-time connect (if not already in Settings)
 
 1. Repo ships `.cursor/mcp.json` with server name **`user-gtm`** →
    `https://mcp.gtmeditor.com/authorize`
@@ -10,6 +18,18 @@ Use this when agents need to **edit** GTM (not just import JSON from `docs/gtm/`
 3. Verify: *"List workspaces in GTM-TKW58K8"* and *"List tags in GTM-N45F3JCC workspace 40"*.
 
 Full container IDs and edit policies: [`gtm-mcp-server/README.md`](../../gtm-mcp-server/README.md).
+
+## Cloud Agents (required for agents like this one)
+
+Personal Settings MCP **does not** flow to Cloud Agents. Add the same GTM server as
+**Team MCP**:
+
+1. **Cursor Dashboard → Integrations & MCP → Team MCP Servers**
+2. Add URL: `https://mcp.gtmeditor.com/authorize` (same as your local GTM MCP)
+3. Optionally **Add to Team Marketplace** so teammates get it from Customize
+4. Start a **new** cloud agent run on this repo after saving
+
+Until Team MCP is configured, cloud agents only have Render/Cloudflare/etc. — not GTM.
 
 ## What agents can do after connect
 
