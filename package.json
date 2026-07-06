@@ -29,7 +29,8 @@
     "gtm:report:cutover": "tsx scripts/generateCutoverReport.ts",
     "gtm:report:cutover:strict": "tsx scripts/generateCutoverReport.ts --fail_on_hold",
     "gtm:verify:takeover": "tsx scripts/verifyTakeoverReadiness.ts",
-    "gtm:verify:takeover:strict": "tsx scripts/verifyTakeoverReadiness.ts --fail_on_hold --fail_on_contract_drift"
+    "gtm:verify:takeover:strict": "tsx scripts/verifyTakeoverReadiness.ts --fail_on_hold --fail_on_contract_drift",
+    "gtm:notify:takeover": "tsx scripts/notifyTakeoverStatus.ts"
   },
   "repository": {
     "type": "git",

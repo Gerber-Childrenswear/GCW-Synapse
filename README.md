@@ -276,6 +276,51 @@ Supported override flags:
 - `--fail_on_hold`
 - `--fail_on_contract_drift`
 
+## Takeover Notifications
+
+Post GO/HOLD summaries to Slack/Teams-compatible webhooks using latest generated artifacts:
+
+- Command: `npm run gtm:notify:takeover`
+- Reads:
+	- `docs/reports/cutover/cutover-gate-status.json`
+	- `docs/reports/cutover/takeover-verify-latest.json`
+
+Webhook input options:
+
+- `TAKEOVER_NOTIFY_WEBHOOK_URL`
+- or `SLACK_WEBHOOK_URL`
+- or `TEAMS_WEBHOOK_URL`
+
+Optional flags:
+
+- `--webhook_url`
+- `--out_dir`
+
+## GitHub Automation
+
+This repo includes a scheduled/manual readiness workflow:
+
+- Workflow file: `.github/workflows/takeover-readiness.yml`
+- Triggers:
+	- manual (`workflow_dispatch`)
+	- scheduled every 6 hours
+
+What it runs:
+
+1. `npm run gtm:report:cutover:strict`
+2. `npm run gtm:verify:takeover:strict`
+3. Uploads `docs/reports/cutover/` as workflow artifacts
+4. Optionally posts webhook status with `npm run gtm:notify:takeover`
+
+Required repository secrets:
+
+- `SYNAPSE_BASE_URL`
+- `SYNAPSE_INGRESS_TOKEN`
+
+Optional repository secrets:
+
+- `TAKEOVER_NOTIFY_WEBHOOK_URL`
+
 ## Strict Launch Guard
 
 To prevent risky go-lives, enable strict startup blocking:

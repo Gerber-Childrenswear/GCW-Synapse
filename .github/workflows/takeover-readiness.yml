@@ -1,0 +1,74 @@
+name: Takeover Readiness
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: Synapse base URL
+        required: false
+        default: ""
+      min_coverage_pct:
+        description: Gate threshold override
+        required: false
+        default: ""
+      min_paired_events:
+        description: Gate threshold override
+        required: false
+        default: ""
+      max_mismatch_rate_pct:
+        description: Gate threshold override
+        required: false
+        default: ""
+  schedule:
+    - cron: "0 */6 * * *"
+
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Generate strict cutover report
+        env:
+          SYNAPSE_BASE_URL: ${{ inputs.base_url != '' && inputs.base_url || secrets.SYNAPSE_BASE_URL }}
+          SYNAPSE_INGRESS_TOKEN: ${{ secrets.SYNAPSE_INGRESS_TOKEN }}
+        run: |
+          npm run gtm:report:cutover:strict -- \
+            --min_coverage_pct "${{ inputs.min_coverage_pct }}" \
+            --min_paired_events "${{ inputs.min_paired_events }}" \
+            --max_mismatch_rate_pct "${{ inputs.max_mismatch_rate_pct }}"
+
+      - name: Run strict takeover verification
+        env:
+          SYNAPSE_BASE_URL: ${{ inputs.base_url != '' && inputs.base_url || secrets.SYNAPSE_BASE_URL }}
+          SYNAPSE_INGRESS_TOKEN: ${{ secrets.SYNAPSE_INGRESS_TOKEN }}
+        run: npm run gtm:verify:takeover:strict
+
+      - name: Upload cutover artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: takeover-readiness-artifacts
+          path: docs/reports/cutover/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Notify takeover status
+        if: always() && secrets.TAKEOVER_NOTIFY_WEBHOOK_URL != ''
+        env:
+          TAKEOVER_NOTIFY_WEBHOOK_URL: ${{ secrets.TAKEOVER_NOTIFY_WEBHOOK_URL }}
+        run: npm run gtm:notify:takeover
