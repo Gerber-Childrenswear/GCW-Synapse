@@ -1,0 +1,63 @@
+name: Release Tag Guard
+
+on:
+  push:
+    tags:
+      - "v*"
+      - "release-*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    env:
+      HOLD_STREAK_THRESHOLD: "3"
+
+    steps:
+      - name: Check takeover readiness streak
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const threshold = Number(process.env.HOLD_STREAK_THRESHOLD || "3");
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: "takeover-readiness.yml",
+              branch: "main",
+              per_page: 100
+            });
+
+            let streak = 0;
+            let sawSuccess = false;
+            for (const run of runs) {
+              if (run.status !== "completed") {
+                continue;
+              }
+
+              if (run.conclusion === "failure") {
+                streak += 1;
+              } else if (run.conclusion === "success") {
+                sawSuccess = true;
+                break;
+              }
+
+              if (streak >= threshold) {
+                break;
+              }
+            }
+
+            if (!sawSuccess && streak === 0) {
+              core.setFailed("No successful takeover-readiness runs found yet. Release tags are blocked until readiness proves green.");
+              return;
+            }
+
+            if (streak >= threshold) {
+              core.setFailed(`Release blocked: consecutive takeover-readiness failures (${streak}) reached threshold (${threshold}).`);
+              return;
+            }
+
+            core.info(`Release guard passed. Consecutive takeover-readiness failures: ${streak} (threshold ${threshold}).`);

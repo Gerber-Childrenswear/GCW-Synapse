@@ -311,6 +311,7 @@ What it runs:
 2. `npm run gtm:verify:takeover:strict`
 3. Uploads `docs/reports/cutover/` as workflow artifacts
 4. Optionally posts webhook status with `npm run gtm:notify:takeover`
+5. Auto-opens or updates a GitHub issue titled `Takeover readiness regression` when strict checks fail
 
 Required repository secrets:
 
@@ -320,6 +321,21 @@ Required repository secrets:
 Optional repository secrets:
 
 - `TAKEOVER_NOTIFY_WEBHOOK_URL`
+
+## Release Tag Guard
+
+This repo includes a release tag blocker workflow:
+
+- Workflow file: `.github/workflows/release-tag-guard.yml`
+- Triggers:
+	- tag pushes matching `v*` or `release-*`
+	- manual (`workflow_dispatch`)
+
+Behavior:
+
+- Reads recent results from `takeover-readiness.yml`
+- Blocks release tags when consecutive takeover-readiness failures reach threshold (`HOLD_STREAK_THRESHOLD`, default `3`)
+- Also blocks when no successful takeover-readiness run exists yet
 
 ## Strict Launch Guard
 

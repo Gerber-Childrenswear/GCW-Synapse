@@ -1,5 +1,10 @@
 name: Takeover Readiness
 
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
 on:
   workflow_dispatch:
     inputs:
@@ -25,6 +30,8 @@ on:
 jobs:
   readiness:
     runs-on: ubuntu-latest
+    env:
+      HOLD_STREAK_THRESHOLD: "3"
 
     steps:
       - name: Checkout
@@ -43,6 +50,8 @@ jobs:
         run: npm run typecheck
 
       - name: Generate strict cutover report
+        id: cutover
+        continue-on-error: true
         env:
           SYNAPSE_BASE_URL: ${{ inputs.base_url != '' && inputs.base_url || secrets.SYNAPSE_BASE_URL }}
           SYNAPSE_INGRESS_TOKEN: ${{ secrets.SYNAPSE_INGRESS_TOKEN }}
@@ -53,10 +62,23 @@ jobs:
             --max_mismatch_rate_pct "${{ inputs.max_mismatch_rate_pct }}"
 
       - name: Run strict takeover verification
+        id: verify
+        continue-on-error: true
         env:
           SYNAPSE_BASE_URL: ${{ inputs.base_url != '' && inputs.base_url || secrets.SYNAPSE_BASE_URL }}
           SYNAPSE_INGRESS_TOKEN: ${{ secrets.SYNAPSE_INGRESS_TOKEN }}
         run: npm run gtm:verify:takeover:strict
+
+      - name: Evaluate strict results
+        id: strict
+        if: always()
+        shell: bash
+        run: |
+          if [[ "${{ steps.cutover.outcome }}" == "success" && "${{ steps.verify.outcome }}" == "success" ]]; then
+            echo "strict_failed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "strict_failed=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Upload cutover artifacts
         uses: actions/upload-artifact@v4
@@ -72,3 +94,90 @@ jobs:
         env:
           TAKEOVER_NOTIFY_WEBHOOK_URL: ${{ secrets.TAKEOVER_NOTIFY_WEBHOOK_URL }}
         run: npm run gtm:notify:takeover
+
+      - name: Open or update takeover regression issue
+        if: always() && steps.strict.outputs.strict_failed == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = "Takeover readiness regression";
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              "Strict takeover readiness checks failed.",
+              "",
+              `- Run: ${runUrl}`,
+              "- Workflow: takeover-readiness",
+              `- Branch: ${context.ref}`,
+              "",
+              "Review workflow artifacts in docs/reports/cutover and resolve failing gate/contract checks."
+            ].join("\n");
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              per_page: 100
+            });
+
+            const existing = issues.find((issue) => issue.title === title);
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ["takeover", "regression"]
+              });
+            }
+
+      - name: Compute consecutive strict failure streak
+        id: streak
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const threshold = Number(process.env.HOLD_STREAK_THRESHOLD || "3");
+            const strictFailed = "${{ steps.strict.outputs.strict_failed }}" === "true";
+
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: "takeover-readiness.yml",
+              branch: "main",
+              per_page: 100
+            });
+
+            let streak = strictFailed ? 1 : 0;
+            for (const run of runs) {
+              if (run.id === context.runId) {
+                continue;
+              }
+
+              if (run.conclusion === "failure") {
+                streak += 1;
+              } else if (run.conclusion === "success") {
+                break;
+              }
+
+              if (streak >= threshold) {
+                break;
+              }
+            }
+
+            core.setOutput("streak", String(streak));
+            core.setOutput("threshold", String(threshold));
+
+      - name: Enforce strict readiness result
+        if: always() && steps.strict.outputs.strict_failed == 'true'
+        shell: bash
+        run: |
+          echo "Strict readiness checks failed (cutover=${{ steps.cutover.outcome }}, verify=${{ steps.verify.outcome }})."
+          echo "Current consecutive failure streak: ${{ steps.streak.outputs.streak }}"
+          exit 1
