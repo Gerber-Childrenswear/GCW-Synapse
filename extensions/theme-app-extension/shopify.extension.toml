@@ -1,0 +1,7 @@
+api_version = "2025-01"
+
+[[extensions]]
+name = "GCW Synapse"
+handle = "gcw-synapse-theme"
+type = "theme"
+uid = "gcw-synapse-theme-extension"

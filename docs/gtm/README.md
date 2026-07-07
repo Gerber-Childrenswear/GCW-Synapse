@@ -1,5 +1,10 @@
 # GTM Hardening Artifacts
 
+## Cursor MCP (edit containers in chat)
+
+- [GTM_MCP_SETUP.md](GTM_MCP_SETUP.md) — connect `user-gtm` MCP for live edits
+- [gtm-mcp-server/README.md](../../gtm-mcp-server/README.md) — container registry (web, sGTM, dev workspace)
+
 ## Files
 
 - GTM-TKW58K8_synapse_runtime_companion_import.json

@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "user-gtm": {
+      "url": "https://mcp.gtmeditor.com/authorize"
+    }
+  }
+}

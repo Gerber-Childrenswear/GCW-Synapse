@@ -15,6 +15,8 @@ npm run lean:deploy            # Cloudflare deploy (needs CLOUDFLARE_API_TOKEN)
 
 **gcw-dev first:** enable GCW Synapse app embed on `gcw-dev.myshopify.com` → endpoint `/event`. GTM Preview on dev storefront. Then promote to production.
 
+**GTM in Cursor:** connect MCP server `user-gtm` — see [docs/GTM_ALL_CHATS_SETUP.md](docs/GTM_ALL_CHATS_SETUP.md) for desktop + Cloud Agent + team-wide setup.
+
 Advanced cutover gates, shadow-compare, and Render/Node origin are optional — see README sections below.
 
 ---

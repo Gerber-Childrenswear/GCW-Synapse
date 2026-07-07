@@ -1,0 +1,20 @@
+# Link this file to your existing Partners app (gcw-dev install).
+# 1. Partners → Apps → GCW Synapse → Client credentials → copy Client ID below.
+# 2. shopify app config link
+# 3. shopify app deploy
+
+name = "GCW Synapse"
+client_id = "7d011b70562512bd84b85bd3f9a6e68d"
+application_url = "https://gcw-synapse-super.gcw-synapse.workers.dev"
+embedded = true
+
+[access_scopes]
+scopes = "read_products,read_orders,read_themes"
+
+[auth]
+redirect_urls = [
+  "https://gcw-synapse-super.gcw-synapse.workers.dev/auth/shopify/callback"
+]
+
+[build]
+automatically_update_urls_on_dev = true

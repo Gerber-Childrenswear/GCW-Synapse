@@ -8,3 +8,7 @@ scripts/*.js.map
 !scripts/generateSynapsePreviewBundle.js
 !scripts/validateSynapsePreviewBundle.js
 data/
+gtm-mcp-server/.env
+gtm-mcp-server/credentials.json
+gtm-mcp-server/gtm-config.json
+gtm-mcp-server/*service-account*.json
