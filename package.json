@@ -9,7 +9,7 @@
     "admin:build": "npm --prefix apps/admin run build",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.worker.json --noEmit",
-    "test": "tsx --test src/**/*.test.ts scripts/**/*.test.ts cloudflare/**/*.test.ts",
+    "test": "tsx --test src/*.test.ts src/**/*.test.ts scripts/*.test.ts cloudflare/*.test.ts",
     "cf:build": "npm run admin:build",
     "cf:dev": "npm run cf:build && wrangler dev",
     "cf:deploy": "npm run cf:build && wrangler deploy",

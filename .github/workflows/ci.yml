@@ -17,11 +17,14 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Install admin dependencies
+        run: npm --prefix apps/admin ci
 
       - name: Typecheck
         run: npm run typecheck
@@ -31,3 +34,6 @@ jobs:
 
       - name: Test
         run: npm test
+
+      - name: Build and validate Worker
+        run: npm run cf:dry-run
