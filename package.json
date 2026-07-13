@@ -8,11 +8,13 @@
     "build": "tsc -p tsconfig.json",
     "admin:build": "npm --prefix apps/admin run build",
     "start": "node dist/server.js",
-    "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/**/*.test.ts scripts/**/*.test.ts",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.worker.json --noEmit",
+    "test": "tsx --test src/**/*.test.ts scripts/**/*.test.ts cloudflare/**/*.test.ts",
     "cf:build": "npm run admin:build",
     "cf:dev": "npm run cf:build && wrangler dev",
     "cf:deploy": "npm run cf:build && wrangler deploy",
+    "cf:dry-run": "npm run cf:build && wrangler deploy --dry-run",
+    "cf:types": "wrangler types cloudflare/worker-configuration.d.ts",
     "lean:deploy": "bash scripts/deploy-cloudflare.sh",
     "lean:verify": "tsx scripts/leanVerify.ts --env dev",
     "lean:verify:dev": "tsx scripts/leanVerify.ts --env dev",
@@ -66,12 +68,13 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260713.1",
     "@types/express": "^5.0.6",
     "@types/node": "^25.7.0",
     "@types/supertest": "^7.2.0",
     "supertest": "^7.2.2",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3",
-    "wrangler": "^4.46.0"
+    "wrangler": "^4.110.0"
   }
 }

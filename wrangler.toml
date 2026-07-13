@@ -1,6 +1,6 @@
 name = "gcw-synapse-super"
 main = "cloudflare/worker.ts"
-compatibility_date = "2026-05-31"
+compatibility_date = "2026-07-13"
 workers_dev = true
 
 [assets]
@@ -8,10 +8,38 @@ directory = "apps/admin/dist"
 binding = "ASSETS"
 run_worker_first = true
 
+[[d1_databases]]
+binding = "DB"
+database_name = "synapse-db"
+database_id = "ab87e02d-be4c-4b69-aa34-81ca052f692d"
+migrations_dir = "migrations"
+
 [vars]
-PUBLIC_EVENT_ALLOWED_ORIGINS = "https://www.gerberchildrenswear.com,https://gerberchildrenswear.com,https://gcw-dev.myshopify.com,https://gerberchildrenswear.myshopify.com"
+RUNTIME_MODE = "shadow_compare"
+SHOPIFY_SHOP_DOMAIN = "gcw-dev.myshopify.com"
+PUBLIC_EVENT_ALLOWED_ORIGINS = "https://gcw-dev.myshopify.com"
 PUBLIC_EVENT_MAX_BODY_BYTES = "16384"
 PUBLIC_EVENT_RATE_LIMIT_PER_MINUTE = "120"
+WEBHOOK_REPLAY_TTL_MS = "600000"
+SHADOW_COMPARE_MISMATCH_ALERT_PCT = "5"
+LAUNCH_MIN_PAIRED_EVENTS = "10"
+LAUNCH_MAX_WARNING_CHANNELS = "0"
+LAUNCH_MAX_WEBHOOK_FAILURE_RATE_PCT = "2"
+CHANNEL_HEALTH_STALE_MINUTES = "1440"
+CHANNEL_HEALTH_WARN_FAILURE_PCT = "5"
 
-# Configure as a secret if your origin expects ingress auth:
+# Required secrets:
 # wrangler secret put SYNAPSE_INGRESS_TOKEN
+# wrangler secret put SYNAPSE_WRITE_SHARED_SECRET
+# wrangler secret put SHOPIFY_WEBHOOK_SECRET
+#
+# Forward mode only:
+# wrangler secret put GTM_SHARED_SECRET
+# Set GTM_SERVER_URL as a non-secret variable before changing RUNTIME_MODE.
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[triggers]
+crons = ["17 4 * * *"]

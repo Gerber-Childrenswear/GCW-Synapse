@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022"],
+    "types": ["@cloudflare/workers-types"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": [
+    "cloudflare/**/*.ts",
+    "src/services/controlPanelData.ts",
+    "src/services/payloadMapper.ts",
+    "src/services/customerIdentity.ts",
+    "src/services/customerPhone.ts",
+    "src/services/currencyCode.ts",
+    "src/services/orderId.ts",
+    "src/services/purchaseProducts.ts",
+    "src/types/shopify.ts"
+  ],
+  "exclude": ["cloudflare/**/*.test.ts"]
+}

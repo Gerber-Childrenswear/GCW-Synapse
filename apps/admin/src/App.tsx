@@ -4,6 +4,7 @@ import {
   ApiRequestError,
   getEventSchemas,
   getQaChecklist,
+  getLaunchReadiness,
   getRuntimeStatus,
   getShadowComparisons,
   getShadowStats,
@@ -16,6 +17,7 @@ import {
   type AdvisorChatMessage,
   type EndpointProbeResult,
   type EventSchema,
+  type LaunchReadiness,
   type QaChecklistItem,
   type RuntimeStatus,
   type ShadowStats,
@@ -173,24 +175,28 @@ const EDGE_CHECKS: EdgeCheckDefinition[] = [
     method: "POST",
     expectedStatuses: [200],
     group: "webhooks",
-    body: JSON.stringify({ event: "dl_view_item", shop: "gerberchildrenswear.myshopify.com" }),
+    body: JSON.stringify({ event: "dl_view_item", shop: "gcw-dev.myshopify.com" }),
     contentType: "application/json"
   },
   {
     id: "webhook-post",
-    label: "Webhook POST",
-    path: "/webhooks/orders-create",
+    label: "Webhook HMAC Guard",
+    path: "/webhooks/shopify/orders/create",
     method: "POST",
-    expectedStatuses: [202],
+    expectedStatuses: [401, 503],
     group: "webhooks",
     body: JSON.stringify({ order_id: "health-check", event: "purchase" }),
-    contentType: "application/json"
+    contentType: "application/json",
+    extraHeaders: {
+      "X-Shopify-Shop-Domain": "gcw-dev.myshopify.com",
+      "X-Shopify-Topic": "orders/create"
+    }
   },
   { id: "ops-alerts", label: "Ops Alerts", path: "/ops/alerts", method: "GET", expectedStatuses: [200], group: "webhooks" },
   {
     id: "guard-auth",
     label: "Auth Guardrail",
-    path: "/auth/shopify/install?shop=gerberchildrenswear.myshopify.com",
+    path: "/auth/shopify/install?shop=gcw-dev.myshopify.com",
     method: "GET",
     expectedStatuses: [501],
     group: "guardrails"
@@ -247,15 +253,15 @@ function QuickStartPanel({
       <div className="quickstart-steps">
         <button type="button" className="quick-step" onClick={onGoRuntime}>
           <strong>1. Check Runtime</strong>
-          <span>Look for Connected database and Installed Shopify status.</span>
+          <span>Confirm D1 is connected and runtime mode is shadow_compare.</span>
         </button>
         <button type="button" className="quick-step" onClick={onGoEdge}>
-          <strong>2. Run Health Checks</strong>
-          <span>Click Run Health Checks and confirm all pass.</span>
+          <strong>2. Collect Real Pairs</strong>
+          <span>Capture matching Synapse and Elevar purchases on gcw-dev.</span>
         </button>
         <button type="button" className="quick-step" onClick={onGoQa}>
-          <strong>3. Run QA Smoke</strong>
-          <span>Use Run All Smoke Tests before launch changes.</span>
+          <strong>3. Earn Cutover Readiness</strong>
+          <span>Fix every failed gate; zero pairs can never produce Go.</span>
         </button>
       </div>
     </section>
@@ -296,10 +302,12 @@ function ErrorHelpPanel({
 
 function RuntimeSection({
   runtime,
-  shopifyStatus
+  shopifyStatus,
+  readiness
 }: {
   runtime: RuntimeStatus | null;
   shopifyStatus: ShopifyInstallStatus | null;
+  readiness: LaunchReadiness | null;
 }) {
   const adapterCount = runtime?.vendorAdapters.length ?? 0;
 
@@ -309,12 +317,16 @@ function RuntimeSection({
 
       <div className="stats-grid">
         <article className="stat-card">
+          <h3>Launch Decision</h3>
+          <p>{readiness?.status === "go" ? "GO" : "HOLD"}</p>
+        </article>
+        <article className="stat-card">
           <h3>Database</h3>
           <p>{runtime?.dbConnected ? "Connected" : "Disconnected"}</p>
         </article>
         <article className="stat-card">
-          <h3>Uptime</h3>
-          <p>{runtime ? `${Math.floor(runtime.uptime / 60)}m ${Math.floor(runtime.uptime % 60)}s` : "-"}</p>
+          <h3>Runtime Mode</h3>
+          <p>{runtime?.runtimeMode ?? "-"}</p>
         </article>
         <article className="stat-card">
           <h3>Webhooks Received</h3>
@@ -325,6 +337,45 @@ function RuntimeSection({
           <p>{runtime?.eventsGenerated ?? 0}</p>
         </article>
       </div>
+
+      <article className="panel-block">
+        <div className="block-header">
+          <h3>Validation Gates</h3>
+          <Badge tone={readiness?.status === "go" ? "success" : "warning"}>
+            {readiness
+              ? `${readiness.summary.checks_passed}/${readiness.checks.length} passing`
+              : "Loading"}
+          </Badge>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Gate</th>
+                <th>Current</th>
+                <th>Target</th>
+                <th>Next action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(readiness?.checks ?? []).map((check) => (
+                <tr key={check.id}>
+                  <td>
+                    <Badge tone={check.status === "pass" ? "success" : "warning"}>
+                      {check.status}
+                    </Badge>
+                  </td>
+                  <td>{check.title}</td>
+                  <td>{check.value}</td>
+                  <td>{check.target}</td>
+                  <td>{check.recommendation}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </article>
 
       <article className="panel-block">
         <div className="block-header">
@@ -826,6 +877,7 @@ export default function App() {
   const [simpleMode, setSimpleMode] = useState(true);
 
   const [runtime, setRuntime] = useState<RuntimeStatus | null>(null);
+  const [readiness, setReadiness] = useState<LaunchReadiness | null>(null);
   const [schemas, setSchemas] = useState<EventSchema[]>([]);
   const [webhooks, setWebhooks] = useState<unknown[]>([]);
   const [shadowStats, setShadowStats] = useState<ShadowStats | null>(null);
@@ -867,6 +919,7 @@ export default function App() {
 
     Promise.all([
       getRuntimeStatus(),
+      getLaunchReadiness(),
       getEventSchemas(),
       getWebhookLog(50),
       getShadowStats(),
@@ -875,8 +928,9 @@ export default function App() {
       getShopifyInstallStatus(),
       getAdvisorAlerts()
     ])
-      .then(([runtimeData, schemaData, webhookData, shadowData, comparisonData, checklistData, shopifyData, advisorData]) => {
+      .then(([runtimeData, readinessData, schemaData, webhookData, shadowData, comparisonData, checklistData, shopifyData, advisorData]) => {
         setRuntime(runtimeData);
+        setReadiness(readinessData);
         setSchemas(schemaData);
         setWebhooks(webhookData);
         setShadowStats(shadowData);
@@ -1067,7 +1121,7 @@ export default function App() {
           ))}
         </nav>
 
-        <div className="sidebar-footer">Connected to GCW Production</div>
+        <div className="sidebar-footer">gcw-dev • shadow validation</div>
       </aside>
 
       <main className="content">
@@ -1095,7 +1149,9 @@ export default function App() {
 
         {!state.loading ? (
           <>
-            {activeTab === "runtime" ? <RuntimeSection runtime={runtime} shopifyStatus={shopifyStatus} /> : null}
+            {activeTab === "runtime" ? (
+              <RuntimeSection runtime={runtime} shopifyStatus={shopifyStatus} readiness={readiness} />
+            ) : null}
             {activeTab === "advisor" ? (
               <AdvisorSection
                 alerts={advisorAlerts}

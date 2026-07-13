@@ -1,298 +1,88 @@
-type CloudflareEnv = {
-  ASSETS: Fetcher;
-  SYNAPSE_ORIGIN_URL?: string;
-  SYNAPSE_INGRESS_TOKEN?: string;
-  PUBLIC_EVENT_ALLOWED_ORIGINS?: string;
-  PUBLIC_EVENT_MAX_BODY_BYTES?: string;
-  PUBLIC_EVENT_RATE_LIMIT_PER_MINUTE?: string;
-};
-
 import {
   getControlPanelChecklist,
   getControlPanelSchemas,
   getControlPanelVendors
 } from "../src/services/controlPanelData";
+import {
+  mapOrderToPurchase,
+  mapRefundToRefundEvent
+} from "../src/services/payloadMapper";
+import type {
+  ShopifyOrder,
+  ShopifyRefund,
+  SynapseEventPayload
+} from "../src/types/shopify";
+import {
+  deterministicEventId,
+  observationFromPayload,
+  observationFromSynapse,
+  redactPayloadJson,
+  verifyShopifyHmac
+} from "./domain";
+import type { SynapseEnv } from "./env";
+import {
+  createStore,
+  type ComparisonRecord,
+  type WebhookReceiptInput,
+  type WebhookStatus
+} from "./store";
 
-const PROXY_PREFIXES = [
-  "/auth/",
-  "/compatibility/"
-];
-
-const INTERNAL_ROUTE_PREFIXES = [
+const PROXY_PREFIXES = ["/auth/", "/compatibility/"];
+const INTERNAL_PREFIXES = [
   "/ops/",
   "/api/",
   "/compare/",
   "/runtime/",
   "/launch/",
-  "/webhooks/",
   "/auth/",
   "/compatibility/"
 ];
-
-let workerBootMs: number | null = null;
-const edgeWebhookLog: unknown[] = [];
-const edgeShadowComparisons: unknown[] = [];
-const edgeChannelEvents: Array<Record<string, unknown>> = [];
-let edgeEventsGenerated = 0;
-let edgeEventsSuppressed = 0;
-const eventRateWindowMs = 60_000;
-const eventRateState = new Map<string, { windowStartMs: number; count: number }>();
-
-type SmokeTestCase = {
-  name: string;
-  passed: boolean;
-  durationMs: number;
-  error: string | null;
-  detail: Record<string, unknown>;
+const WEBHOOK_TOPICS: Record<string, string> = {
+  "/webhooks/shopify/orders/create": "orders/create",
+  "/webhooks/shopify/orders/paid": "orders/paid",
+  "/webhooks/shopify/refunds/create": "refunds/create"
 };
+const rateState = new Map<string, { startedAt: number; count: number }>();
+const workerStartedAt = Date.now();
 
-function parseLimit(raw: string | null, fallback = 100): number {
-  const parsed = Number.parseInt(raw ?? `${fallback}`, 10);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
+type JsonRecord = Record<string, unknown>;
 
-  return Math.max(1, Math.min(parsed, 500));
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function parsePositiveInt(raw: string | undefined, fallback: number): number {
-  if (!raw) {
-    return fallback;
-  }
-
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return fallback;
-  }
-
-  return parsed;
+function parseNumber(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseFloat(value ?? "");
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function parseAllowedOrigins(raw: string | undefined): string[] {
-  const configured = (raw ?? "")
-    .split(",")
-    .map((value) => value.trim().toLowerCase())
-    .filter(Boolean);
-
-  if (configured.length > 0) {
-    return configured;
-  }
-
-  return [
-    "https://www.gerberchildrenswear.com",
-    "https://gerberchildrenswear.com",
-    "https://gcw-dev.myshopify.com",
-    "https://gerberchildrenswear.myshopify.com"
-  ];
+function clampLimit(value: string | null, fallback = 100): number {
+  return Math.max(
+    1,
+    Math.min(500, parsePositiveInt(value ?? undefined, fallback))
+  );
 }
 
-function isAllowedOrigin(origin: string, allowedOrigins: string[]): boolean {
-  const normalized = origin.trim().toLowerCase();
-  return allowedOrigins.includes(normalized);
-}
-
-function getClientIp(request: Request): string {
-  return request.headers.get("cf-connecting-ip") ?? "unknown";
-}
-
-function checkEventRateLimit(request: Request, env: CloudflareEnv): { allowed: boolean; retryAfterSeconds?: number } {
-  const limit = parsePositiveInt(env.PUBLIC_EVENT_RATE_LIMIT_PER_MINUTE, 120);
-  const now = Date.now();
-  const ip = getClientIp(request);
-  const previous = eventRateState.get(ip);
-
-  if (!previous || now - previous.windowStartMs >= eventRateWindowMs) {
-    eventRateState.set(ip, { windowStartMs: now, count: 1 });
-    return { allowed: true };
-  }
-
-  if (previous.count >= limit) {
-    const retryAfterMs = Math.max(0, eventRateWindowMs - (now - previous.windowStartMs));
-    return {
-      allowed: false,
-      retryAfterSeconds: Math.max(1, Math.ceil(retryAfterMs / 1000))
-    };
-  }
-
-  previous.count += 1;
-  eventRateState.set(ip, previous);
-
-  if (eventRateState.size > 2048) {
-    for (const [key, state] of eventRateState.entries()) {
-      if (now - state.windowStartMs > eventRateWindowMs * 2) {
-        eventRateState.delete(key);
-      }
-      if (eventRateState.size <= 1536) {
-        break;
-      }
-    }
-  }
-
-  return { allowed: true };
-}
-
-function isInternalRoute(pathname: string): boolean {
-  return INTERNAL_ROUTE_PREFIXES.some((prefix) => pathname.startsWith(prefix));
-}
-
-function isInternalRouteExempt(pathname: string, method: string): boolean {
-  if (pathname === "/health" && method === "GET") {
-    return true;
-  }
-
-  if (pathname === "/event" && (method === "POST" || method === "OPTIONS")) {
-    return true;
-  }
-
-  return false;
-}
-
-function getShadowCounts(): {
-  paired_events: number;
-  matched_pairs: number;
-  mismatched_pairs: number;
-  synapse_only: number;
-  elevar_only: number;
-} {
-  let paired = 0;
-  let matched = 0;
-  let mismatched = 0;
-  let synapseOnly = 0;
-  let elevarOnly = 0;
-
-  for (const item of edgeShadowComparisons) {
-    const kind = (item as { type?: string }).type;
-    if (kind === "matched") {
-      paired += 1;
-      matched += 1;
-    } else if (kind === "mismatched") {
-      paired += 1;
-      mismatched += 1;
-    } else if (kind === "synapse_only") {
-      synapseOnly += 1;
-    } else if (kind === "elevar_only") {
-      elevarOnly += 1;
-    }
-  }
-
-  return {
-    paired_events: paired,
-    matched_pairs: matched,
-    mismatched_pairs: mismatched,
-    synapse_only: synapseOnly,
-    elevar_only: elevarOnly
-  };
-}
-
-function getParityModel() {
-  const counts = getShadowCounts();
-  const mismatchBase = counts.paired_events > 0 ? counts.paired_events : 1;
-  const mismatchRate = (counts.mismatched_pairs / mismatchBase) * 100;
-  const matchedRate = 100 - mismatchRate;
-
-  return {
-    status: mismatchRate > 5 ? "alert" : "ok",
-    mismatch_rate_pct: Number.parseFloat(mismatchRate.toFixed(2)),
-    matched_rate_pct: Number.parseFloat(matchedRate.toFixed(2)),
-    total_pairs: counts.paired_events
-  };
-}
-
-function getChannelSummary() {
-  const byChannel = new Map<string, { total: number; failed: number; last_seen?: string }>();
-
-  for (const raw of edgeChannelEvents) {
-    const item = raw as { channel?: string; status?: string; observed_at?: string };
-    const key = item.channel ?? "unknown";
-    const prev = byChannel.get(key) ?? { total: 0, failed: 0, last_seen: undefined };
-    prev.total += 1;
-    if (item.status === "error") {
-      prev.failed += 1;
-    }
-    if (item.observed_at) {
-      prev.last_seen = item.observed_at;
-    }
-    byChannel.set(key, prev);
-  }
-
-  const channels = Array.from(byChannel.entries()).map(([channel, stats]) => {
-    const failureRate = stats.total > 0 ? (stats.failed / stats.total) * 100 : 0;
-    return {
-      channel,
-      total_events: stats.total,
-      failed_events: stats.failed,
-      failure_rate_pct: Number.parseFloat(failureRate.toFixed(2)),
-      status: failureRate > 20 ? "warning" : "ok",
-      last_seen: stats.last_seen ?? null
-    };
-  });
-
-  const warningChannels = channels.filter((channel) => channel.status === "warning").length;
-  return {
-    total_channels: channels.length,
-    warning_channels: warningChannels,
-    status: warningChannels > 0 ? "warning" : "ok",
-    channels
-  };
-}
-
-function shouldProxy(pathname: string): boolean {
-  return PROXY_PREFIXES.some((prefix) => pathname.startsWith(prefix));
-}
-
-function addCorsHeaders(response: Response, request: Request, originOverride?: string): Response {
-  const headers = new Headers(response.headers);
-  const origin = originOverride ?? request.headers.get("origin");
-
-  headers.set("Access-Control-Allow-Origin", origin ?? "*");
-  headers.set("Access-Control-Allow-Methods", "POST, OPTIONS");
-  headers.set("Access-Control-Allow-Headers", "Content-Type, X-Synapse-Token");
-  headers.set("Access-Control-Max-Age", "86400");
-  headers.set("Vary", "Origin");
-
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers
-  });
-}
-
-function jsonResponse(payload: unknown, status = 200): Response {
+function json(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
-    headers: {
-      "content-type": "application/json"
-    }
+    headers: { "content-type": "application/json; charset=utf-8" }
   });
 }
 
-function getWorkerUptimeSeconds(): number {
-  const now = Date.now();
-
-  if (
-    workerBootMs === null ||
-    !Number.isFinite(workerBootMs) ||
-    workerBootMs < 946684800000 ||
-    workerBootMs > now
-  ) {
-    workerBootMs = now;
-  }
-
-  return Math.max(1, Math.floor((now - workerBootMs) / 1000));
-}
-
-function addSecurityHeaders(response: Response): Response {
+function securityHeaders(response: Response): Response {
   const headers = new Headers(response.headers);
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   headers.set("X-XSS-Protection", "0");
-  const contentType = headers.get("content-type") ?? "";
-  if (contentType.includes("text/html")) {
+  headers.set(
+    "Content-Security-Policy",
+    "frame-ancestors 'self' https://admin.shopify.com https://*.myshopify.com"
+  );
+  if ((headers.get("content-type") ?? "").includes("text/html")) {
     headers.set("Cache-Control", "no-store, no-cache, must-revalidate");
   }
-  // Allow Shopify embedded app iframing while still restricting other parents.
-  headers.set("Content-Security-Policy", "frame-ancestors 'self' https://admin.shopify.com https://*.myshopify.com");
-
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
@@ -300,672 +90,1094 @@ function addSecurityHeaders(response: Response): Response {
   });
 }
 
-async function proxyRequest(request: Request, env: CloudflareEnv): Promise<Response> {
-  if (!env.SYNAPSE_ORIGIN_URL) {
-    return new Response(
-      JSON.stringify({
-        ok: false,
-        error: "SYNAPSE_ORIGIN_URL is not configured"
-      }),
-      {
-        status: 500,
-        headers: {
-          "content-type": "application/json"
-        }
+function allowedOrigins(env: SynapseEnv): string[] {
+  return (
+    env.PUBLIC_EVENT_ALLOWED_ORIGINS ??
+    "https://gcw-dev.myshopify.com"
+  )
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function withCors(
+  response: Response,
+  request: Request,
+  originOverride?: string
+): Response {
+  const headers = new Headers(response.headers);
+  const origin = originOverride ?? request.headers.get("origin");
+  if (origin) {
+    headers.set("Access-Control-Allow-Origin", origin);
+  }
+  headers.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+  headers.set(
+    "Access-Control-Allow-Headers",
+    "Content-Type, X-Synapse-Token, X-Synapse-Shared-Secret"
+  );
+  headers.set("Access-Control-Max-Age", "86400");
+  headers.set("Vary", "Origin");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers
+  });
+}
+
+async function secretsEqual(
+  actual: string | null,
+  expected: string | undefined
+): Promise<boolean> {
+  if (!actual || !expected) {
+    return false;
+  }
+  const [actualHash, expectedHash] = await Promise.all(
+    [actual, expected].map((value) =>
+      crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))
+    )
+  );
+  const left = new Uint8Array(actualHash);
+  const right = new Uint8Array(expectedHash);
+  let mismatch = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    mismatch |= (left[index] ?? 0) ^ (right[index] ?? 0);
+  }
+  return mismatch === 0;
+}
+
+function isInternal(pathname: string): boolean {
+  return INTERNAL_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+}
+
+async function authorizeInternal(
+  request: Request,
+  env: SynapseEnv,
+  pathname: string
+): Promise<Response | null> {
+  if (!isInternal(pathname)) {
+    return null;
+  }
+
+  const suppliedIngress = request.headers.get("X-Synapse-Token");
+  const authorization = request.headers.get("Authorization");
+  const suppliedWrite =
+    request.headers.get("X-Synapse-Shared-Secret") ??
+    (authorization?.startsWith("Bearer ") ? authorization.slice(7) : null);
+
+  if (pathname === "/compare/elevar" && request.method === "POST") {
+    if (!env.SYNAPSE_WRITE_SHARED_SECRET) {
+      return json(
+        { ok: false, error: "Write secret is not configured" },
+        503
+      );
+    }
+    return (await secretsEqual(suppliedWrite, env.SYNAPSE_WRITE_SHARED_SECRET))
+      ? null
+      : json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  if (!env.SYNAPSE_INGRESS_TOKEN) {
+    return json(
+      { ok: false, error: "Internal API token is not configured" },
+      503
+    );
+  }
+  return (await secretsEqual(suppliedIngress, env.SYNAPSE_INGRESS_TOKEN))
+    ? null
+    : json({ ok: false, error: "Unauthorized" }, 401);
+}
+
+function rateLimit(request: Request, env: SynapseEnv): Response | null {
+  const now = Date.now();
+  const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+  const limit = parsePositiveInt(
+    env.PUBLIC_EVENT_RATE_LIMIT_PER_MINUTE,
+    120
+  );
+  const previous = rateState.get(ip);
+  if (!previous || now - previous.startedAt >= 60_000) {
+    rateState.set(ip, { startedAt: now, count: 1 });
+    return null;
+  }
+  if (previous.count >= limit) {
+    return json({ ok: false, error: "Rate limit exceeded" }, 429);
+  }
+  previous.count += 1;
+  if (rateState.size > 2048) {
+    for (const [key, entry] of rateState) {
+      if (now - entry.startedAt > 120_000) {
+        rateState.delete(key);
       }
+    }
+  }
+  return null;
+}
+
+async function parseJsonBody(
+  request: Request,
+  maxBytes: number
+): Promise<{ rawBody: string; payload: unknown } | Response> {
+  if (!(request.headers.get("content-type") ?? "").includes("application/json")) {
+    return json({ ok: false, error: "Content-Type must be application/json" }, 415);
+  }
+  const contentLength = Number.parseInt(
+    request.headers.get("content-length") ?? "0",
+    10
+  );
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    return json({ ok: false, error: "Payload too large" }, 413);
+  }
+  const rawBody = await request.text();
+  if (new TextEncoder().encode(rawBody).byteLength > maxBytes) {
+    return json({ ok: false, error: "Payload too large" }, 413);
+  }
+  try {
+    return { rawBody, payload: JSON.parse(rawBody) as unknown };
+  } catch {
+    return json({ ok: false, error: "Invalid JSON payload" }, 400);
+  }
+}
+
+function asRecord(value: unknown): JsonRecord {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as JsonRecord)
+    : {};
+}
+
+function stringValue(value: unknown): string | null {
+  if (typeof value !== "string" && typeof value !== "number") {
+    return null;
+  }
+  const result = String(value).trim();
+  return result.length > 0 ? result : null;
+}
+
+function runtimeMode(env: SynapseEnv): "shadow_compare" | "forward" {
+  return env.RUNTIME_MODE === "forward" ? "forward" : "shadow_compare";
+}
+
+async function handlePublicEvent(
+  request: Request,
+  env: SynapseEnv
+): Promise<Response> {
+  const origin = request.headers.get("origin")?.toLowerCase() ?? null;
+  if (!origin || !allowedOrigins(env).includes(origin)) {
+    return withCors(
+      json({ ok: false, error: "Origin not allowed" }, 403),
+      request,
+      origin ?? undefined
+    );
+  }
+  if (request.method === "OPTIONS") {
+    return withCors(new Response(null, { status: 204 }), request, origin);
+  }
+  const limited = rateLimit(request, env);
+  if (limited) {
+    return withCors(limited, request, origin);
+  }
+  const parsed = await parseJsonBody(
+    request,
+    parsePositiveInt(env.PUBLIC_EVENT_MAX_BODY_BYTES, 16_384)
+  );
+  if (parsed instanceof Response) {
+    return withCors(parsed, request, origin);
+  }
+
+  const body = asRecord(parsed.payload);
+  const eventName =
+    stringValue(body.event_name ?? body.event ?? body.name) ?? "unknown";
+  const eventId = stringValue(body.event_id ?? body.eventId);
+  const source = stringValue(body.source) ?? "storefront";
+  const store = createStore(env);
+  const dedupeKey = eventId ? `${eventName}:${eventId}` : null;
+  if (
+    dedupeKey &&
+    !(await store.claimKey(dedupeKey, "runtime", 5 * 60_000))
+  ) {
+    await store.recordRuntime({
+      eventName,
+      eventId,
+      source,
+      status: "duplicate",
+      reason: "duplicate_event_id",
+      payloadJson: null
+    });
+    return withCors(
+      json({ ok: true, accepted: false, status: "duplicate" }),
+      request,
+      origin
     );
   }
 
-  const incomingUrl = new URL(request.url);
-  const targetUrl = new URL(incomingUrl.pathname + incomingUrl.search, env.SYNAPSE_ORIGIN_URL);
-
-  const headers = new Headers(request.headers);
-  headers.delete("host");
-  headers.delete("cf-connecting-ip");
-
-  if (env.SYNAPSE_INGRESS_TOKEN) {
-    headers.set("X-Synapse-Token", env.SYNAPSE_INGRESS_TOKEN);
+  const observation = observationFromPayload("synapse", parsed.payload);
+  if (
+    observation.transactionId !== "unknown-order" &&
+    (observation.eventName === "purchase" ||
+      observation.eventName === "refund")
+  ) {
+    await store.upsertObservation(observation);
   }
-
-  const init: RequestInit = {
-    method: request.method,
-    headers,
-    body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
-    redirect: "manual"
-  };
-
-  const response = await fetch(targetUrl.toString(), init);
-  return addSecurityHeaders(response);
+  await store.recordRuntime({
+    eventName,
+    eventId,
+    source,
+    status: "accepted",
+    reason: runtimeMode(env),
+    payloadJson: redactPayloadJson(parsed.payload)
+  });
+  return withCors(
+    json({
+      ok: true,
+      accepted: true,
+      eventId: eventId ?? crypto.randomUUID(),
+      runtime_mode: runtimeMode(env),
+      receivedAt: new Date().toISOString()
+    }),
+    request,
+    origin
+  );
 }
 
-async function runEdgeQaSmoke(): Promise<{ passed: number; failed: number; total: number; results: SmokeTestCase[] }> {
-  async function runCase(name: string, fn: () => Promise<Record<string, unknown>>): Promise<SmokeTestCase> {
-    const start = Date.now();
+async function forwardToGtm(
+  payload: SynapseEventPayload,
+  env: SynapseEnv
+): Promise<{ ok: true } | { ok: false; status: number | null; error: string }> {
+  if (!env.GTM_SERVER_URL) {
+    return { ok: false, status: null, error: "GTM_SERVER_URL is not configured" };
+  }
+  let lastStatus: number | null = null;
+  let lastError = "Unknown GTM forwarding error";
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      const detail = await fn();
-      return { name, passed: true, durationMs: Date.now() - start, error: null, detail };
+      const headers = new Headers({ "Content-Type": "application/json" });
+      if (env.GTM_SHARED_SECRET) {
+        headers.set("X-Synapse-Token", env.GTM_SHARED_SECRET);
+      }
+      const response = await fetch(env.GTM_SERVER_URL, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(10_000)
+      });
+      lastStatus = response.status;
+      if (response.ok) {
+        return { ok: true };
+      }
+      lastError = `GTM returned HTTP ${response.status}`;
+      if (response.status < 500 && response.status !== 429) {
+        break;
+      }
     } catch (error) {
-      return {
-        name,
-        passed: false,
-        durationMs: Date.now() - start,
-        error: error instanceof Error ? error.message : String(error),
-        detail: {}
-      };
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+    if (attempt < 3) {
+      await new Promise((resolve) => setTimeout(resolve, attempt * 300));
     }
   }
+  return { ok: false, status: lastStatus, error: lastError };
+}
 
-  const results: SmokeTestCase[] = [];
-
-  results.push(
-    await runCase("control panel schemas available", async () => {
-      const schemas = getControlPanelSchemas();
-      if (schemas.length < 5) {
-        throw new Error("Expected control panel schemas");
-      }
-
-      return {
-        schema_count: schemas.length,
-        has_purchase: schemas.some((schema) => schema.eventName === "dl_purchase")
-      };
-    })
-  );
-
-  results.push(
-    await runCase("qa checklist available", async () => {
-      const checklist = getControlPanelChecklist();
-      if (checklist.length < 5) {
-        throw new Error("Expected QA checklist items");
-      }
-
-      return {
-        checklist_count: checklist.length,
-        has_dedupe: checklist.some((item) => item.id === "dedupe-check")
-      };
-    })
-  );
-
-  results.push(
-    await runCase("vendors matrix available", async () => {
-      const vendors = getControlPanelVendors();
-      if (!vendors.some((vendor) => vendor.name === "Server GTM")) {
-        throw new Error("Server GTM vendor not found");
-      }
-
-      return {
-        vendor_count: vendors.length
-      };
-    })
-  );
-
-  const passed = results.filter((result) => result.passed).length;
+function baseReceipt(
+  request: Request,
+  path: string,
+  rawBody: string,
+  status: WebhookStatus
+): WebhookReceiptInput {
+  const id = crypto.randomUUID();
+  const topic = request.headers.get("X-Shopify-Topic")?.toLowerCase() ?? "unknown";
+  const shop =
+    request.headers.get("X-Shopify-Shop-Domain")?.toLowerCase() ?? "unknown";
+  const webhookId = request.headers.get("X-Shopify-Webhook-Id");
   return {
-    passed,
-    failed: results.length - passed,
-    total: results.length,
-    results
+    id,
+    idempotencyKey: webhookId ?? `${topic}:${id}`,
+    shop,
+    topic,
+    webhookId,
+    path,
+    status,
+    orderRef: null,
+    eventId: null,
+    transactionId: null,
+    payloadJson: rawBody ? redactPayloadJson(JSON.parse(rawBody) as unknown) : "{}",
+    normalizedPayloadJson: null,
+    errorMessage: null,
+    receivedAt: new Date().toISOString(),
+    processedAt: null
   };
 }
 
-async function handleNativeApi(request: Request): Promise<Response | null> {
-  const url = new URL(request.url);
-
-  if (request.method === "GET" && url.pathname === "/health") {
-    return jsonResponse({ ok: true, service: "gcw-synapse-super-edge" });
+async function handleShopifyWebhook(
+  request: Request,
+  env: SynapseEnv,
+  pathname: string
+): Promise<Response> {
+  const store = createStore(env);
+  const parsed = await parseJsonBody(request, 1_048_576);
+  if (parsed instanceof Response) {
+    return parsed;
+  }
+  let receipt: WebhookReceiptInput;
+  try {
+    receipt = baseReceipt(request, pathname, parsed.rawBody, "received");
+  } catch {
+    return json({ ok: false, error: "Invalid JSON payload" }, 400);
   }
 
-  if (request.method === "GET" && url.pathname === "/api/status") {
-    return jsonResponse({
-      status: "ok",
-      webhooksReceived: edgeWebhookLog.length,
-      eventsGenerated: edgeEventsGenerated,
-      dbConnected: true,
-      uptime: getWorkerUptimeSeconds(),
-      vendorAdapters: getControlPanelVendors()
+  if (!env.SHOPIFY_WEBHOOK_SECRET) {
+    receipt.status = "invalid_signature";
+    receipt.errorMessage = "Webhook secret is not configured";
+    await store.recordWebhook(receipt);
+    return json({ ok: false, error: "Webhook verification unavailable" }, 503);
+  }
+  if (
+    !(await verifyShopifyHmac(
+      parsed.rawBody,
+      request.headers.get("X-Shopify-Hmac-Sha256"),
+      env.SHOPIFY_WEBHOOK_SECRET
+    ))
+  ) {
+    receipt.status = "invalid_signature";
+    receipt.errorMessage = "Invalid Shopify webhook signature";
+    await store.recordWebhook(receipt);
+    return json({ ok: false, error: "Invalid Shopify webhook signature" }, 401);
+  }
+
+  const expectedShop = (
+    env.SHOPIFY_SHOP_DOMAIN ?? "gcw-dev.myshopify.com"
+  ).toLowerCase();
+  if (receipt.shop !== expectedShop) {
+    receipt.status = "rejected_shop";
+    receipt.errorMessage = "Unexpected Shopify shop";
+    await store.recordWebhook(receipt);
+    return json({ ok: false, error: "Unexpected Shopify shop" }, 403);
+  }
+  const expectedTopic = WEBHOOK_TOPICS[pathname];
+  if (!expectedTopic || receipt.topic !== expectedTopic) {
+    receipt.status = "rejected_topic";
+    receipt.errorMessage = `Expected topic ${expectedTopic ?? "none"}`;
+    await store.recordWebhook(receipt);
+    return json({ ok: false, error: "Shopify topic mismatch" }, 415);
+  }
+
+  const body = asRecord(parsed.payload);
+  const orderRef =
+    stringValue(body.order_number ?? body.order_id ?? body.name) ?? "unknown";
+  receipt.orderRef = orderRef;
+  receipt.idempotencyKey =
+    receipt.webhookId ?? `${receipt.topic}:${orderRef}`;
+  await store.recordWebhook(receipt);
+
+  if (
+    !(await store.claimKey(
+      receipt.idempotencyKey,
+      "webhook",
+      parsePositiveInt(env.WEBHOOK_REPLAY_TTL_MS, 600_000)
+    ))
+  ) {
+    await store.updateWebhook(receipt.id, "duplicate_ignored");
+    return json({ ok: true, status: "duplicate_ignored" });
+  }
+
+  const eventId =
+    receipt.webhookId ??
+    (await deterministicEventId([
+      receipt.shop,
+      receipt.topic,
+      body.order_number ?? body.order_id,
+      body.name ?? body.order_name
+    ]));
+  let payload: SynapseEventPayload;
+  try {
+    payload =
+      receipt.topic === "refunds/create"
+        ? mapRefundToRefundEvent(body as ShopifyRefund, "USD", eventId)
+        : mapOrderToPurchase(body as ShopifyOrder, "USD", eventId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await store.updateWebhook(receipt.id, "invalid_json", {
+      eventId,
+      errorMessage: message
     });
+    return json({ ok: false, error: "Unsupported Shopify payload" }, 400);
   }
 
-  if (request.method === "GET" && url.pathname === "/runtime/summary") {
-    return jsonResponse({
-      ok: true,
-      telemetry: {
-        received: edgeWebhookLog.length,
-        forwarded: edgeEventsGenerated,
-        suppressed: edgeEventsSuppressed
+  const safePayload = redactPayloadJson(payload);
+  if (runtimeMode(env) === "shadow_compare") {
+    await store.upsertObservation(observationFromSynapse(payload));
+    await store.updateWebhook(receipt.id, "shadow_captured", {
+      eventId,
+      transactionId: payload.transaction_id,
+      normalizedPayloadJson: safePayload
+    });
+    console.log(
+      JSON.stringify({
+        event: "shopify_webhook_processed",
+        shop: receipt.shop,
+        topic: receipt.topic,
+        status: "shadow_captured",
+        transaction_id: payload.transaction_id,
+        event_id: eventId
+      })
+    );
+    return json({ ok: true, status: "shadow_captured_no_forward" });
+  }
+
+  const forwarded = await forwardToGtm(payload, env);
+  if (!forwarded.ok) {
+    await store.addDeadLetter({
+      attempt: 3,
+      httpStatus: forwarded.status,
+      errorMessage: forwarded.error,
+      eventName: payload.event_name,
+      eventId,
+      transactionId: payload.transaction_id,
+      payloadJson: safePayload
+    });
+    await store.updateWebhook(receipt.id, "forward_failed", {
+      eventId,
+      transactionId: payload.transaction_id,
+      normalizedPayloadJson: safePayload,
+      errorMessage: forwarded.error
+    });
+    return json({ ok: false, error: "Failed to forward event" }, 502);
+  }
+  await store.updateWebhook(receipt.id, "forwarded", {
+    eventId,
+    transactionId: payload.transaction_id,
+    normalizedPayloadJson: safePayload
+  });
+  return json({ ok: true, status: "forwarded" });
+}
+
+function parityModel(
+  counts: {
+    paired_events: number;
+    matched_pairs: number;
+    mismatched_pairs: number;
+  },
+  threshold: number
+) {
+  const mismatchRate =
+    counts.paired_events > 0
+      ? (counts.mismatched_pairs / counts.paired_events) * 100
+      : 0;
+  const matchedRate =
+    counts.paired_events > 0
+      ? (counts.matched_pairs / counts.paired_events) * 100
+      : 0;
+  return {
+    status: mismatchRate > threshold ? "alert" : "ok",
+    threshold_pct: threshold,
+    mismatch_rate_pct: Number(mismatchRate.toFixed(2)),
+    matched_rate_pct: Number(matchedRate.toFixed(2)),
+    paired_events: counts.paired_events,
+    total_pairs: counts.paired_events,
+    alert_triggered: mismatchRate > threshold
+  };
+}
+
+async function buildReadiness(env: SynapseEnv) {
+  const store = createStore(env);
+  const dbHealthy = await store.ping();
+  const summary = await store.paritySummary();
+  const threshold = parseNumber(env.SHADOW_COMPARE_MISMATCH_ALERT_PCT, 5);
+  const parity = parityModel(summary.counts, threshold);
+  const metrics = await store.webhookMetrics();
+  const channelSummary = await store.channelSummary(
+    parsePositiveInt(env.CHANNEL_HEALTH_STALE_MINUTES, 90),
+    parseNumber(env.CHANNEL_HEALTH_WARN_FAILURE_PCT, 5)
+  );
+  const topicHealth = await store.requiredTopicHealth(
+    env.SHOPIFY_SHOP_DOMAIN ?? "gcw-dev.myshopify.com",
+    parsePositiveInt(env.CHANNEL_HEALTH_STALE_MINUTES, 90)
+  );
+  const minPairs = parsePositiveInt(env.LAUNCH_MIN_PAIRED_EVENTS, 10);
+  const maxWarnings = parsePositiveInt(
+    env.LAUNCH_MAX_WARNING_CHANNELS,
+    0
+  );
+  const maxWebhookFailure = parseNumber(
+    env.LAUNCH_MAX_WEBHOOK_FAILURE_RATE_PCT,
+    2
+  );
+  const failures =
+    metrics.webhooks_invalid_signature +
+    metrics.webhooks_invalid_json +
+    metrics.webhooks_rejected_topic +
+    metrics.webhooks_forward_failed;
+  const failureRate =
+    metrics.webhooks_received > 0
+      ? (failures / metrics.webhooks_received) * 100
+      : 0;
+  const checks = [
+    {
+      id: "runtime_mode",
+      title: "Runtime mode",
+      status: runtimeMode(env) === "shadow_compare" ? "pass" : "fail",
+      value: runtimeMode(env),
+      target: "shadow_compare",
+      recommendation: "Keep gcw-dev in shadow_compare during validation."
+    },
+    {
+      id: "database",
+      title: "D1 persistence",
+      status: dbHealthy ? "pass" : "fail",
+      value: dbHealthy ? "connected" : "unavailable",
+      target: "connected",
+      recommendation: "Apply D1 migrations and verify the DB binding."
+    },
+    {
+      id: "paired_events",
+      title: "Real paired events",
+      status: summary.counts.paired_events >= minPairs ? "pass" : "fail",
+      value: String(summary.counts.paired_events),
+      target: `>= ${minPairs}`,
+      recommendation: "Capture matching Synapse and Elevar purchases."
+    },
+    {
+      id: "parity",
+      title: "Payload mismatch rate",
+      status:
+        summary.counts.paired_events > 0 && !parity.alert_triggered
+          ? "pass"
+          : "fail",
+      value: `${parity.mismatch_rate_pct.toFixed(2)}%`,
+      target: `<= ${threshold}% with nonzero pairs`,
+      recommendation: "Resolve field-level mismatches before cutover."
+    },
+    {
+      id: "required_topics",
+      title: "Required Shopify topics",
+      status: topicHealth.every((item) => item.fresh) ? "pass" : "fail",
+      value: `${topicHealth.filter((item) => item.fresh).length}/${topicHealth.length} fresh`,
+      target: `${topicHealth.length}/${topicHealth.length} fresh`,
+      recommendation: "Send recent signed gcw-dev order and refund webhooks."
+    },
+    {
+      id: "channel_coverage",
+      title: "Channel telemetry",
+      status:
+        channelSummary.totals.tracked_integrations > 0 &&
+        channelSummary.totals.critical === 0 &&
+        channelSummary.totals.warning <= maxWarnings
+          ? "pass"
+          : "fail",
+      value: `${channelSummary.totals.tracked_integrations} tracked, ${channelSummary.totals.warning} warning`,
+      target: `>= 1 tracked, <= ${maxWarnings} warning, 0 critical`,
+      recommendation: "Feed destination health telemetry and clear warnings."
+    },
+    {
+      id: "webhook_failure_rate",
+      title: "Webhook failure rate",
+      status:
+        metrics.webhooks_received > 0 && failureRate <= maxWebhookFailure
+          ? "pass"
+          : "fail",
+      value: `${failureRate.toFixed(2)}%`,
+      target: `<= ${maxWebhookFailure}% with received traffic`,
+      recommendation: "Resolve signature, topic, and forwarding failures."
+    }
+  ];
+  const failed = checks.filter((check) => check.status === "fail").length;
+  return {
+    status: failed === 0 ? "go" : "hold",
+    phase: "validation",
+    summary: { checks_passed: checks.length - failed, checks_failed: failed },
+    checks,
+    parity,
+    counts: summary.counts,
+    topic_health: topicHealth,
+    channels: channelSummary,
+    metrics,
+    generated_at: new Date().toISOString(),
+    actions: checks
+      .filter((check) => check.status === "fail")
+      .map((check) => check.recommendation)
+  };
+}
+
+async function handleCompare(
+  request: Request,
+  env: SynapseEnv,
+  pathname: string
+): Promise<Response | null> {
+  const store = createStore(env);
+  if (pathname === "/compare/elevar" && request.method === "POST") {
+    const parsed = await parseJsonBody(request, 262_144);
+    if (parsed instanceof Response) {
+      return parsed;
+    }
+    const observation = observationFromPayload("elevar", parsed.payload);
+    if (observation.transactionId === "unknown-order") {
+      return json(
+        { ok: false, error: "transaction_id is required for parity" },
+        400
+      );
+    }
+    await store.upsertObservation(observation);
+    const comparison = (await store.comparisons(500)).find(
+      (item) => item.key === observation.compareKey
+    );
+    return json(
+      {
+        ok: true,
+        status: "baseline_received",
+        runtime_mode: runtimeMode(env),
+        key: observation.compareKey,
+        comparison_type: comparison?.type ?? "elevar_only",
+        diffs: comparison?.diffs ?? []
       },
-      commerce_shield: {
-        human_sessions: edgeEventsGenerated,
-        bot_sessions: edgeEventsSuppressed,
-        suppressed_events: edgeEventsSuppressed
-      }
-    });
-  }
-
-  if (request.method === "GET" && url.pathname === "/runtime/recent") {
-    const limit = parseLimit(url.searchParams.get("limit"), 100);
-    return jsonResponse({
-      ok: true,
-      events: edgeWebhookLog.slice(0, limit)
-    });
-  }
-
-  if (url.pathname === "/event" && request.method === "OPTIONS") {
-    return addCorsHeaders(new Response(null, { status: 204 }), request);
-  }
-
-  if (url.pathname === "/event" && request.method === "POST") {
-    let payload: unknown = null;
-
-    try {
-      payload = await request.json();
-    } catch {
-      return addCorsHeaders(jsonResponse({ ok: false, error: "Invalid JSON payload" }, 400), request);
-    }
-
-    const eventRecord = {
-      receivedAt: new Date().toISOString(),
-      source: "edge-event-endpoint",
-      payload
-    };
-
-    edgeWebhookLog.unshift(eventRecord);
-    edgeShadowComparisons.unshift({
-      type: "synapse_only",
-      comparedAt: eventRecord.receivedAt,
-      score: 100,
-      payload
-    });
-
-    if (edgeWebhookLog.length > 500) {
-      edgeWebhookLog.length = 500;
-    }
-
-    if (edgeShadowComparisons.length > 500) {
-      edgeShadowComparisons.length = 500;
-    }
-
-    edgeEventsGenerated += 1;
-
-    return addCorsHeaders(
-      jsonResponse({ ok: true, accepted: true, eventId: edgeEventsGenerated, receivedAt: eventRecord.receivedAt }),
-      request
+      202
     );
   }
-
-  if (request.method === "POST" && url.pathname === "/compare/elevar") {
-    let payload: unknown = null;
-    try {
-      payload = await request.json();
-    } catch {
-      return jsonResponse({ ok: false, error: "Invalid Elevar baseline payload" }, 400);
-    }
-
-    const record = {
-      type: "matched",
-      comparedAt: new Date().toISOString(),
-      score: 100,
-      payload
-    };
-    edgeShadowComparisons.unshift(record);
-    if (edgeShadowComparisons.length > 500) {
-      edgeShadowComparisons.length = 500;
-    }
-
-    return jsonResponse({
+  if (pathname === "/compare/summary" && request.method === "GET") {
+    return json({
       ok: true,
-      status: "baseline_received",
-      runtime_mode: "edge",
-      key: `edge-${Date.now()}`,
-      event_name: (payload as { event_name?: string })?.event_name ?? "unknown",
-      transaction_id: (payload as { transaction_id?: string })?.transaction_id ?? null
-    }, 202);
-  }
-
-  if (request.method === "GET" && url.pathname === "/compare/summary") {
-    return jsonResponse({
-      ok: true,
-      source_of_truth: "edge",
-      runtime_mode: "edge",
-      summary: {
-        counts: getShadowCounts(),
-        mismatches_preview: edgeShadowComparisons.filter((item) => (item as { type?: string }).type === "mismatched").slice(0, 20)
-      }
+      source_of_truth: "d1",
+      runtime_mode: runtimeMode(env),
+      summary: await store.paritySummary()
     });
   }
-
-  if (request.method === "GET" && url.pathname === "/compare/parity") {
-    const counts = getShadowCounts();
-    return jsonResponse({
+  if (pathname === "/compare/parity" && request.method === "GET") {
+    const summary = await store.paritySummary();
+    return json({
       ok: true,
-      source_of_truth: "edge",
-      runtime_mode: "edge",
-      parity: getParityModel(),
-      counts,
-      mismatches_preview: edgeShadowComparisons.filter((item) => (item as { type?: string }).type === "mismatched").slice(0, 20)
+      source_of_truth: "d1",
+      runtime_mode: runtimeMode(env),
+      parity: parityModel(
+        summary.counts,
+        parseNumber(env.SHADOW_COMPARE_MISMATCH_ALERT_PCT, 5)
+      ),
+      counts: summary.counts,
+      mismatches_preview: summary.mismatches_preview
     });
   }
-
-  if (request.method === "POST" && url.pathname === "/compare/channel-event") {
-    let payload: Record<string, unknown> | null = null;
-    try {
-      payload = (await request.json()) as Record<string, unknown>;
-    } catch {
-      return jsonResponse({ ok: false, error: "Invalid channel event payload" }, 400);
+  if (
+    pathname === "/compare/channel-event" &&
+    request.method === "POST"
+  ) {
+    const parsed = await parseJsonBody(request, 65_536);
+    if (parsed instanceof Response) {
+      return parsed;
     }
-
-    edgeChannelEvents.unshift({ ...payload, observed_at: (payload.observed_at as string | undefined) ?? new Date().toISOString() });
-    if (edgeChannelEvents.length > 500) {
-      edgeChannelEvents.length = 500;
+    const body = asRecord(parsed.payload);
+    const channel = stringValue(body.channel);
+    const surface = stringValue(body.surface);
+    const destination = stringValue(body.destination);
+    const eventName = stringValue(body.event_name);
+    const status = stringValue(body.status);
+    if (
+      !channel ||
+      !surface ||
+      !destination ||
+      !eventName ||
+      (status !== "ok" && status !== "error")
+    ) {
+      return json({ ok: false, error: "Invalid channel event" }, 400);
     }
-
-    return jsonResponse({ ok: true, status: "channel_event_recorded", item: edgeChannelEvents[0] }, 202);
+    await store.recordChannel({
+      channel,
+      surface,
+      destination,
+      pixelId: stringValue(body.pixel_id),
+      eventName,
+      transactionId: stringValue(body.transaction_id),
+      status,
+      errorMessage: stringValue(body.error_message),
+      observedAt:
+        stringValue(body.observed_at) ?? new Date().toISOString()
+    });
+    return json({ ok: true, status: "channel_event_recorded" }, 202);
   }
-
-  if (request.method === "POST" && url.pathname === "/compare/channel-event/batch") {
-    let body: { events?: Array<Record<string, unknown>> } | null = null;
-    try {
-      body = (await request.json()) as { events?: Array<Record<string, unknown>> };
-    } catch {
-      return jsonResponse({ ok: false, error: "Invalid channel event payload" }, 400);
-    }
-
-    const events = Array.isArray(body?.events) ? body.events : [];
-    if (events.length === 0) {
-      return jsonResponse({ ok: false, error: "events array is required" }, 400);
-    }
-
-    const accepted: Array<Record<string, unknown>> = [];
-    for (const event of events) {
-      const item = { ...event, observed_at: (event.observed_at as string | undefined) ?? new Date().toISOString() };
-      edgeChannelEvents.unshift(item);
-      accepted.push(item);
-    }
-
-    if (edgeChannelEvents.length > 500) {
-      edgeChannelEvents.length = 500;
-    }
-
-    return jsonResponse({
+  if (pathname === "/compare/channels" && request.method === "GET") {
+    return json({
       ok: true,
-      status: "channel_events_recorded",
-      counts: {
-        received: events.length,
-        accepted: accepted.length,
-        rejected: 0
-      },
-      accepted,
-      rejected: []
-    }, 202);
-  }
-
-  if (request.method === "GET" && url.pathname === "/compare/channels") {
-    return jsonResponse({
-      ok: true,
-      runtime_mode: "edge",
-      summary: getChannelSummary()
+      runtime_mode: runtimeMode(env),
+      summary: await store.channelSummary(
+        parsePositiveInt(env.CHANNEL_HEALTH_STALE_MINUTES, 90),
+        parseNumber(env.CHANNEL_HEALTH_WARN_FAILURE_PCT, 5)
+      )
     });
   }
-
-  if (request.method === "GET" && url.pathname === "/compare/troubleshoot") {
-    const summary = getChannelSummary();
-    const issues = summary.channels
-      .filter((channel) => channel.status === "warning")
-      .map((channel) => ({
-        channel: channel.channel,
-        severity: "warning",
-        detail: `High failure rate (${channel.failure_rate_pct}%)`
-      }));
-
-    return jsonResponse({
+  if (pathname === "/compare/recent" && request.method === "GET") {
+    const events = await store.comparisons(
+      clampLimit(new URL(request.url).searchParams.get("limit"))
+    );
+    return json({
       ok: true,
-      issues,
-      links: [
-        { label: "Event Ingestion", href: "/event" },
-        { label: "Parity Overview", href: "/compare/parity" },
-        { label: "Runtime Summary", href: "/runtime/summary" }
-      ]
-    });
-  }
-
-  if (request.method === "GET" && url.pathname === "/compare/ui-model") {
-    const limit = parseLimit(url.searchParams.get("limit"), 100);
-    const channelSummary = getChannelSummary();
-
-    return jsonResponse({
-      ok: true,
-      source_of_truth: "edge",
-      runtime_mode: "edge",
-      parity: getParityModel(),
-      parity_counts: getShadowCounts(),
-      parity_mismatches_preview: edgeShadowComparisons.filter((item) => (item as { type?: string }).type === "mismatched").slice(0, 20),
-      channels: channelSummary,
-      troubleshooting: {
-        issues: channelSummary.channels
-          .filter((channel) => channel.status === "warning")
-          .map((channel) => ({ channel: channel.channel, severity: "warning" })),
-        links: [
-          { label: "Parity", href: "/compare/parity" },
-          { label: "Channels", href: "/compare/channels" }
-        ]
-      },
-      launch_readiness: {
-        status: getParityModel().status === "ok" ? "go" : "hold",
-        rationale: getParityModel().status === "ok" ? ["Parity within threshold"] : ["Parity alert active"]
-      },
-      recent: {
-        shadow_events: edgeShadowComparisons.slice(0, limit),
-        channel_events: edgeChannelEvents.slice(0, limit)
-      }
-    });
-  }
-
-  if (request.method === "GET" && url.pathname === "/compare/recent") {
-    const limit = parseLimit(url.searchParams.get("limit"), 100);
-    const events = edgeShadowComparisons.slice(0, limit);
-
-    return jsonResponse({
-      ok: true,
-      runtime_mode: "edge",
+      runtime_mode: runtimeMode(env),
       count: events.length,
       events
     });
   }
-
-  if (request.method === "GET" && url.pathname === "/launch/readiness") {
-    const parity = getParityModel();
-    return jsonResponse({
+  if (pathname === "/compare/ui-model" && request.method === "GET") {
+    const readiness = await buildReadiness(env);
+    const comparisons = await store.comparisons(100);
+    return json({
       ok: true,
-      source_of_truth: "edge",
-      runtime_mode: "edge",
-      report: {
-        status: parity.status === "ok" ? "go" : "hold",
-        parity,
-        counts: getShadowCounts(),
-        generated_at: new Date().toISOString(),
-        actions: parity.status === "ok" ? [] : ["Review /compare/parity mismatches"]
-      }
+      source_of_truth: "d1",
+      runtime_mode: runtimeMode(env),
+      parity: readiness.parity,
+      parity_counts: readiness.counts,
+      parity_mismatches_preview: comparisons.filter(
+        (item) => item.type === "mismatched"
+      ),
+      channels: readiness.channels,
+      launch_readiness: readiness,
+      recent: { shadow_events: comparisons }
     });
   }
+  return null;
+}
 
-  if (request.method === "POST" && url.pathname.startsWith("/webhooks/")) {
-    let payload: unknown = null;
-    try {
-      payload = await request.json();
-    } catch {
-      return jsonResponse({ ok: false, error: "Invalid webhook payload" }, 400);
-    }
+async function handleNative(
+  request: Request,
+  env: SynapseEnv
+): Promise<Response | null> {
+  const url = new URL(request.url);
+  const path = url.pathname;
+  const store = createStore(env);
 
-    edgeWebhookLog.unshift({
-      receivedAt: new Date().toISOString(),
-      source: "edge-webhook",
-      path: url.pathname,
-      payload
-    });
-    if (edgeWebhookLog.length > 500) {
-      edgeWebhookLog.length = 500;
-    }
-
-    return jsonResponse({ ok: true, status: "webhook_received", path: url.pathname }, 202);
+  if (path === "/health" && request.method === "GET") {
+    const dbConnected = await store.ping();
+    return json({
+      ok: dbConnected,
+      service: "gcw-synapse-super-edge",
+      runtime_mode: runtimeMode(env),
+      database: dbConnected ? "connected" : "unavailable"
+    }, dbConnected ? 200 : 503);
   }
 
-  if (request.method === "GET" && url.pathname === "/ops/dead-letter") {
-    return jsonResponse({
+  const compareResponse = await handleCompare(request, env, path);
+  if (compareResponse) {
+    return compareResponse;
+  }
+
+  if (path === "/launch/readiness" && request.method === "GET") {
+    return json({
       ok: true,
-      summary: {
-        total_records: 0,
-        source: "edge-memory"
-      },
-      replay: {
-        dry_run: "not_applicable_edge_mode",
-        execute: "not_applicable_edge_mode",
-        recommended_batch: "not_applicable_edge_mode"
-      }
+      source_of_truth: "d1",
+      runtime_mode: runtimeMode(env),
+      report: await buildReadiness(env)
     });
   }
-
-  if (request.method === "GET" && url.pathname === "/ops/alerts") {
-    const parity = getParityModel();
-    return jsonResponse({
+  if (path === "/api/status" && request.method === "GET") {
+    const [dbConnected, metrics, runtime] = await Promise.all([
+      store.ping(),
+      store.webhookMetrics(),
+      store.runtimeSummary()
+    ]);
+    return json({
+      status: dbConnected ? "ok" : "error",
+      webhooksReceived: metrics.webhooks_received,
+      eventsGenerated:
+        metrics.webhooks_shadow_captured +
+        metrics.webhooks_forwarded +
+        runtime.accepted,
+      dbConnected,
+      uptime: Math.max(1, Math.floor((Date.now() - workerStartedAt) / 1000)),
+      runtimeMode: runtimeMode(env),
+      vendorAdapters: getControlPanelVendors()
+    });
+  }
+  if (path === "/runtime/summary" && request.method === "GET") {
+    return json({ ok: true, telemetry: await store.runtimeSummary() });
+  }
+  if (path === "/runtime/recent" && request.method === "GET") {
+    return json({
       ok: true,
-      status: parity.status === "ok" ? "ok" : "warning",
-      generated_at: new Date().toISOString(),
-      alerts: parity.status === "ok" ? [] : [{ severity: "warning", message: "Parity mismatch rate above threshold" }],
-      quick_actions: ["GET /runtime/summary", "GET /compare/parity", "GET /ops/dead-letter"]
+      events: await store.listRuntime(clampLimit(url.searchParams.get("limit")))
     });
   }
-
-  if (request.method === "GET" && url.pathname === "/ops/dashboard") {
-    return jsonResponse({
-      ok: true,
-      generated_at: new Date().toISOString(),
-      status: getParityModel().status === "ok" ? "ok" : "warning",
-      alerts: [],
-      runtime: {
-        received: edgeWebhookLog.length,
-        forwarded: edgeEventsGenerated,
-        suppressed: edgeEventsSuppressed
-      },
-      parity: getParityModel(),
-      channels: getChannelSummary(),
-      dead_letter: {
-        total_records: 0
-      },
-      metrics: {
-        webhooks_received: edgeWebhookLog.length,
-        runtime_events_forwarded: edgeEventsGenerated,
-        runtime_events_suppressed: edgeEventsSuppressed
-      },
-      next_actions: ["If parity is alert, review /compare/parity mismatches."]
-    });
+  if (path === "/api/webhooks/log" && request.method === "GET") {
+    return json(
+      await store.listWebhooks(clampLimit(url.searchParams.get("limit"), 50))
+    );
   }
-
-  if (request.method === "GET" && url.pathname === "/ops/shopify-app") {
-    return jsonResponse({
-      ok: true,
-      app: {
-        configured: true,
-        api_key_present: false,
-        app_url: null,
-        scopes: []
-      }
-    });
+  if (path === "/api/shadow/comparisons" && request.method === "GET") {
+    return json(
+      await store.comparisons(clampLimit(url.searchParams.get("limit"), 50))
+    );
   }
-
-  if (request.method === "GET" && url.pathname === "/api/events/schemas") {
-    return jsonResponse(getControlPanelSchemas());
-  }
-
-  if (request.method === "GET" && url.pathname === "/api/webhooks/log") {
-    const limit = Number.parseInt(url.searchParams.get("limit") ?? "50", 10);
-    const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(limit, 500)) : 50;
-    return jsonResponse(edgeWebhookLog.slice(0, safeLimit));
-  }
-
-  if (request.method === "GET" && url.pathname === "/api/shadow/stats") {
-    return jsonResponse({
-      totalComparisons: edgeShadowComparisons.length,
-      avgMatchScore: 100,
+  if (path === "/api/shadow/stats" && request.method === "GET") {
+    const comparisons = await store.comparisons(5000);
+    const counts = await store.paritySummary();
+    const paired = comparisons.filter(
+      (item) => item.type === "matched" || item.type === "mismatched"
+    );
+    const average =
+      paired.length > 0
+        ? paired.reduce((sum, item) => sum + item.score, 0) / paired.length
+        : 0;
+    return json({
+      totalComparisons: paired.length,
+      avgMatchScore: Number(average.toFixed(2)),
       eventBreakdown: [
-        { event: "paired", count: edgeShadowComparisons.length },
-        { event: "matched", count: edgeShadowComparisons.length },
-        { event: "mismatched", count: 0 },
-        { event: "synapse_only", count: 0 },
-        { event: "elevar_only", count: 0 }
+        { event: "paired", count: counts.counts.paired_events },
+        { event: "matched", count: counts.counts.matched_pairs },
+        { event: "mismatched", count: counts.counts.mismatched_pairs },
+        { event: "synapse_only", count: counts.counts.synapse_only },
+        { event: "elevar_only", count: counts.counts.elevar_only }
       ]
     });
   }
-
-  if (request.method === "GET" && url.pathname === "/api/shadow/comparisons") {
-    const limit = Number.parseInt(url.searchParams.get("limit") ?? "50", 10);
-    const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(limit, 500)) : 50;
-    return jsonResponse(edgeShadowComparisons.slice(0, safeLimit));
+  if (path === "/api/events/schemas" && request.method === "GET") {
+    return json(getControlPanelSchemas());
   }
-
-  if (request.method === "GET" && url.pathname === "/api/qa/checklist") {
-    return jsonResponse(getControlPanelChecklist());
+  if (path === "/api/vendors/matrix" && request.method === "GET") {
+    return json(getControlPanelVendors());
   }
-
-  if ((request.method === "GET" || request.method === "POST") && url.pathname === "/api/qa/smoke") {
-    const smoke = await runEdgeQaSmoke();
-    return jsonResponse({
-      ...smoke,
-      status: smoke.failed > 0 ? "warning" : "ok",
-      runAt: new Date().toISOString()
+  if (path === "/api/qa/checklist" && request.method === "GET") {
+    const readiness = await buildReadiness(env);
+    const statuses = new Map(
+      readiness.checks.map((check) => [check.id, check.status])
+    );
+    return json(
+      getControlPanelChecklist().map((item) => ({
+        ...item,
+        status:
+          statuses.get(item.id) ??
+          (readiness.status === "go" ? "pass" : item.status)
+      }))
+    );
+  }
+  if (path === "/api/qa/smoke" && request.method === "POST") {
+    const started = Date.now();
+    const readiness = await buildReadiness(env);
+    const results = [
+      {
+        name: "D1 persistence connected",
+        passed: readiness.checks.find((item) => item.id === "database")?.status === "pass",
+        durationMs: Date.now() - started,
+        error: null,
+        detail: {}
+      },
+      {
+        name: "Launch gate is truthful",
+        passed:
+          readiness.counts.paired_events > 0
+            ? true
+            : readiness.status === "hold",
+        durationMs: Date.now() - started,
+        error: null,
+        detail: { paired_events: readiness.counts.paired_events }
+      }
+    ];
+    return json({
+      status: results.every((item) => item.passed) ? "ok" : "warning",
+      runAt: new Date().toISOString(),
+      passed: results.filter((item) => item.passed).length,
+      failed: results.filter((item) => !item.passed).length,
+      total: results.length,
+      results
     });
   }
-
-  if (request.method === "GET" && url.pathname === "/api/vendors/matrix") {
-    return jsonResponse(getControlPanelVendors());
+  if (path === "/ops/dead-letter" && request.method === "GET") {
+    return json({
+      ok: true,
+      summary: await store.deadLetterSummary(),
+      replay: { status: "not_enabled_in_shadow_compare" }
+    });
   }
-
-  if (request.method === "GET" && url.pathname === "/ops/shopify-install-status") {
-    return jsonResponse({
+  if (path === "/ops/shopify-install-status" && request.method === "GET") {
+    return json({
       status: {
-        installed_shops: ["gcw-dev.myshopify.com", "gerberchildrenswear.myshopify.com"],
-        store_path: "cloudflare-worker-edge"
+        installed_shops: await store.installedShops(),
+        store_path: "cloudflare-d1-webhook-evidence"
       }
     });
   }
-
-  if (url.pathname.startsWith("/auth/") || url.pathname.startsWith("/compatibility/")) {
-    return jsonResponse(
+  if (path === "/ops/shopify-app" && request.method === "GET") {
+    return json({
+      ok: true,
+      app: {
+        configured: Boolean(env.SHOPIFY_WEBHOOK_SECRET),
+        shop_domain: env.SHOPIFY_SHOP_DOMAIN ?? "gcw-dev.myshopify.com",
+        webhook_verification: env.SHOPIFY_WEBHOOK_SECRET
+          ? "required"
+          : "unavailable"
+      }
+    });
+  }
+  if (path === "/ops/alerts" && request.method === "GET") {
+    const readiness = await buildReadiness(env);
+    return json({
+      ok: true,
+      status: readiness.status === "go" ? "ok" : "warning",
+      generated_at: new Date().toISOString(),
+      alerts: readiness.checks
+        .filter((item) => item.status === "fail")
+        .map((item) => ({
+          severity: "warning",
+          title: item.title,
+          message: `${item.value}; target ${item.target}`,
+          action: item.recommendation
+        }))
+    });
+  }
+  if (path === "/api/advisor/alerts" && request.method === "GET") {
+    const readiness = await buildReadiness(env);
+    return json({
+      alerts: readiness.checks
+        .filter((item) => item.status === "fail")
+        .map((item) => ({
+          severity: "warning",
+          title: item.title,
+          message: `${item.value}; target ${item.target}`,
+          action: item.recommendation
+        }))
+    });
+  }
+  if (path === "/api/advisor/chat" && request.method === "POST") {
+    const readiness = await buildReadiness(env);
+    return json({
+      answer:
+        readiness.status === "go"
+          ? "Validation gates are green. Review the cutover checklist before changing forward mode."
+          : `Synapse is correctly holding launch. ${readiness.actions.join(" ")}`,
+      model: "deterministic-readiness-advisor",
+      fallback_used: false,
+      local_ai_enabled: false,
+      used_tools: ["d1-readiness", "parity", "webhook-health"],
+      alerts: readiness.checks
+        .filter((item) => item.status === "fail")
+        .map((item) => ({
+          severity: "warning",
+          title: item.title,
+          message: `${item.value}; target ${item.target}`,
+          action: item.recommendation
+        }))
+    });
+  }
+  if (path === "/ops/dashboard" && request.method === "GET") {
+    const readiness = await buildReadiness(env);
+    return json({
+      ok: true,
+      status: readiness.status,
+      generated_at: new Date().toISOString(),
+      readiness,
+      dead_letter: await store.deadLetterSummary()
+    });
+  }
+  if (
+    (path.startsWith("/auth/") || path.startsWith("/compatibility/")) &&
+    !env.SYNAPSE_ORIGIN_URL
+  ) {
+    return json(
       {
         ok: false,
-        error: "This route is not enabled in edge-only mode",
+        error: "This route requires the optional Synapse origin",
         mode: "edge-only"
       },
       501
     );
   }
-
   return null;
 }
 
-async function serveAsset(request: Request, env: CloudflareEnv): Promise<Response> {
+async function proxy(request: Request, env: SynapseEnv): Promise<Response> {
+  if (!env.SYNAPSE_ORIGIN_URL) {
+    return json({ ok: false, error: "Synapse origin is not configured" }, 501);
+  }
+  const incoming = new URL(request.url);
+  const target = new URL(
+    `${incoming.pathname}${incoming.search}`,
+    env.SYNAPSE_ORIGIN_URL
+  );
+  const headers = new Headers(request.headers);
+  headers.delete("host");
+  headers.delete("cf-connecting-ip");
+  if (env.SYNAPSE_INGRESS_TOKEN) {
+    headers.set("X-Synapse-Token", env.SYNAPSE_INGRESS_TOKEN);
+  }
+  return fetch(target, {
+    method: request.method,
+    headers,
+    body:
+      request.method === "GET" || request.method === "HEAD"
+        ? undefined
+        : request.body,
+    redirect: "manual"
+  });
+}
+
+async function asset(request: Request, env: SynapseEnv): Promise<Response> {
   const response = await env.ASSETS.fetch(request);
-
   if (response.status !== 404) {
-    return addSecurityHeaders(response);
+    return response;
   }
-
   const url = new URL(request.url);
-  const acceptsHtml = (request.headers.get("accept") ?? "").includes("text/html");
-
-  if (!acceptsHtml || url.pathname.includes(".")) {
-    return addSecurityHeaders(response);
+  if (!(request.headers.get("accept") ?? "").includes("text/html") || url.pathname.includes(".")) {
+    return response;
   }
-
-  const spaRequest = new Request(new URL("/index.html", url.origin).toString(), request);
-  const spaResponse = await env.ASSETS.fetch(spaRequest);
-  return addSecurityHeaders(spaResponse);
+  return env.ASSETS.fetch(
+    new Request(new URL("/index.html", url.origin).toString(), request)
+  );
 }
 
 export default {
-  async fetch(request: Request, env: CloudflareEnv): Promise<Response> {
-    const url = new URL(request.url);
+  async fetch(request: Request, env: SynapseEnv): Promise<Response> {
+    try {
+      const url = new URL(request.url);
+      const path = url.pathname;
 
-    if (isInternalRoute(url.pathname) && !isInternalRouteExempt(url.pathname, request.method)) {
-      const expectedToken = env.SYNAPSE_INGRESS_TOKEN;
-      const providedToken = request.headers.get("X-Synapse-Token");
-
-      if (expectedToken && providedToken !== expectedToken) {
-        return addSecurityHeaders(jsonResponse({ ok: false, error: "Unauthorized" }, 401));
+      if (path === "/event" && (request.method === "POST" || request.method === "OPTIONS")) {
+        return securityHeaders(await handlePublicEvent(request, env));
       }
-    }
-
-    if (url.pathname === "/event" && request.method === "OPTIONS") {
-      const origin = request.headers.get("origin");
-      const allowedOrigins = parseAllowedOrigins(env.PUBLIC_EVENT_ALLOWED_ORIGINS);
-
-      if (!origin || !isAllowedOrigin(origin, allowedOrigins)) {
-        return addSecurityHeaders(jsonResponse({ ok: false, error: "Origin not allowed" }, 403));
+      if (request.method === "POST" && WEBHOOK_TOPICS[path]) {
+        return securityHeaders(await handleShopifyWebhook(request, env, path));
       }
 
-      return addSecurityHeaders(addCorsHeaders(new Response(null, { status: 204 }), request, origin));
-    }
-
-    if (url.pathname === "/event" && request.method === "POST") {
-      const allowedOrigins = parseAllowedOrigins(env.PUBLIC_EVENT_ALLOWED_ORIGINS);
-      const origin = request.headers.get("origin");
-      if (!origin || !isAllowedOrigin(origin, allowedOrigins)) {
-        return addSecurityHeaders(addCorsHeaders(jsonResponse({ ok: false, error: "Origin not allowed" }, 403), request, origin ?? undefined));
+      const unauthorized = await authorizeInternal(request, env, path);
+      if (unauthorized) {
+        return securityHeaders(unauthorized);
       }
 
-      const rate = checkEventRateLimit(request, env);
-      if (!rate.allowed) {
-        return addSecurityHeaders(
-          addCorsHeaders(
-            jsonResponse({ ok: false, error: "Rate limit exceeded" }, 429),
-            request,
-            origin
-          )
-        );
+      const native = await handleNative(request, env);
+      if (native) {
+        return securityHeaders(native);
       }
-
-      const maxBodyBytes = parsePositiveInt(env.PUBLIC_EVENT_MAX_BODY_BYTES, 16_384);
-      const contentLengthRaw = request.headers.get("content-length");
-      if (contentLengthRaw) {
-        const contentLength = Number.parseInt(contentLengthRaw, 10);
-        if (Number.isFinite(contentLength) && contentLength > maxBodyBytes) {
-          return addSecurityHeaders(addCorsHeaders(jsonResponse({ ok: false, error: "Payload too large" }, 413), request, origin));
-        }
+      if (PROXY_PREFIXES.some((prefix) => path.startsWith(prefix))) {
+        return securityHeaders(await proxy(request, env));
       }
-
-      const rawBody = await request.text();
-      const rawBodyBytes = new TextEncoder().encode(rawBody).byteLength;
-      if (rawBodyBytes > maxBodyBytes) {
-        return addSecurityHeaders(addCorsHeaders(jsonResponse({ ok: false, error: "Payload too large" }, 413), request, origin));
-      }
-
-      let payload: unknown = null;
-      try {
-        payload = JSON.parse(rawBody);
-      } catch {
-        return addSecurityHeaders(addCorsHeaders(jsonResponse({ ok: false, error: "Invalid JSON payload" }, 400), request, origin));
-      }
-
-      const eventRecord = {
-        receivedAt: new Date().toISOString(),
-        source: "edge-event-endpoint",
-        payload
-      };
-
-      edgeWebhookLog.unshift(eventRecord);
-      edgeShadowComparisons.unshift({
-        type: "synapse_only",
-        comparedAt: eventRecord.receivedAt,
-        score: 100,
-        payload
-      });
-
-      if (edgeWebhookLog.length > 500) {
-        edgeWebhookLog.length = 500;
-      }
-
-      if (edgeShadowComparisons.length > 500) {
-        edgeShadowComparisons.length = 500;
-      }
-
-      edgeEventsGenerated += 1;
-
-      return addSecurityHeaders(
-        addCorsHeaders(
-          jsonResponse({ ok: true, accepted: true, eventId: edgeEventsGenerated, receivedAt: eventRecord.receivedAt }),
-          request,
-          origin
-        )
+      return securityHeaders(await asset(request, env));
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          event: "worker_request_failed",
+          error: error instanceof Error ? error.message : String(error)
+        })
+      );
+      return securityHeaders(
+        json({ ok: false, error: "Internal server error" }, 500)
       );
     }
+  },
 
-    const native = await handleNativeApi(request);
-    if (native) {
-      return addSecurityHeaders(native);
-    }
-
-    if (shouldProxy(url.pathname)) {
-      return proxyRequest(request, env);
-    }
-
-    return serveAsset(request, env);
+  async scheduled(
+    _controller: ScheduledController,
+    env: SynapseEnv,
+    _ctx: ExecutionContext
+  ): Promise<void> {
+    const now = Date.now();
+    await createStore(env).pruneExpired(now);
+    await env.DB.batch([
+      env.DB
+        .prepare("DELETE FROM runtime_telemetry WHERE recorded_at < ?1")
+        .bind(new Date(now - 14 * 86_400_000).toISOString()),
+      env.DB
+        .prepare("DELETE FROM channel_events WHERE observed_at < ?1")
+        .bind(new Date(now - 30 * 86_400_000).toISOString()),
+      env.DB
+        .prepare("DELETE FROM observations WHERE observed_at < ?1")
+        .bind(new Date(now - 45 * 86_400_000).toISOString()),
+      env.DB
+        .prepare("DELETE FROM webhook_receipts WHERE received_at < ?1")
+        .bind(new Date(now - 90 * 86_400_000).toISOString())
+    ]);
   }
 };
+
+export { buildReadiness };
+export type { ComparisonRecord };

@@ -4,7 +4,36 @@ export type RuntimeStatus = {
   eventsGenerated: number;
   dbConnected: boolean;
   uptime: number;
+  runtimeMode?: string;
   vendorAdapters: Array<{ name: string; enabled: boolean }>;
+};
+
+export type ReadinessCheck = {
+  id: string;
+  title: string;
+  status: "pass" | "fail";
+  value: string;
+  target: string;
+  recommendation: string;
+};
+
+export type LaunchReadiness = {
+  status: "go" | "hold";
+  phase: "validation" | "cutover";
+  summary: {
+    checks_passed: number;
+    checks_failed: number;
+  };
+  checks: ReadinessCheck[];
+  counts: {
+    paired_events: number;
+    matched_pairs: number;
+    mismatched_pairs: number;
+    synapse_only: number;
+    elevar_only: number;
+  };
+  actions: string[];
+  generated_at: string;
 };
 
 export type EventSchema = {
@@ -153,6 +182,11 @@ async function requestJson<T>(path: string, method: "GET" | "POST", body?: unkno
 
 export async function getRuntimeStatus(): Promise<RuntimeStatus> {
   return request<RuntimeStatus>("/api/status");
+}
+
+export async function getLaunchReadiness(): Promise<LaunchReadiness> {
+  const data = await request<{ report: LaunchReadiness }>("/launch/readiness");
+  return data.report;
 }
 
 export async function getEventSchemas(): Promise<EventSchema[]> {
