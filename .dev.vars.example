@@ -1,5 +1,9 @@
-# Local wrangler dev variables for cloudflare/worker.ts
-# Copy this file to .dev.vars and set real values.
+# Local wrangler dev secrets for cloudflare/worker.ts.
+# Copy this file to .dev.vars. Never commit .dev.vars.
 
-SYNAPSE_ORIGIN_URL=https://your-synapse-origin.example.com
-# SYNAPSE_INGRESS_TOKEN=replace_with_real_token
+SYNAPSE_INGRESS_TOKEN=replace_with_random_internal_api_token
+SYNAPSE_WRITE_SHARED_SECRET=replace_with_random_elevar_ingest_secret
+SHOPIFY_WEBHOOK_SECRET=replace_with_gcw_dev_app_client_secret
+
+# Optional legacy origin proxy:
+# SYNAPSE_ORIGIN_URL=https://your-synapse-origin.example.com

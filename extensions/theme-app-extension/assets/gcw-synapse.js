@@ -49,7 +49,14 @@
   }
 
   function randomId(prefix) {
-    return prefix + "_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+    if (window.crypto && typeof window.crypto.randomUUID === "function") {
+      return prefix + "_" + window.crypto.randomUUID();
+    }
+    var bytes = new Uint8Array(16);
+    window.crypto.getRandomValues(bytes);
+    return prefix + "_" + Array.from(bytes, function (byte) {
+      return byte.toString(16).padStart(2, "0");
+    }).join("");
   }
 
   function detectTheme() {

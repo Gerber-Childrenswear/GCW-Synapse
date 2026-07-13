@@ -131,10 +131,13 @@ async function secretsEqual(
   if (!actual || !expected) {
     return false;
   }
-  const [actualHash, expectedHash] = await Promise.all(
-    [actual, expected].map((value) =>
-      crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))
-    )
+  const actualHash = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(actual)
+  );
+  const expectedHash = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(expected)
   );
   const left = new Uint8Array(actualHash);
   const right = new Uint8Array(expectedHash);
@@ -484,8 +487,8 @@ async function handleShopifyWebhook(
     (await deterministicEventId([
       receipt.shop,
       receipt.topic,
-      body.order_number ?? body.order_id,
-      body.name ?? body.order_name
+      stringValue(body.order_number ?? body.order_id),
+      stringValue(body.name ?? body.order_name)
     ]));
   let payload: SynapseEventPayload;
   try {
@@ -1091,15 +1094,15 @@ async function proxy(request: Request, env: SynapseEnv): Promise<Response> {
   if (env.SYNAPSE_INGRESS_TOKEN) {
     headers.set("X-Synapse-Token", env.SYNAPSE_INGRESS_TOKEN);
   }
-  return fetch(target, {
+  const init: RequestInit = {
     method: request.method,
     headers,
-    body:
-      request.method === "GET" || request.method === "HEAD"
-        ? undefined
-        : request.body,
     redirect: "manual"
-  });
+  };
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    init.body = request.body;
+  }
+  return fetch(target, init);
 }
 
 async function asset(request: Request, env: SynapseEnv): Promise<Response> {

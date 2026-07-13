@@ -5,7 +5,7 @@
 
 name = "GCW Synapse"
 client_id = "7d011b70562512bd84b85bd3f9a6e68d"
-application_url = "https://gcw-synapse-super.gcw-synapse.workers.dev"
+application_url = "https://gcw-synapse-super.gcwsynapse.workers.dev"
 embedded = true
 
 [access_scopes]
@@ -13,8 +13,23 @@ scopes = "read_products,read_orders,read_themes"
 
 [auth]
 redirect_urls = [
-  "https://gcw-synapse-super.gcw-synapse.workers.dev/auth/shopify/callback"
+  "https://gcw-synapse-super.gcwsynapse.workers.dev/auth/shopify/callback"
 ]
+
+[webhooks]
+api_version = "2026-07"
+
+[[webhooks.subscriptions]]
+topics = ["orders/create"]
+uri = "/webhooks/shopify/orders/create"
+
+[[webhooks.subscriptions]]
+topics = ["orders/paid"]
+uri = "/webhooks/shopify/orders/paid"
+
+[[webhooks.subscriptions]]
+topics = ["refunds/create"]
+uri = "/webhooks/shopify/refunds/create"
 
 [build]
 automatically_update_urls_on_dev = true

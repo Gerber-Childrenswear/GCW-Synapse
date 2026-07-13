@@ -2,7 +2,7 @@
 (function () {
   "use strict";
 
-  var endpoint = "https://gcw-synapse-super.gcw-synapse.workers.dev/event";
+  var endpoint = "https://gcw-synapse-super.gcwsynapse.workers.dev/event";
   var ingressToken = "";
   var dedupeTtlMs = 1200;
   var lastSentByKey = {};
@@ -22,7 +22,14 @@
   };
 
   function randomId(prefix) {
-    return prefix + "_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return prefix + "_" + crypto.randomUUID();
+    }
+    var bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    return prefix + "_" + Array.from(bytes, function (byte) {
+      return byte.toString(16).padStart(2, "0");
+    }).join("");
   }
 
   function destinationHints(eventName) {

@@ -196,8 +196,12 @@ Files:
 Required configuration:
 
 - No required origin for edge-only mode.
+- D1 binding `DB` persists webhook receipts, dedupe claims, normalized
+  Synapse/Elevar observations, channel telemetry, and dead letters.
 - Optional origin for legacy passthrough routes: `SYNAPSE_ORIGIN_URL` (in `wrangler.toml` vars or environment)
-- Optional Worker secret for passthrough mode: `SYNAPSE_INGRESS_TOKEN`
+- Required internal API secret: `SYNAPSE_INGRESS_TOKEN`
+- Required Elevar baseline write secret: `SYNAPSE_WRITE_SHARED_SECRET`
+- Required gcw-dev webhook signing secret: `SHOPIFY_WEBHOOK_SECRET`
 - Public event origin allowlist: `PUBLIC_EVENT_ALLOWED_ORIGINS` (comma-separated)
 - Public event payload cap in bytes: `PUBLIC_EVENT_MAX_BODY_BYTES`
 - Public event per-IP rate cap per minute: `PUBLIC_EVENT_RATE_LIMIT_PER_MINUTE`
@@ -205,15 +209,19 @@ Required configuration:
 Commands:
 
 ```bash
+npx wrangler d1 migrations apply synapse-db --local
 npm run cf:build
 npm run cf:dev
+npx wrangler d1 migrations apply synapse-db --remote
 npm run cf:deploy
 ```
 
-Set Worker secret (optional but recommended when origin requires ingress token):
+Set Worker secrets before deployment:
 
 ```bash
 npx wrangler secret put SYNAPSE_INGRESS_TOKEN
+npx wrangler secret put SYNAPSE_WRITE_SHARED_SECRET
+npx wrangler secret put SHOPIFY_WEBHOOK_SECRET
 ```
 
 Notes:
@@ -221,7 +229,11 @@ Notes:
 - Native edge endpoints include `/health`, `/event`, `/runtime/*`, `/compare/*`, `/launch/readiness`, `/webhooks/*`, `/ops/*`, `/api/status`, `/api/events/schemas`, `/api/qa/checklist`, `/api/qa/smoke`, `/api/shadow/stats`, `/api/shadow/comparisons`, and `/api/vendors/matrix`.
 - In edge-only mode, `/auth/*` and `/compatibility/*` return `501` to avoid hidden dependencies on external backends.
 - SPA routes are supported by serving `index.html` fallback for non-file paths.
-- For free-tier efficiency, non-public internal routes should be accessed with `X-Synapse-Token` when `SYNAPSE_INGRESS_TOKEN` is configured.
+- Internal routes fail closed unless `SYNAPSE_INGRESS_TOKEN` is configured
+  and supplied through `X-Synapse-Token`.
+- `/compare/elevar` additionally requires `SYNAPSE_WRITE_SHARED_SECRET`.
+- Validation remains `hold` until real paired events, topic freshness, channel
+  telemetry, webhook health, and D1 health all pass.
 
 ## Tests
 
