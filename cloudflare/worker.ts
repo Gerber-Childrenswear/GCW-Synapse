@@ -434,7 +434,13 @@ async function handleShopifyOAuth(
     authorize.searchParams.set("scope", scopes);
     authorize.searchParams.set("redirect_uri", `${appOrigin}/auth/shopify/callback`);
     authorize.searchParams.set("state", state);
-    return Response.redirect(authorize.toString(), 302);
+    return new Response(null, {
+      status: 302,
+      headers: {
+        Location: authorize.toString(),
+        "Cache-Control": "no-store"
+      }
+    });
   }
 
   // callback
@@ -1181,18 +1187,19 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
     });
   }
 
-  if (url.pathname.startsWith("/compatibility/")) {
+  // Shopify OAuth is handled in fetch() via handleShopifyOAuth before this runs.
+  if (url.pathname.startsWith("/auth/shopify/")) {
     return jsonResponse(
       {
         ok: false,
-        error: "This route is not enabled in edge-only mode",
-        mode: "edge-only"
+        error: "Shopify OAuth handler did not run",
+        mode: "edge"
       },
-      501
+      500
     );
   }
 
-  if (url.pathname.startsWith("/auth/") && !url.pathname.startsWith("/auth/shopify/")) {
+  if (url.pathname.startsWith("/auth/") || url.pathname.startsWith("/compatibility/")) {
     return jsonResponse(
       {
         ok: false,
@@ -1405,9 +1412,26 @@ export default {
       );
     }
 
-    const oauth = await handleShopifyOAuth(request, env, url);
-    if (oauth) {
-      return addSecurityHeaders(oauth);
+    if (url.pathname.startsWith("/auth/shopify/")) {
+      try {
+        const oauth = await handleShopifyOAuth(request, env, url);
+        if (oauth) {
+          return addSecurityHeaders(oauth);
+        }
+        return addSecurityHeaders(
+          jsonResponse({ ok: false, error: "Unsupported Shopify auth route" }, 404)
+        );
+      } catch (error) {
+        return addSecurityHeaders(
+          jsonResponse(
+            {
+              ok: false,
+              error: error instanceof Error ? error.message : "Shopify OAuth failed"
+            },
+            500
+          )
+        );
+      }
     }
 
     const native = await handleNativeApi(request);
