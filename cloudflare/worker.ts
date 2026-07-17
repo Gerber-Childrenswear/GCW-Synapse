@@ -5,7 +5,15 @@ type CloudflareEnv = {
   PUBLIC_EVENT_ALLOWED_ORIGINS?: string;
   PUBLIC_EVENT_MAX_BODY_BYTES?: string;
   PUBLIC_EVENT_RATE_LIMIT_PER_MINUTE?: string;
+  SHOPIFY_API_KEY?: string;
+  SHOPIFY_API_SECRET?: string;
+  SHOPIFY_APP_SCOPES?: string;
 };
+
+const DEFAULT_SHOPIFY_SCOPES =
+  "read_products,read_orders,read_all_orders,read_checkouts,read_customers,read_customer_events,write_pixels,read_themes,read_content,read_discounts,read_price_rules,read_shipping,read_markets,read_locales,read_inventory,read_locations,read_fulfillments";
+
+const SHOP_DOMAIN_PATTERN = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i;
 
 import {
   getControlPanelChecklist,
@@ -168,7 +176,316 @@ function isInternalRouteExempt(pathname: string, method: string): boolean {
     return true;
   }
 
+  // Public Shopify OAuth install/callback (must not require ingress token).
+  if (
+    method === "GET" &&
+    (pathname === "/auth/shopify/install" || pathname === "/auth/shopify/callback")
+  ) {
+    return true;
+  }
+
   return false;
+}
+
+function normalizeShopDomain(shop: string): string {
+  const normalized = shop.trim().toLowerCase();
+  if (!SHOP_DOMAIN_PATTERN.test(normalized)) {
+    throw new Error("Invalid shop domain. Expected format: <shop>.myshopify.com");
+  }
+  return normalized;
+}
+
+function toBase64Url(bytes: ArrayBuffer | Uint8Array): string {
+  const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  let binary = "";
+  for (const b of arr) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function fromBase64Url(value: string): Uint8Array {
+  const padded = value.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((value.length + 3) % 4);
+  const binary = atob(padded);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) out[i] = binary.charCodeAt(i);
+  return out;
+}
+
+async function hmacSha256Hex(secret: string, message: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
+  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function hmacSha256Base64Url(secret: string, message: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
+  return toBase64Url(sig);
+}
+
+async function createOAuthState(shop: string, secret: string): Promise<string> {
+  const payload = JSON.stringify({
+    shop,
+    exp: Date.now() + 10 * 60 * 1000,
+    n: toBase64Url(crypto.getRandomValues(new Uint8Array(12)))
+  });
+  const body = toBase64Url(new TextEncoder().encode(payload));
+  const sig = await hmacSha256Base64Url(secret, body);
+  return `${body}.${sig}`;
+}
+
+async function verifyOAuthState(
+  state: string,
+  secret: string,
+  shop: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const [body, sig] = state.split(".");
+  if (!body || !sig) return { ok: false, error: "Invalid state" };
+  const expected = await hmacSha256Base64Url(secret, body);
+  if (expected !== sig) return { ok: false, error: "Invalid state signature" };
+  try {
+    const payload = JSON.parse(new TextDecoder().decode(fromBase64Url(body))) as {
+      shop?: string;
+      exp?: number;
+    };
+    if (!payload.shop || payload.shop !== shop) return { ok: false, error: "State/shop mismatch" };
+    if (!payload.exp || payload.exp <= Date.now()) return { ok: false, error: "Expired state" };
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Invalid state payload" };
+  }
+}
+
+async function verifyShopifyOAuthHmac(params: URLSearchParams, secret: string): Promise<boolean> {
+  const hmac = params.get("hmac");
+  if (!hmac) return false;
+  const message = Array.from(params.entries())
+    .filter(([key]) => key !== "hmac" && key !== "signature")
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("&");
+  const digest = await hmacSha256Hex(secret, message);
+  return digest === hmac;
+}
+
+async function exchangeShopifyAccessToken(
+  shop: string,
+  code: string,
+  apiKey: string,
+  apiSecret: string
+): Promise<{ access_token: string; scope: string }> {
+  const response = await fetch(`https://${shop}/admin/oauth/access_token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      client_id: apiKey,
+      client_secret: apiSecret,
+      code
+    })
+  });
+  const data = (await response.json()) as { access_token?: string; scope?: string; error?: string };
+  if (!response.ok || !data.access_token) {
+    throw new Error(data.error || `Token exchange failed (${response.status})`);
+  }
+  return { access_token: data.access_token, scope: data.scope || "" };
+}
+
+async function ensureSynapseWebPixel(
+  shop: string,
+  accessToken: string,
+  appOrigin: string
+): Promise<{ ok: boolean; detail: Record<string, unknown> }> {
+  const settings = {
+    beaconUrl: `${appOrigin}/browser/beacon`,
+    shopDomain: shop
+  };
+  const settingsJson = JSON.stringify(settings);
+
+  const gql = async (query: string, variables?: Record<string, unknown>) => {
+    const response = await fetch(`https://${shop}/admin/api/2025-10/graphql.json`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": accessToken
+      },
+      body: JSON.stringify({ query, variables })
+    });
+    const json = (await response.json()) as {
+      data?: Record<string, unknown>;
+      errors?: Array<{ message: string }>;
+    };
+    if (!response.ok || json.errors?.length) {
+      throw new Error(json.errors?.map((e) => e.message).join("; ") || `GraphQL HTTP ${response.status}`);
+    }
+    return json.data ?? {};
+  };
+
+  const existing = (await gql(`query { webPixel { id settings } }`)) as {
+    webPixel?: { id?: string; settings?: string } | null;
+  };
+
+  if (existing.webPixel?.id) {
+    const updated = (await gql(
+      `mutation webPixelUpdate($id: ID!, $webPixel: WebPixelInput!) {
+        webPixelUpdate(id: $id, webPixel: $webPixel) {
+          userErrors { field message code }
+          webPixel { id settings }
+        }
+      }`,
+      { id: existing.webPixel.id, webPixel: { settings: settingsJson } }
+    )) as {
+      webPixelUpdate?: {
+        userErrors?: Array<{ message: string }>;
+        webPixel?: { id?: string; settings?: string };
+      };
+    };
+    const errors = updated.webPixelUpdate?.userErrors ?? [];
+    if (errors.length) {
+      return { ok: false, detail: { action: "update", errors } };
+    }
+    return {
+      ok: true,
+      detail: { action: "update", webPixel: updated.webPixelUpdate?.webPixel }
+    };
+  }
+
+  const created = (await gql(
+    `mutation webPixelCreate($webPixel: WebPixelInput!) {
+      webPixelCreate(webPixel: $webPixel) {
+        userErrors { field message code }
+        webPixel { id settings }
+      }
+    }`,
+    { webPixel: { settings: settingsJson } }
+  )) as {
+    webPixelCreate?: {
+      userErrors?: Array<{ message: string }>;
+      webPixel?: { id?: string; settings?: string };
+    };
+  };
+  const errors = created.webPixelCreate?.userErrors ?? [];
+  if (errors.length) {
+    return { ok: false, detail: { action: "create", errors } };
+  }
+  return {
+    ok: true,
+    detail: { action: "create", webPixel: created.webPixelCreate?.webPixel }
+  };
+}
+
+function htmlResponse(body: string, status = 200): Response {
+  return new Response(body, {
+    status,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store"
+    }
+  });
+}
+
+async function handleShopifyOAuth(
+  request: Request,
+  env: CloudflareEnv,
+  url: URL
+): Promise<Response | null> {
+  if (request.method !== "GET") return null;
+  if (url.pathname !== "/auth/shopify/install" && url.pathname !== "/auth/shopify/callback") {
+    return null;
+  }
+
+  const apiKey = env.SHOPIFY_API_KEY;
+  const apiSecret = env.SHOPIFY_API_SECRET;
+  if (!apiKey || !apiSecret) {
+    return jsonResponse(
+      { ok: false, error: "Shopify OAuth is not configured on the Worker (missing API key/secret)" },
+      500
+    );
+  }
+
+  const scopes = (env.SHOPIFY_APP_SCOPES || DEFAULT_SHOPIFY_SCOPES).trim();
+  const appOrigin = url.origin;
+
+  if (url.pathname === "/auth/shopify/install") {
+    const shopRaw = (url.searchParams.get("shop") || "gcw-dev.myshopify.com").trim();
+    let shop: string;
+    try {
+      shop = normalizeShopDomain(shopRaw);
+    } catch (error) {
+      return jsonResponse(
+        { ok: false, error: error instanceof Error ? error.message : "Invalid shop" },
+        400
+      );
+    }
+
+    const state = await createOAuthState(shop, apiSecret);
+    const authorize = new URL(`https://${shop}/admin/oauth/authorize`);
+    authorize.searchParams.set("client_id", apiKey);
+    authorize.searchParams.set("scope", scopes);
+    authorize.searchParams.set("redirect_uri", `${appOrigin}/auth/shopify/callback`);
+    authorize.searchParams.set("state", state);
+    return Response.redirect(authorize.toString(), 302);
+  }
+
+  // callback
+  const shopRaw = url.searchParams.get("shop") || "";
+  let shop: string;
+  try {
+    shop = normalizeShopDomain(shopRaw);
+  } catch {
+    return htmlResponse("<h1>Install failed</h1><p>Invalid shop domain.</p>", 400);
+  }
+
+  const state = url.searchParams.get("state") || "";
+  const stateCheck = await verifyOAuthState(state, apiSecret, shop);
+  if (!stateCheck.ok) {
+    return htmlResponse(`<h1>Install failed</h1><p>${stateCheck.error}</p>`, 400);
+  }
+
+  const hmacOk = await verifyShopifyOAuthHmac(url.searchParams, apiSecret);
+  if (!hmacOk) {
+    return htmlResponse("<h1>Install failed</h1><p>Invalid Shopify HMAC.</p>", 400);
+  }
+
+  const code = url.searchParams.get("code");
+  if (!code) {
+    return htmlResponse("<h1>Install failed</h1><p>Missing authorization code.</p>", 400);
+  }
+
+  try {
+    const token = await exchangeShopifyAccessToken(shop, code, apiKey, apiSecret);
+    const pixel = await ensureSynapseWebPixel(shop, token.access_token, appOrigin);
+    const pixelStatus = pixel.ok
+      ? `Web pixel ${String(pixel.detail.action)}d successfully.`
+      : `Web pixel activation issue: ${JSON.stringify(pixel.detail.errors || pixel.detail)}`;
+
+    return htmlResponse(`<!doctype html>
+<html><head><meta charset="utf-8"><title>GCW Synapse installed</title></head>
+<body style="font-family:system-ui;max-width:640px;margin:40px auto;padding:0 16px">
+  <h1>GCW Synapse installed</h1>
+  <p><strong>Shop:</strong> ${shop}</p>
+  <p><strong>Scopes:</strong> ${token.scope || scopes}</p>
+  <p>${pixelStatus}</p>
+  <ol>
+    <li>Re-enable the theme App embed if needed.</li>
+    <li>Confirm <a href="https://admin.shopify.com/store/${shop.replace(".myshopify.com", "")}/settings/customer_events">Customer events → App pixels</a>.</li>
+  </ol>
+  <p><a href="https://${shop}/admin">Open Shopify admin</a></p>
+</body></html>`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Install callback failed";
+    return htmlResponse(`<h1>Install failed</h1><p>${message}</p>`, 400);
+  }
 }
 
 function getShadowCounts(): {
@@ -799,9 +1116,11 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
       ok: true,
       app: {
         configured: true,
-        api_key_present: false,
-        app_url: null,
-        scopes: []
+        api_key_present: true,
+        app_url: "https://gcw-synapse-super.gcwsynapse.workers.dev",
+        scopes: DEFAULT_SHOPIFY_SCOPES.split(","),
+        install_url:
+          "https://gcw-synapse-super.gcwsynapse.workers.dev/auth/shopify/install?shop=gcw-dev.myshopify.com"
       }
     });
   }
@@ -862,7 +1181,18 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
     });
   }
 
-  if (url.pathname.startsWith("/auth/") || url.pathname.startsWith("/compatibility/")) {
+  if (url.pathname.startsWith("/compatibility/")) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "This route is not enabled in edge-only mode",
+        mode: "edge-only"
+      },
+      501
+    );
+  }
+
+  if (url.pathname.startsWith("/auth/") && !url.pathname.startsWith("/auth/shopify/")) {
     return jsonResponse(
       {
         ok: false,
@@ -1073,6 +1403,11 @@ export default {
           origin
         )
       );
+    }
+
+    const oauth = await handleShopifyOAuth(request, env, url);
+    if (oauth) {
+      return addSecurityHeaders(oauth);
     }
 
     const native = await handleNativeApi(request);
