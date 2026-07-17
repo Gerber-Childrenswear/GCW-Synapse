@@ -4,7 +4,7 @@ Lean Elevar replacement for Shopify → GTM (web + server). **Start here:** [doc
 
 ## Lean quick start
 
-Production Worker: `https://gcw-synapse-super.gcw-synapse.workers.dev`
+Production Worker: `https://gcw-synapse-super.gcwsynapse.workers.dev`
 
 ```bash
 npm ci && npm --prefix apps/admin ci

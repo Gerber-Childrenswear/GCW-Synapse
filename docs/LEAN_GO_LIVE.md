@@ -4,7 +4,7 @@
 
 **Validate on gcw-dev first**, then promote to production. Same Worker serves both shops.
 
-Worker URL: `https://gcw-synapse-super.gcw-synapse.workers.dev`
+Worker URL: `https://gcw-synapse-super.gcwsynapse.workers.dev`
 
 ---
 
@@ -16,7 +16,7 @@ The Shopify app / theme extension is only installed on **gcw-dev** today. Use it
 |---|---|
 | Shop | `gcw-dev.myshopify.com` |
 | Storefront origin | `https://gcw-dev.myshopify.com` |
-| Synapse `/event` URL | `https://gcw-synapse-super.gcw-synapse.workers.dev/event` |
+| Synapse `/event` URL | `https://gcw-synapse-super.gcwsynapse.workers.dev/event` |
 
 ### Verify Worker accepts gcw-dev traffic
 
@@ -30,7 +30,7 @@ See **[SHOPIFY_GCW_DEV_EMBED.md](SHOPIFY_GCW_DEV_EMBED.md)** if the app is insta
 
 1. **Online Store → Themes → Customize → App embeds** (puzzle icon — not page “Apps” blocks)
 2. Enable **GCW Synapse**
-3. Endpoint: `https://gcw-synapse-super.gcw-synapse.workers.dev/event`
+3. Endpoint: `https://gcw-synapse-super.gcwsynapse.workers.dev/event`
 4. Ingress token: **leave blank**
 5. If the embed is missing entirely, run `shopify app deploy` (theme extension not released to the store)
 6. If Elevar/Triple Whale are on the dev theme, disable one — avoid double-firing while testing
@@ -95,7 +95,7 @@ npm run lean:verify
 
 | Embed | Action |
 |---|---|
-| **GCW Synapse** | **ON** — endpoint: `https://gcw-synapse-super.gcw-synapse.workers.dev/event` |
+| **GCW Synapse** | **ON** — endpoint: `https://gcw-synapse-super.gcwsynapse.workers.dev/event` |
 | **Elevar** | Leave ON until step 4 validates; then **OFF** |
 | **Triple Whale** | Pick TW **or** Synapse+GTM for client events — not both |
 
