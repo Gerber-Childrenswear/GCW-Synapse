@@ -10,9 +10,10 @@
       "storefrontOrigins": [
         "https://gcw-dev.myshopify.com"
       ],
-      "themeEmbedEndpoint": "https://gcw-synapse-super.gcw-synapse.workers.dev/event",
-      "customerEventsPixelEndpoint": "https://gcw-synapse-super.gcw-synapse.workers.dev/event",
-      "notes": "Shopify app + theme extension live on gcw-dev only. Same Worker serves dev and prod via CORS allowlist."
+      "themeEmbedEndpoint": "https://gcw-synapse-super.gcw-synapse.workers.dev/browser/beacon",
+      "customerEventsPixelEndpoint": "https://gcw-synapse-super.gcw-synapse.workers.dev/browser/beacon",
+      "legacyEventEndpoint": "https://gcw-synapse-super.gcw-synapse.workers.dev/event",
+      "notes": "Shopify app + theme extension live on gcw-dev only. Theme emits dl_* to dataLayer; pixel/beacon hit /browser/beacon. Same Worker serves dev and prod via CORS allowlist."
     },
     "production": {
       "label": "Gerber production",
@@ -21,8 +22,9 @@
         "https://www.gerberchildrenswear.com",
         "https://gerberchildrenswear.myshopify.com"
       ],
-      "themeEmbedEndpoint": "https://gcw-synapse-super.gcw-synapse.workers.dev/event",
-      "customerEventsPixelEndpoint": "https://gcw-synapse-super.gcw-synapse.workers.dev/event",
+      "themeEmbedEndpoint": "https://gcw-synapse-super.gcw-synapse.workers.dev/browser/beacon",
+      "customerEventsPixelEndpoint": "https://gcw-synapse-super.gcw-synapse.workers.dev/browser/beacon",
+      "legacyEventEndpoint": "https://gcw-synapse-super.gcw-synapse.workers.dev/event",
       "notes": "Promote only after gcw-dev GTM Preview is green."
     }
   }

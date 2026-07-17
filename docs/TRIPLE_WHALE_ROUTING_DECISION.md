@@ -1,6 +1,7 @@
-# Triple Whale Routing Decision (No Sonar)
+# Triple Whale Routing Decision (Updated for full Synapse ownership)
 
-Date: 2026-05-14
+Date: 2026-07-17  
+Supersedes: 2026-05-14 “No Sonar” note where ownership conflicts.
 
 ## Constraint
 
@@ -8,43 +9,41 @@ Gerber does not have Triple Whale Sonar.
 
 ## Outcome
 
-Use Triple Whale only for standard app-managed client-side pixel coverage where it does not conflict with existing tracking.
+**GCW-Synapse owns the Elevar replacement surface:**
 
-Keep all server-side event handling and Elevar-compatibility logic in GCW-Synapse + GTM Server container (GTM-N45F3JCC).
+- Storefront / checkout `dl_*` data layer (theme embed + web pixel)
+- Session/UTM enrichment attached to purchases
+- Shopify webhook purchase relay → Server GTM
+- Compatibility variables, shadow parity, launch GO/HOLD, alerts
+
+Destinations (Meta, GA4, Ads, Pinterest, Reddit CAPI, etc.) remain in **GTM web + sGTM**.
+
+Use Triple Whale only for standard app-managed client-side pixel coverage that does **not** conflict with Synapse data layer events or existing GTM tags.
 
 ## Ownership Matrix
 
-- Triple Whale (preferred where possible):
-  - Basic client-side pixel deployment/management supported by the app.
-  - Non-custom, non-Elevar-specific UI configuration tasks.
+- **GCW-Synapse**
+  - Browser data layer (`dl_*`) via theme app embed + web pixel
+  - Browser beacon + dual-run browser parity
+  - Shopify webhook ingestion / HMAC / idempotency / normalization
+  - Compatibility HTTP variables
+  - Session marketing attach on purchase payloads
+  - Ops UI (readiness, activity, alerts)
 
-- GTM Web container (GTM-TKW58K8 workspace 174):
-  - Custom data layer wiring.
-  - Any Elevar variable compatibility dependencies still used by tags.
-  - Tag/trigger sequencing and conditional logic that is custom to GCW.
+- **GTM Web container**
+  - Dev: `GTM-WH3W368X`
+  - Prod: `GTM-TKW58K8` (do not modify for gcw-dev work)
+  - Tags/triggers that consume Synapse `dl_*` events
 
-- GTM Server container (GTM-N45F3JCC workspace 19):
-  - Reddit CAPI and other server-side vendor tags.
-  - Event routing, event name normalization, server-side enrichment.
-  - Worker/bot forwarding and custom HTTP tags.
+- **GTM Server container (`GTM-N45F3JCC`)**
+  - Server-side vendor tags (Reddit CAPI, etc.)
+  - Event routing / bot forwarder integrations
 
-- GCW-Synapse service:
-  - Shopify webhook ingestion and HMAC verification.
-  - Idempotency, retries, payload normalization.
-  - Compatibility variables (GA4 ID, Currency Code, event_id, upcoming customer/product fields).
+- **Triple Whale (optional, non-custom only)**
+  - Basic pixel toggles that do not duplicate Synapse/GTM events
 
 ## Practical Rule
 
-If a feature requires deterministic IDs, custom payload mapping, dedupe, or server-to-server guarantees, keep it in GTM Server + GCW-Synapse.
+If a feature is required to **uninstall Elevar**, it belongs in Synapse + GTM.
 
-If a feature is a standard browser pixel toggle that Triple Whale can manage without reducing signal quality, it may live in Triple Whale.
-
-## Next Implementation Direction
-
-Continue Phase A compatibility implementation in GCW-Synapse:
-
-1. Customer ID
-2. Customer Email
-3. purchase products array
-
-These are required for Elevar parity and remain independent of Triple Whale Sonar availability.
+If a feature is a generic pixel toggle with no custom mapping needs, Triple Whale may host it—never at the expense of Synapse event ownership.

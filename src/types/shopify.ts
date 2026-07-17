@@ -26,6 +26,8 @@ export type ShopifyOrder = {
   currency: string;
   total_price: string;
   total_tax?: string;
+  landing_site?: string;
+  note_attributes?: Array<{ name?: string; value?: string }>;
   total_shipping_price_set?: {
     shop_money?: {
       amount?: string;
@@ -103,5 +105,12 @@ export type SynapseEventPayload = {
       postal_code?: string | undefined;
       country?: string | undefined;
     };
+  };
+  marketing?: {
+    session_id?: string | undefined;
+    landing_site?: string | undefined;
+    utm_source?: string | undefined;
+    utm_medium?: string | undefined;
+    utm_campaign?: string | undefined;
   };
 };
