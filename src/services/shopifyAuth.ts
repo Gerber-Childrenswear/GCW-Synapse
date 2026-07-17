@@ -134,7 +134,7 @@ function verifyInstallCallback(params: URLSearchParams): { ok: boolean; error?: 
 
   const stateCheck = verifySignedState(state, shop, assertOAuthConfigured().apiSecret);
   if (!stateCheck.ok) {
-    return { ok: false, error: stateCheck.error };
+    return { ok: false, error: stateCheck.error ?? "Invalid OAuth state" };
   }
 
   const entries = Array.from(params.entries())

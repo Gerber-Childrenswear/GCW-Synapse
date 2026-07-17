@@ -40,7 +40,16 @@ In **gcw-dev** theme / Customer Events / GTM loader, the web container ID must b
 
 Preview a thank-you / purchase and confirm Elevar folders still fire in GTM Preview for `GTM-WH3W368X`.
 
-### 3. Shadow compare loop
+### 3. Enable Synapse browser layer (full Elevar replace)
+
+1. `npm run build:browser` then `shopify app deploy`
+2. Theme settings → App embeds → enable **Synapse Data Layer**
+3. Activate Synapse web pixel (`beaconUrl` → `https://gcw-synapse.ncassidy.workers.dev/browser/beacon`, `shopDomain=gcw-dev.myshopify.com`)
+4. Re-authorize expanded scopes if prompted
+5. Dual-run with Elevar; watch browser parity on `/app/summary` and activity table
+6. Cutover steps: [`GCW_DEV_GTM_CUTOVER.md`](GCW_DEV_GTM_CUTOVER.md)
+
+### 4. Shadow compare loop
 
 1. Synapse captures Shopify order webhooks automatically (shadow mode = no GTM forward yet).
 2. Send Elevar purchase baselines to Synapse:
@@ -50,14 +59,15 @@ POST https://gcw-synapse.ncassidy.workers.dev/compare/elevar
 Header: X-Synapse-Token: <INGRESS_SHARED_TOKEN>
 ```
 
-3. Watch:
-   - App UI → Launch readiness
+3. Optional: mirror Elevar browser events to `POST /compare/browser/elevar`
+4. Watch:
+   - App UI → Launch readiness + Real-time activity
    - `GET /app/summary`
-   - `GET /compare/parity` (with ingress token)
+   - `GET /compare/parity` and `GET /compare/browser` (with ingress token)
 
-Gate stays **HOLD** until paired events ≥ 100 and mismatch rate ≤ 5%.
+Gate stays **HOLD** until purchase paired events ≥ 100, browser paired ≥ 50, and mismatch rates ≤ 5%.
 
-### 4. When ready to forward (later)
+### 5. When ready to forward (later)
 
 1. Set real `GTM_SERVER_URL` (sGTM collect URL for the server container you want to hit).
 2. Flip `RUNTIME_MODE=forward` in `wrangler.jsonc` vars and redeploy.

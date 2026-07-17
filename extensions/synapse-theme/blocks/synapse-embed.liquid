@@ -1,0 +1,144 @@
+{% comment %}
+  GCW-Synapse app embed — Elevar-compatible data layer for storefront pages.
+  Enable under Theme settings → App embeds → Synapse Data Layer.
+{% endcomment %}
+<script>
+  window.SynapseConfig = Object.assign({}, window.SynapseConfig || {}, {
+    shop: {{ shop.permanent_domain | json }},
+    currency: {{ cart.currency.iso_code | default: shop.currency | json }},
+    beaconUrl: {{ block.settings.beacon_url | default: "https://gcw-synapse.ncassidy.workers.dev/browser/beacon" | json }},
+    debug: {{ block.settings.debug | json }},
+    enabled: {{ block.settings.enabled | json }},
+    customer: {
+      id: {% if customer %}{{ customer.id | json }}{% else %}null{% endif %},
+      email: {% if customer %}{{ customer.email | json }}{% else %}null{% endif %},
+      firstName: {% if customer %}{{ customer.first_name | json }}{% else %}null{% endif %},
+      lastName: {% if customer %}{{ customer.last_name | json }}{% else %}null{% endif %},
+      phone: {% if customer %}{{ customer.phone | json }}{% else %}null{% endif %},
+      orderCount: {% if customer %}{{ customer.orders_count | json }}{% else %}0{% endif %},
+      totalSpent: {% if customer %}{{ customer.total_spent | money_without_currency | json }}{% else %}"0.0"{% endif %}
+    },
+    page: {
+      type: {{ request.page_type | json }},
+      path: {{ request.path | json }},
+      title: {{ page_title | json }},
+      searchTerm: {{ search.terms | default: "" | json }}
+    },
+    cart: {
+      total: {{ cart.total_price | money_without_currency | json }},
+      itemCount: {{ cart.item_count | json }},
+      items: [
+        {%- for item in cart.items -%}
+          {
+            id: {{ item.sku | default: item.variant_id | json }},
+            name: {{ item.product.title | json }},
+            brand: {{ item.vendor | json }},
+            category: {{ item.product.type | json }},
+            variant: {{ item.variant.title | json }},
+            price: {{ item.final_price | money_without_currency | json }},
+            quantity: {{ item.quantity | json }},
+            product_id: {{ item.product_id | json }},
+            variant_id: {{ item.variant_id | json }},
+            compare_at_price: {% if item.variant.compare_at_price %}{{ item.variant.compare_at_price | money_without_currency | json }}{% else %}"0.0"{% endif %},
+            image: {{ item.image | image_url: width: 200 | json }},
+            url: {{ item.url | json }}
+          }{%- unless forloop.last -%},{%- endunless -%}
+        {%- endfor -%}
+      ]
+    }
+    {%- if product -%}
+    ,product: {
+      id: {{ product.id | json }},
+      title: {{ product.title | json }},
+      vendor: {{ product.vendor | json }},
+      type: {{ product.type | json }},
+      url: {{ product.url | json }},
+      selectedVariant: {
+        id: {{ product.selected_or_first_available_variant.id | json }},
+        sku: {{ product.selected_or_first_available_variant.sku | json }},
+        title: {{ product.selected_or_first_available_variant.title | json }},
+        price: {{ product.selected_or_first_available_variant.price | money_without_currency | json }},
+        compareAtPrice: {% if product.selected_or_first_available_variant.compare_at_price %}{{ product.selected_or_first_available_variant.compare_at_price | money_without_currency | json }}{% else %}"0.0"{% endif %},
+        image: {% if product.selected_or_first_available_variant.featured_image %}{{ product.selected_or_first_available_variant.featured_image | image_url: width: 400 | json }}{% elsif product.featured_image %}{{ product.featured_image | image_url: width: 400 | json }}{% else %}""{% endif %}
+      }
+    }
+    {%- endif -%}
+    {%- if collection -%}
+    ,collection: {
+      handle: {{ collection.handle | json }},
+      title: {{ collection.title | json }},
+      path: {{ collection.url | json }},
+      products: [
+        {%- for p in collection.products limit: 24 -%}
+          {
+            id: {{ p.selected_or_first_available_variant.sku | default: p.selected_or_first_available_variant.id | json }},
+            name: {{ p.title | json }},
+            brand: {{ p.vendor | json }},
+            category: {{ p.type | json }},
+            variant: {{ p.selected_or_first_available_variant.title | json }},
+            price: {{ p.selected_or_first_available_variant.price | money_without_currency | json }},
+            product_id: {{ p.id | json }},
+            variant_id: {{ p.selected_or_first_available_variant.id | json }},
+            compare_at_price: {% if p.selected_or_first_available_variant.compare_at_price %}{{ p.selected_or_first_available_variant.compare_at_price | money_without_currency | json }}{% else %}"0.0"{% endif %},
+            position: {{ forloop.index | json }},
+            list: {{ collection.url | json }}
+          }{%- unless forloop.last -%},{%- endunless -%}
+        {%- endfor -%}
+      ]
+    }
+    {%- endif -%}
+    {%- if search.performed -%}
+    ,search: {
+      terms: {{ search.terms | json }},
+      products: [
+        {%- for p in search.results limit: 24 -%}
+          {%- if p.object_type == "product" -%}
+          {
+            id: {{ p.selected_or_first_available_variant.sku | default: p.selected_or_first_available_variant.id | json }},
+            name: {{ p.title | json }},
+            brand: {{ p.vendor | json }},
+            category: {{ p.type | json }},
+            variant: {{ p.selected_or_first_available_variant.title | json }},
+            price: {{ p.selected_or_first_available_variant.price | money_without_currency | json }},
+            product_id: {{ p.id | json }},
+            variant_id: {{ p.selected_or_first_available_variant.id | json }},
+            compare_at_price: {% if p.selected_or_first_available_variant.compare_at_price %}{{ p.selected_or_first_available_variant.compare_at_price | money_without_currency | json }}{% else %}"0.0"{% endif %},
+            position: {{ forloop.index | json }},
+            list: "search results"
+          }{%- unless forloop.last -%},{%- endunless -%}
+          {%- endif -%}
+        {%- endfor -%}
+      ]
+    }
+    {%- endif -%}
+  });
+</script>
+
+{% schema %}
+{
+  "name": "Synapse Data Layer",
+  "target": "body",
+  "javascript": "gcw-synapse.js",
+  "settings": [
+    {
+      "type": "checkbox",
+      "id": "enabled",
+      "label": "Enable Synapse data layer",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "debug",
+      "label": "Debug logging",
+      "default": false
+    },
+    {
+      "type": "text",
+      "id": "beacon_url",
+      "label": "Beacon URL",
+      "default": "https://gcw-synapse.ncassidy.workers.dev/browser/beacon",
+      "info": "Optional server mirror for dual-run parity and session attach."
+    }
+  ]
+}
+{% endschema %}

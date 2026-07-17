@@ -1,15 +1,19 @@
 # GCW-Synapse
 
-GCW-Synapse is a Shopify analytics relay service that replaces Elevar by forwarding signed Shopify order webhooks to your Server GTM endpoint.
+GCW-Synapse is the first-party Elevar replacement: storefront/checkout data layer, Shopify purchase webhooks, compatibility variables, and launch parity gates into your GTM stack.
 
 ## What It Does
 
+- Emits Elevar-compatible `dl_*` browser events via Theme App Embed + Web Pixel.
 - Verifies Shopify webhook signatures with HMAC.
-- Maps Shopify order payloads into a normalized purchase event payload.
+- Maps Shopify order payloads into a normalized purchase event payload (with session/UTM attach).
 - Forwards purchase events to your Server GTM collection endpoint.
+- Dual-runs against Elevar (purchase + browser) with GO/HOLD readiness checks.
 - Retries transient GTM failures with bounded backoff.
 - Ignores duplicate webhooks within a configurable TTL window.
-- Emits structured JSON logs for ingestion and troubleshooting.
+- Optional Slack/email alerts when accuracy drops below threshold.
+
+See [`docs/FULL_ELEVAR_REPLACEMENT.md`](docs/FULL_ELEVAR_REPLACEMENT.md) and [`docs/GCW_DEV_GTM_CUTOVER.md`](docs/GCW_DEV_GTM_CUTOVER.md).
 
 ## Endpoints
 
@@ -48,6 +52,9 @@ GCW-Synapse is a Shopify analytics relay service that replaces Elevar by forward
 - GET /compare/troubleshoot
 - GET /compare/ui-model
 - GET /compare/recent
+- GET /compare/browser
+- POST /compare/browser/elevar
+- POST /browser/beacon
 - GET /launch/readiness
 - POST /webhooks/shopify/orders/create
 - POST /webhooks/shopify/orders/paid

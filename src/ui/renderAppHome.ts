@@ -256,11 +256,11 @@ export function renderAppHome(ctx: AppHomeContext): string {
 
     .metrics {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(5, minmax(0, 1fr));
       gap: 14px;
     }
 
-    @media (max-width: 860px) {
+    @media (max-width: 980px) {
       .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
 
@@ -457,7 +457,7 @@ export function renderAppHome(ctx: AppHomeContext): string {
       <div class="live"><span class="live-dot" aria-hidden="true"></span> Live on first-party rails</div>
       <h1>Own the <em>signal</em>.</h1>
       <p class="hero-copy">
-        Synapse replaces Elevar’s black box with your Shopify webhooks, your Server GTM, and a launch gate you can trust before cutover.
+        Synapse replaces Elevar end-to-end: storefront data layer, checkout web pixel, Shopify purchase webhooks, and a launch gate you can trust before cutover.
       </p>
       <div class="cta-row">
         <a class="btn btn-primary" href="#readiness">Check launch gate</a>
@@ -490,6 +490,11 @@ export function renderAppHome(ctx: AppHomeContext): string {
           <div class="value skeleton" id="m-webhook">0%</div>
           <div class="hint" id="m-webhook-hint">Loading…</div>
         </article>
+        <article class="metric">
+          <div class="label">Browser parity</div>
+          <div class="value skeleton" id="m-browser">0%</div>
+          <div class="hint" id="m-browser-hint">Loading…</div>
+        </article>
       </div>
 
       <div class="gate">
@@ -505,13 +510,33 @@ export function renderAppHome(ctx: AppHomeContext): string {
           <div class="vs">
             <div class="vs-row">
               <div class="vs-item elevar"><strong>Elevar</strong><span>Template lock-in, opaque mapping, vendor-shaped truth.</span></div>
-              <div class="vs-item synapse"><strong>Synapse</strong><span>HMAC-verified Shopify orders → your sGTM, with parity you can prove.</span></div>
+              <div class="vs-item synapse"><strong>Synapse</strong><span>Theme data layer + web pixel + HMAC orders → your GTM.</span></div>
             </div>
             <div class="vs-row">
               <div class="vs-item elevar"><strong>Their clock</strong><span>Wait on support and mystery diffs.</span></div>
               <div class="vs-item synapse"><strong>Your gate</strong><span>Shadow mode, mismatch alerts, go/hold before forward.</span></div>
             </div>
           </div>
+        </div>
+      </div>
+
+      <div style="margin-top:42px">
+        <p class="section-kicker">Real-time activity</p>
+        <h2 class="section-title">Orders &amp; browser events</h2>
+        <div class="contrast" style="padding:0; overflow:hidden">
+          <table style="width:100%; border-collapse:collapse; font-size:0.9rem" id="activity-table">
+            <thead>
+              <tr style="text-align:left; border-bottom:1px solid var(--line)">
+                <th style="padding:14px 16px">When</th>
+                <th style="padding:14px 16px">Source</th>
+                <th style="padding:14px 16px">Event</th>
+                <th style="padding:14px 16px">Key / ID</th>
+              </tr>
+            </thead>
+            <tbody id="activity-body">
+              <tr><td colspan="4" style="padding:16px; color:rgba(7,19,31,0.55)">Waiting for traffic…</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </section>
@@ -574,6 +599,11 @@ export function renderAppHome(ctx: AppHomeContext): string {
           setText("m-webhook", failRate, false);
           setText("m-webhook-hint", fmt.format(metrics.webhooks_received || 0) + " received", false);
 
+          const browser = data.browser_parity || {};
+          const browserMatch = typeof browser.matched_rate_pct === "number" ? browser.matched_rate_pct.toFixed(1) + "%" : "—";
+          setText("m-browser", browserMatch, false);
+          setText("m-browser-hint", fmt.format(browser.paired_events || 0) + " paired dl_*", false);
+
           const gate = document.getElementById("gate-status");
           if (gate) {
             const status = report.status || "hold";
@@ -584,6 +614,40 @@ export function renderAppHome(ctx: AppHomeContext): string {
           }
 
           renderChecks(report.checks || []);
+
+          const rows = [];
+          (data.recent_shadow_events || []).forEach(function (e) {
+            rows.push({
+              when: e.observed_at || "",
+              source: e.source || "shadow",
+              event: e.event_name || "purchase",
+              key: e.transaction_id || e.key || ""
+            });
+          });
+          (data.recent_browser_events || []).forEach(function (e) {
+            rows.push({
+              when: e.observed_at || "",
+              source: (e.source || "synapse") + ":browser",
+              event: e.event || "",
+              key: e.event_id || e.key || ""
+            });
+          });
+          rows.sort(function (a, b) { return (b.when || "").localeCompare(a.when || ""); });
+          const body = document.getElementById("activity-body");
+          if (body) {
+            if (!rows.length) {
+              body.innerHTML = "<tr><td colspan='4' style='padding:16px; color:rgba(7,19,31,0.55)'>Waiting for traffic…</td></tr>";
+            } else {
+              body.innerHTML = rows.slice(0, 20).map(function (r) {
+                return "<tr style='border-top:1px solid var(--line)'><td style='padding:12px 16px'>" +
+                  (r.when || "").replace("T", " ").slice(0, 19) +
+                  "</td><td style='padding:12px 16px'>" + r.source +
+                  "</td><td style='padding:12px 16px'>" + r.event +
+                  "</td><td style='padding:12px 16px; font-family:ui-monospace,monospace; font-size:0.8rem'>" +
+                  r.key + "</td></tr>";
+              }).join("");
+            }
+          }
         } catch (err) {
           setText("m-runtime", root.dataset.runtimeMode || "—", false);
           setText("m-runtime-hint", "Live summary unavailable", false);
@@ -593,6 +657,8 @@ export function renderAppHome(ctx: AppHomeContext): string {
           setText("m-mismatch-hint", "Retrying…", false);
           setText("m-webhook", "—", false);
           setText("m-webhook-hint", "Retrying…", false);
+          setText("m-browser", "—", false);
+          setText("m-browser-hint", "Retrying…", false);
           const gate = document.getElementById("gate-status");
           if (gate) {
             gate.dataset.state = "loading";

@@ -1,0 +1,24 @@
+api_version = "2025-10"
+type = "web_pixel_extension"
+name = "synapse-web-pixel"
+uid = "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+runtime_context = "strict"
+
+[settings]
+type = "object"
+
+[settings.fields.beaconUrl]
+name = "Synapse beacon URL"
+description = "POST target for checkout and thank-you events"
+type = "single_line_text_field"
+
+[settings.fields.shopDomain]
+name = "Shop domain"
+description = "myshopify.com domain, e.g. gcw-dev.myshopify.com"
+type = "single_line_text_field"
+
+[customer_privacy]
+analytics = true
+marketing = true
+preferences = false
+sale_of_data = "enabled"

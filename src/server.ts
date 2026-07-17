@@ -1,7 +1,15 @@
 import express from "express";
 import { env } from "./config/env";
 import { createIngressTokenMiddleware } from "./lib/ingressAuth";
+import { browserBeaconRouter } from "./routes/browserBeacon";
 import { webhooksRouter } from "./routes/webhooks";
+import { maybeAlertOnParity } from "./services/alerts";
+import {
+  configureBrowserEvents,
+  getBrowserParityReport,
+  getRecentBrowserEvents,
+  ingestBrowserEvent
+} from "./services/browserEvents";
 import { resolveCartTotal } from "./services/cartTotal";
 import {
   type ChannelEventInput,
@@ -55,6 +63,45 @@ configureShadowCompare({
   maxRecords: env.SHADOW_COMPARE_MAX_RECORDS,
   storePath: env.SHADOW_COMPARE_STORE_PATH
 });
+
+configureBrowserEvents({ maxRecords: env.SHADOW_COMPARE_MAX_RECORDS });
+
+const alertConfig = {
+  slackWebhookUrl: env.SLACK_WEBHOOK_URL,
+  emailTo: env.ALERT_EMAIL_TO,
+  emailFrom: env.ALERT_EMAIL_FROM,
+  emailWebhookUrl: env.ALERT_EMAIL_WEBHOOK_URL
+};
+
+function buildLaunchInput(phase: "validation" | "cutover") {
+  const paritySummary = getShadowCompareSummary();
+  const parity = getShadowParityReport(env.SHADOW_COMPARE_MISMATCH_ALERT_PCT);
+  const channelSummary = getChannelHealthSummary(env.CHANNEL_HEALTH_STALE_MINUTES, env.CHANNEL_HEALTH_WARN_FAILURE_PCT);
+  const metrics = getMetricsSnapshot();
+  const browserParity = getBrowserParityReport(env.BROWSER_PARITY_MISMATCH_ALERT_PCT);
+
+  return {
+    phase,
+    runtimeMode: env.RUNTIME_MODE,
+    parity,
+    paritySummary,
+    channelSummary,
+    browserParity,
+    metrics: {
+      webhooks_received: metrics.counters.webhooks_received,
+      webhooks_invalid_signature: metrics.counters.webhooks_invalid_signature,
+      webhooks_invalid_json: metrics.counters.webhooks_invalid_json,
+      webhooks_rejected_topic: metrics.counters.webhooks_rejected_topic,
+      webhooks_forward_failed: metrics.counters.webhooks_forward_failed
+    },
+    thresholds: {
+      minPairedEvents: env.LAUNCH_MIN_PAIRED_EVENTS,
+      maxWarningChannels: env.LAUNCH_MAX_WARNING_CHANNELS,
+      maxWebhookFailureRatePct: env.LAUNCH_MAX_WEBHOOK_FAILURE_RATE_PCT,
+      minBrowserPairedEvents: env.LAUNCH_MIN_BROWSER_PAIRED_EVENTS
+    }
+  };
+}
 
 type CompatibilityLineItem = {
   sku?: string;
@@ -128,39 +175,38 @@ app.get("/", (req, res) => {
   );
 });
 
-app.get("/app/summary", (_req, res) => {
+app.get("/app/summary", async (_req, res) => {
   try {
-    const paritySummary = getShadowCompareSummary();
-    const parity = getShadowParityReport(env.SHADOW_COMPARE_MISMATCH_ALERT_PCT);
-    const channelSummary = getChannelHealthSummary(env.CHANNEL_HEALTH_STALE_MINUTES, env.CHANNEL_HEALTH_WARN_FAILURE_PCT);
+    const launchInput = buildLaunchInput("validation");
+    const { parity, paritySummary, channelSummary, browserParity, metrics: metricCounts } = launchInput;
     const metrics = getMetricsSnapshot();
 
     const webhookFailures =
-      metrics.counters.webhooks_invalid_signature +
-      metrics.counters.webhooks_invalid_json +
-      metrics.counters.webhooks_rejected_topic +
-      metrics.counters.webhooks_forward_failed;
-    const webhookReceived = metrics.counters.webhooks_received;
+      metricCounts.webhooks_invalid_signature +
+      metricCounts.webhooks_invalid_json +
+      metricCounts.webhooks_rejected_topic +
+      metricCounts.webhooks_forward_failed;
+    const webhookReceived = metricCounts.webhooks_received;
     const webhookFailureRatePct = webhookReceived > 0 ? (webhookFailures / webhookReceived) * 100 : 0;
 
-    const launchReadiness = buildLaunchReadinessReport({
-      phase: "validation",
-      runtimeMode: env.RUNTIME_MODE,
-      parity,
-      paritySummary,
-      channelSummary,
-      metrics: {
-        webhooks_received: metrics.counters.webhooks_received,
-        webhooks_invalid_signature: metrics.counters.webhooks_invalid_signature,
-        webhooks_invalid_json: metrics.counters.webhooks_invalid_json,
-        webhooks_rejected_topic: metrics.counters.webhooks_rejected_topic,
-        webhooks_forward_failed: metrics.counters.webhooks_forward_failed
-      },
-      thresholds: {
-        minPairedEvents: env.LAUNCH_MIN_PAIRED_EVENTS,
-        maxWarningChannels: env.LAUNCH_MAX_WARNING_CHANNELS,
-        maxWebhookFailureRatePct: env.LAUNCH_MAX_WEBHOOK_FAILURE_RATE_PCT
-      }
+    const launchReadiness = buildLaunchReadinessReport(launchInput);
+
+    void maybeAlertOnParity({
+      config: alertConfig,
+      label: "Purchase shadow",
+      mismatchRatePct: parity.mismatch_rate_pct,
+      thresholdPct: parity.threshold_pct,
+      alertTriggered: parity.alert_triggered,
+      pairedEvents: parity.paired_events
+    });
+
+    void maybeAlertOnParity({
+      config: alertConfig,
+      label: "Browser data layer",
+      mismatchRatePct: browserParity.mismatch_rate_pct,
+      thresholdPct: browserParity.threshold_pct,
+      alertTriggered: browserParity.alert_triggered,
+      pairedEvents: browserParity.paired_events
     });
 
     res.status(200).json({
@@ -176,15 +222,21 @@ app.get("/app/summary", (_req, res) => {
         threshold_pct: parity.threshold_pct
       },
       parity_counts: paritySummary.counts,
+      browser_parity: browserParity,
+      recent_browser_events: getRecentBrowserEvents(25),
+      recent_shadow_events: getRecentShadowEvents(25),
       metrics: {
         webhooks_received: metrics.counters.webhooks_received,
         webhooks_shadow_captured: metrics.counters.webhooks_shadow_captured,
         webhooks_forwarded: metrics.counters.webhooks_forwarded,
+        browser_beacon_accepted: metrics.counters.browser_beacon_accepted,
         webhook_failure_rate_pct: webhookFailureRatePct
       },
       thresholds: {
         min_paired_events: env.LAUNCH_MIN_PAIRED_EVENTS,
+        min_browser_paired_events: env.LAUNCH_MIN_BROWSER_PAIRED_EVENTS,
         mismatch_alert_pct: env.SHADOW_COMPARE_MISMATCH_ALERT_PCT,
+        browser_mismatch_alert_pct: env.BROWSER_PARITY_MISMATCH_ALERT_PCT,
         max_webhook_failure_rate_pct: env.LAUNCH_MAX_WEBHOOK_FAILURE_RATE_PCT
       },
       launch_readiness: launchReadiness,
@@ -831,6 +883,9 @@ app.use(
 
 app.use(express.json());
 
+// Browser beacon is public (CORS) — shop-scoped + rate-limited inside the router.
+app.use("/browser", browserBeaconRouter);
+
 app.post("/compare/elevar", requireIngressToken, async (req, res) => {
   try {
     const event = await ingestElevarShadow(req.body);
@@ -966,39 +1021,19 @@ app.get("/compare/ui-model", requireIngressToken, (req, res) => {
   const parsedLimit = Number.parseInt(limitRaw, 10);
   const limit = Number.isFinite(parsedLimit) ? parsedLimit : 100;
 
-  const paritySummary = getShadowCompareSummary();
-  const parity = getShadowParityReport(env.SHADOW_COMPARE_MISMATCH_ALERT_PCT);
-  const metrics = getMetricsSnapshot();
-  const channelSummary = getChannelHealthSummary(env.CHANNEL_HEALTH_STALE_MINUTES, env.CHANNEL_HEALTH_WARN_FAILURE_PCT);
-  const issues = getChannelTroubleshooting(channelSummary);
-  const launchReadiness = buildLaunchReadinessReport({
-    phase: "validation",
-    runtimeMode: env.RUNTIME_MODE,
-    parity,
-    paritySummary,
-    channelSummary,
-    metrics: {
-      webhooks_received: metrics.counters.webhooks_received,
-      webhooks_invalid_signature: metrics.counters.webhooks_invalid_signature,
-      webhooks_invalid_json: metrics.counters.webhooks_invalid_json,
-      webhooks_rejected_topic: metrics.counters.webhooks_rejected_topic,
-      webhooks_forward_failed: metrics.counters.webhooks_forward_failed
-    },
-    thresholds: {
-      minPairedEvents: env.LAUNCH_MIN_PAIRED_EVENTS,
-      maxWarningChannels: env.LAUNCH_MAX_WARNING_CHANNELS,
-      maxWebhookFailureRatePct: env.LAUNCH_MAX_WEBHOOK_FAILURE_RATE_PCT
-    }
-  });
+  const launchInput = buildLaunchInput("validation");
+  const issues = getChannelTroubleshooting(launchInput.channelSummary);
+  const launchReadiness = buildLaunchReadinessReport(launchInput);
 
   res.status(200).json({
     ok: true,
     source_of_truth: "elevar",
     runtime_mode: env.RUNTIME_MODE,
-    parity,
-    parity_counts: paritySummary.counts,
-    parity_mismatches_preview: paritySummary.mismatches_preview,
-    channels: channelSummary,
+    parity: launchInput.parity,
+    parity_counts: launchInput.paritySummary.counts,
+    parity_mismatches_preview: launchInput.paritySummary.mismatches_preview,
+    browser_parity: launchInput.browserParity,
+    channels: launchInput.channelSummary,
     troubleshooting: {
       issues,
       links: getChannelHelpLinks()
@@ -1006,7 +1041,8 @@ app.get("/compare/ui-model", requireIngressToken, (req, res) => {
     launch_readiness: launchReadiness,
     recent: {
       shadow_events: getRecentShadowEvents(limit),
-      channel_events: getRecentChannelEvents(limit)
+      channel_events: getRecentChannelEvents(limit),
+      browser_events: getRecentBrowserEvents(limit)
     }
   });
 });
@@ -1014,31 +1050,7 @@ app.get("/compare/ui-model", requireIngressToken, (req, res) => {
 app.get("/launch/readiness", requireIngressToken, (req, res) => {
   const phaseQuery = typeof req.query.phase === "string" ? req.query.phase : "validation";
   const phase = phaseQuery === "cutover" ? "cutover" : "validation";
-
-  const paritySummary = getShadowCompareSummary();
-  const parity = getShadowParityReport(env.SHADOW_COMPARE_MISMATCH_ALERT_PCT);
-  const channelSummary = getChannelHealthSummary(env.CHANNEL_HEALTH_STALE_MINUTES, env.CHANNEL_HEALTH_WARN_FAILURE_PCT);
-  const metrics = getMetricsSnapshot();
-
-  const report = buildLaunchReadinessReport({
-    phase,
-    runtimeMode: env.RUNTIME_MODE,
-    parity,
-    paritySummary,
-    channelSummary,
-    metrics: {
-      webhooks_received: metrics.counters.webhooks_received,
-      webhooks_invalid_signature: metrics.counters.webhooks_invalid_signature,
-      webhooks_invalid_json: metrics.counters.webhooks_invalid_json,
-      webhooks_rejected_topic: metrics.counters.webhooks_rejected_topic,
-      webhooks_forward_failed: metrics.counters.webhooks_forward_failed
-    },
-    thresholds: {
-      minPairedEvents: env.LAUNCH_MIN_PAIRED_EVENTS,
-      maxWarningChannels: env.LAUNCH_MAX_WARNING_CHANNELS,
-      maxWebhookFailureRatePct: env.LAUNCH_MAX_WEBHOOK_FAILURE_RATE_PCT
-    }
-  });
+  const report = buildLaunchReadinessReport(buildLaunchInput(phase));
 
   res.status(200).json({
     ok: true,
@@ -1060,6 +1072,51 @@ app.get("/compare/recent", requireIngressToken, (req, res) => {
     count: events.length,
     events
   });
+});
+
+app.get("/compare/browser", requireIngressToken, (req, res) => {
+  const limitRaw = typeof req.query.limit === "string" ? req.query.limit : "100";
+  const parsedLimit = Number.parseInt(limitRaw, 10);
+  const limit = Number.isFinite(parsedLimit) ? parsedLimit : 100;
+
+  res.status(200).json({
+    ok: true,
+    parity: getBrowserParityReport(env.BROWSER_PARITY_MISMATCH_ALERT_PCT),
+    count: getRecentBrowserEvents(limit).length,
+    events: getRecentBrowserEvents(limit)
+  });
+});
+
+app.post("/compare/browser/elevar", requireIngressToken, (req, res) => {
+  const body = (req.body || {}) as {
+    shop?: string;
+    event?: string;
+    event_id?: string;
+    currency?: string;
+    cart_total?: string;
+    ecommerce?: unknown;
+    marketing?: { session_id?: string; landing_site?: string };
+    observed_at?: string;
+  };
+
+  if (!body.event) {
+    res.status(400).json({ ok: false, error: "event is required" });
+    return;
+  }
+
+  const record = ingestBrowserEvent({
+    source: "elevar",
+    shop: body.shop,
+    event: body.event,
+    event_id: body.event_id,
+    currency: body.currency,
+    cart_total: body.cart_total,
+    ecommerce: body.ecommerce,
+    marketing: body.marketing,
+    observed_at: body.observed_at
+  });
+
+  res.status(202).json({ ok: true, key: record.key });
 });
 
 app.post("/event", requireIngressToken, (req, res) => {

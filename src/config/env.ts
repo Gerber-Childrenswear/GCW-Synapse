@@ -12,7 +12,9 @@ const envSchema = z.object({
   SHOPIFY_API_KEY: z.string().min(1).optional(),
   SHOPIFY_API_SECRET: z.string().min(1).optional(),
   SHOPIFY_APP_URL: z.string().url().optional(),
-  SHOPIFY_APP_SCOPES: z.string().default("read_orders"),
+  SHOPIFY_APP_SCOPES: z
+    .string()
+    .default("read_orders,read_products,read_customers,write_pixels,read_customer_events"),
   SHOPIFY_AUTH_CALLBACK_PATH: z.string().default("/auth/shopify/callback"),
   SHOPIFY_TOKEN_STORE_PATH: z.string().optional(),
   WEBHOOK_PATH_PREFIX: z.string().default("/webhooks/shopify/orders"),
@@ -35,7 +37,13 @@ const envSchema = z.object({
   CHANNEL_HEALTH_WARN_FAILURE_PCT: z.coerce.number().min(0).max(100).default(5),
   LAUNCH_MIN_PAIRED_EVENTS: z.coerce.number().int().positive().default(100),
   LAUNCH_MAX_WARNING_CHANNELS: z.coerce.number().int().min(0).default(0),
-  LAUNCH_MAX_WEBHOOK_FAILURE_RATE_PCT: z.coerce.number().min(0).max(100).default(2)
+  LAUNCH_MAX_WEBHOOK_FAILURE_RATE_PCT: z.coerce.number().min(0).max(100).default(2),
+  LAUNCH_MIN_BROWSER_PAIRED_EVENTS: z.coerce.number().int().min(0).default(50),
+  BROWSER_PARITY_MISMATCH_ALERT_PCT: z.coerce.number().min(0).max(100).default(5),
+  SLACK_WEBHOOK_URL: z.string().url().optional(),
+  ALERT_EMAIL_TO: z.string().email().optional(),
+  ALERT_EMAIL_FROM: z.string().email().optional(),
+  ALERT_EMAIL_WEBHOOK_URL: z.string().url().optional()
 });
 
 const parsed = envSchema.safeParse(process.env);

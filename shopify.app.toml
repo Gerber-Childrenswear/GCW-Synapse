@@ -1,4 +1,4 @@
-# Learn more: https://shopify.dev/docs/apps/tools/cli/configuration
+# Learn more: https://shopify.dev/docs/apps/tooling/cli/configuration
 
 client_id = "7d011b70562512bd84b85bd3f9a6e68d"
 name = "GCW-Synapse"
@@ -17,8 +17,8 @@ api_version = "2026-04"
   uri = "/webhooks/shopify/orders/paid"
 
 [access_scopes]
-scopes = "read_orders"
-optional_scopes = ["read_customers", "read_products"]
+scopes = "read_orders,read_products,read_customers,write_pixels,read_customer_events"
+optional_scopes = []
 use_legacy_install_flow = false
 
 [auth]

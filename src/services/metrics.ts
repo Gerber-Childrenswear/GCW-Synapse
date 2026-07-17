@@ -9,7 +9,10 @@ type CounterKey =
   | "webhooks_shadow_captured"
   | "compare_elevar_received"
   | "compare_channel_events_received"
-  | "ingress_token_rejected";
+  | "ingress_token_rejected"
+  | "browser_beacon_accepted"
+  | "browser_beacon_rejected"
+  | "browser_beacon_rate_limited";
 
 type MetricsState = Record<CounterKey, number>;
 
@@ -26,7 +29,10 @@ const counters: MetricsState = {
   webhooks_shadow_captured: 0,
   compare_elevar_received: 0,
   compare_channel_events_received: 0,
-  ingress_token_rejected: 0
+  ingress_token_rejected: 0,
+  browser_beacon_accepted: 0,
+  browser_beacon_rejected: 0,
+  browser_beacon_rate_limited: 0
 };
 
 export function incrementCounter(key: CounterKey): void {
