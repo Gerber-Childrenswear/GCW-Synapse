@@ -9,6 +9,8 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test src/**/*.test.ts",
+    "deploy": "wrangler deploy",
+    "cf:types": "wrangler types",
     "replay:webhook:create": "tsx scripts/replayWebhook.ts orders/create",
     "replay:webhook:paid": "tsx scripts/replayWebhook.ts orders/paid"
   },
@@ -36,6 +38,7 @@
     "@types/supertest": "^7.2.0",
     "supertest": "^7.2.2",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "wrangler": "^4.112.0"
   }
 }

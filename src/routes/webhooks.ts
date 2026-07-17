@@ -3,7 +3,7 @@ import type { Request, Response } from "express";
 import { env } from "../config/env";
 import { IdempotencyStore } from "../lib/idempotency";
 import { logError, logInfo, logWarn } from "../lib/logger";
-import { verifyShopifyWebhookHmac } from "../lib/shopifyHmac";
+import { verifyShopifyWebhookHmac, toRawBodyBuffer } from "../lib/shopifyHmac";
 import { isTopicAccepted, parseAllowedTopics } from "../lib/topicGuard";
 import { resolveEventId } from "../services/eventId";
 import { forwardToGtmServer } from "../services/gtmForwarder";
@@ -29,13 +29,20 @@ function buildIdempotencyKey(req: Request, order: ShopifyOrder): string {
 
 function createOrderWebhookHandler(expectedTopic: string) {
   return async function handleOrderWebhook(req: Request, res: Response): Promise<void> {
-  const rawBody = req.body as Buffer;
+  const rawBody = toRawBodyBuffer(req.body);
   const hmacHeader = req.get("X-Shopify-Hmac-Sha256");
   const topic = req.get("X-Shopify-Topic") ?? "unknown-topic";
   const shop = req.get("X-Shopify-Shop-Domain") ?? "unknown-shop";
   const webhookId = req.get("X-Shopify-Webhook-Id") ?? undefined;
 
   incrementCounter("webhooks_received");
+
+  if (!rawBody) {
+    incrementCounter("webhooks_invalid_json");
+    logWarn("Webhook rejected because raw body was unavailable", { topic, shop });
+    res.status(400).json({ error: "Raw webhook body required" });
+    return;
+  }
 
   if (!isTopicAccepted(topic, expectedTopic, allowedTopics)) {
     incrementCounter("webhooks_rejected_topic");

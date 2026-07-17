@@ -1,0 +1,9 @@
+# Local Cloudflare Worker secrets for `wrangler dev`.
+# Copy to .dev.vars and fill real values. Never commit .dev.vars.
+
+GTM_SERVER_URL=https://your-server-gtm-endpoint.example.com/g/collect
+SHOPIFY_API_KEY=7d011b70562512bd84b85bd3f9a6e68d
+SHOPIFY_API_SECRET=shpss_replace_me
+SHOPIFY_WEBHOOK_SECRET=shpss_replace_me
+SHOPIFY_APP_URL=https://gcw-synapse.ncassidy.workers.dev
+INGRESS_SHARED_TOKEN=replace_with_secure_token_min_8_chars

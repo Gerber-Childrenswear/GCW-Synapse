@@ -81,7 +81,15 @@ async function main() {
 }
 
 main().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(message);
+  if (axios.isAxiosError(error)) {
+    console.error(JSON.stringify({
+      message: error.message,
+      status: error.response?.status,
+      data: error.response?.data
+    }, null, 2));
+  } else {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(message);
+  }
   process.exitCode = 1;
 });

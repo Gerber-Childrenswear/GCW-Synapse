@@ -4,3 +4,6 @@ dist/
 npm-debug.log*
 scripts/*.js
 scripts/*.js.map
+.wrangler/
+.dev.vars
+worker-configuration.d.ts

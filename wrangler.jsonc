@@ -1,0 +1,25 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "gcw-synapse",
+  "main": "worker/src/index.ts",
+  "compatibility_date": "2026-07-16",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "RUNTIME_MODE": "shadow_compare",
+    "WEBHOOK_PATH_PREFIX": "/webhooks/shopify/orders",
+    "SHOP_DEFAULT_CURRENCY": "USD",
+    "CUSTOMER_ID_FALLBACK": "guest",
+    "SHOPIFY_API_KEY": "7d011b70562512bd84b85bd3f9a6e68d",
+    "SHOPIFY_APP_URL": "https://gcw-synapse.ncassidy.workers.dev",
+    "SHOPIFY_APP_SCOPES": "read_orders",
+    "SHOPIFY_AUTH_CALLBACK_PATH": "/auth/shopify/callback",
+    "GA4_MEASUREMENT_ID": "G-YMJ9F7HY6P",
+    "GA4_MEASUREMENT_ID_BY_SHOP": "gcw-dev.myshopify.com=G-YMJ9F7HY6P",
+    "FACEBOOK_PIXEL_ID": "823006016363458",
+    "PINTEREST_ID": "2612527712746"
+  }
+}

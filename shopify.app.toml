@@ -1,0 +1,27 @@
+# Learn more: https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "7d011b70562512bd84b85bd3f9a6e68d"
+name = "GCW-Synapse"
+application_url = "https://gcw-synapse.ncassidy.workers.dev"
+embedded = true
+
+[webhooks]
+api_version = "2026-04"
+
+  [[webhooks.subscriptions]]
+  topics = ["orders/create"]
+  uri = "/webhooks/shopify/orders/create"
+
+  [[webhooks.subscriptions]]
+  topics = ["orders/paid"]
+  uri = "/webhooks/shopify/orders/paid"
+
+[access_scopes]
+scopes = "read_orders"
+optional_scopes = ["read_customers", "read_products"]
+use_legacy_install_flow = false
+
+[auth]
+redirect_urls = [
+  "https://gcw-synapse.ncassidy.workers.dev/auth/shopify/callback"
+]

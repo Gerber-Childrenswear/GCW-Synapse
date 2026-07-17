@@ -37,8 +37,17 @@ import {
 } from "./services/shadowCompare";
 import { resolveVisitorType } from "./services/visitorType";
 import { normalizeCustomerPhone } from "./services/customerPhone";
+import { resolveFacebookProductGroup } from "./services/facebookProductGroup";
+import { resolvePageTitle } from "./services/pageTitle";
+import { resolveThankYouActionField } from "./services/thankYouActionField";
+import { resolveProductViewName, resolveProductViewPrice } from "./services/productViewScalars";
+import { getShopifyAppConfig } from "./services/shopifyApp";
+import { completeShopifyInstall, getShopifyInstallStatus, startShopifyInstall } from "./services/shopifyAuth";
+import { renderAppHome } from "./ui/renderAppHome";
 
 const app = express();
+export { app };
+
 const requireIngressToken = createIngressTokenMiddleware(env.INGRESS_SHARED_TOKEN);
 
 configureShadowCompare({
@@ -103,16 +112,168 @@ function parseChannelEventBody(body: ChannelEventRequestBody): { event?: Channel
   };
 }
 
+app.get("/", (req, res) => {
+  const shop = typeof req.query.shop === "string" ? req.query.shop : "";
+  const host = typeof req.query.host === "string" ? req.query.host : "";
+  const shopifyApp = getShopifyAppConfig();
+
+  res.status(200).type("html").send(
+    renderAppHome({
+      shop,
+      host,
+      clientId: shopifyApp.client_id ?? "",
+      runtimeMode: env.RUNTIME_MODE,
+      appUrl: shopifyApp.app_url ?? env.SHOPIFY_APP_URL ?? "https://gcw-synapse.ncassidy.workers.dev"
+    })
+  );
+});
+
+app.get("/app/summary", (_req, res) => {
+  try {
+    const paritySummary = getShadowCompareSummary();
+    const parity = getShadowParityReport(env.SHADOW_COMPARE_MISMATCH_ALERT_PCT);
+    const channelSummary = getChannelHealthSummary(env.CHANNEL_HEALTH_STALE_MINUTES, env.CHANNEL_HEALTH_WARN_FAILURE_PCT);
+    const metrics = getMetricsSnapshot();
+
+    const webhookFailures =
+      metrics.counters.webhooks_invalid_signature +
+      metrics.counters.webhooks_invalid_json +
+      metrics.counters.webhooks_rejected_topic +
+      metrics.counters.webhooks_forward_failed;
+    const webhookReceived = metrics.counters.webhooks_received;
+    const webhookFailureRatePct = webhookReceived > 0 ? (webhookFailures / webhookReceived) * 100 : 0;
+
+    const launchReadiness = buildLaunchReadinessReport({
+      phase: "validation",
+      runtimeMode: env.RUNTIME_MODE,
+      parity,
+      paritySummary,
+      channelSummary,
+      metrics: {
+        webhooks_received: metrics.counters.webhooks_received,
+        webhooks_invalid_signature: metrics.counters.webhooks_invalid_signature,
+        webhooks_invalid_json: metrics.counters.webhooks_invalid_json,
+        webhooks_rejected_topic: metrics.counters.webhooks_rejected_topic,
+        webhooks_forward_failed: metrics.counters.webhooks_forward_failed
+      },
+      thresholds: {
+        minPairedEvents: env.LAUNCH_MIN_PAIRED_EVENTS,
+        maxWarningChannels: env.LAUNCH_MAX_WARNING_CHANNELS,
+        maxWebhookFailureRatePct: env.LAUNCH_MAX_WEBHOOK_FAILURE_RATE_PCT
+      }
+    });
+
+    res.status(200).json({
+      ok: true,
+      service: "gcw-synapse",
+      runtime_mode: env.RUNTIME_MODE,
+      shopify_client_id: env.SHOPIFY_API_KEY,
+      parity: {
+        status: parity.status,
+        mismatch_rate_pct: parity.mismatch_rate_pct,
+        matched_rate_pct: parity.matched_rate_pct,
+        paired_events: parity.paired_events,
+        threshold_pct: parity.threshold_pct
+      },
+      parity_counts: paritySummary.counts,
+      metrics: {
+        webhooks_received: metrics.counters.webhooks_received,
+        webhooks_shadow_captured: metrics.counters.webhooks_shadow_captured,
+        webhooks_forwarded: metrics.counters.webhooks_forwarded,
+        webhook_failure_rate_pct: webhookFailureRatePct
+      },
+      thresholds: {
+        min_paired_events: env.LAUNCH_MIN_PAIRED_EVENTS,
+        mismatch_alert_pct: env.SHADOW_COMPARE_MISMATCH_ALERT_PCT,
+        max_webhook_failure_rate_pct: env.LAUNCH_MAX_WEBHOOK_FAILURE_RATE_PCT
+      },
+      launch_readiness: launchReadiness,
+      channels: {
+        critical: channelSummary.totals.critical,
+        warning: channelSummary.totals.warning,
+        healthy: channelSummary.totals.healthy
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error instanceof Error ? error.message : "Failed to build app summary"
+    });
+  }
+});
+
 app.get("/health", (_req, res) => {
   res.status(200).json({ ok: true, service: "gcw-synapse" });
 });
 
 app.get("/diagnostics", requireIngressToken, (_req, res) => {
+  const shopifyApp = getShopifyAppConfig();
+
   res.status(200).json({
     ok: true,
     service: "gcw-synapse",
+    shopify_app: {
+      client_id: shopifyApp.client_id,
+      configured: shopifyApp.configured,
+      app_url: shopifyApp.app_url,
+      scopes: shopifyApp.scopes
+    },
     metrics: getMetricsSnapshot()
   });
+});
+
+app.get("/ops/shopify-app", requireIngressToken, (_req, res) => {
+  const shopifyApp = getShopifyAppConfig();
+
+  res.status(200).json({
+    ok: true,
+    app: shopifyApp
+  });
+});
+
+app.get("/ops/shopify-install-status", requireIngressToken, async (_req, res) => {
+  const status = await getShopifyInstallStatus();
+
+  res.status(200).json({
+    ok: true,
+    status
+  });
+});
+
+app.get("/auth/shopify/install", (req, res) => {
+  const shop = typeof req.query.shop === "string" ? req.query.shop.trim() : "";
+
+  if (!shop) {
+    res.status(400).json({ ok: false, error: "shop query parameter is required" });
+    return;
+  }
+
+  try {
+    const install = startShopifyInstall(shop);
+    res.status(200).json({
+      ok: true,
+      shop,
+      client_id: env.SHOPIFY_API_KEY,
+      install_url: install.url
+    });
+  } catch (error) {
+    res.status(400).json({
+      ok: false,
+      error: error instanceof Error ? error.message : "Failed to start Shopify install"
+    });
+  }
+});
+
+app.get("/auth/shopify/callback", async (req, res) => {
+  try {
+    const result = await completeShopifyInstall(new URLSearchParams(req.query as Record<string, string>));
+    res.status(200).json({ ok: true, shop: result.shop, scope: result.scope });
+  } catch (error) {
+    res.status(400).json({
+      ok: false,
+      error: error instanceof Error ? error.message : "Shopify install callback failed"
+    });
+  }
 });
 
 app.get("/compatibility/ga4-id", requireIngressToken, (req, res) => {
@@ -536,6 +697,138 @@ app.get("/compatibility/customer-phone", requireIngressToken, (req, res) => {
   });
 });
 
+app.get("/compatibility/facebook-product-group", requireIngressToken, (req, res) => {
+  const productId = typeof req.query.product_id === "string" ? req.query.product_id : undefined;
+  const contentType = typeof req.query.content_type === "string" ? req.query.content_type : undefined;
+
+  const resolved = resolveFacebookProductGroup({
+    productId,
+    contentType
+  });
+
+  res.status(200).json({
+    ok: true,
+    variable: "Facebook - product group",
+    resolved_facebook_product_group: resolved.content_type,
+    resolved_item_group_id: resolved.item_group_id,
+    sources: {
+      product_id: productId,
+      content_type: contentType
+    }
+  });
+});
+
+app.get("/compatibility/page-title", requireIngressToken, (req, res) => {
+  const title = typeof req.query.title === "string" ? req.query.title : undefined;
+  const documentTitle = typeof req.query.document_title === "string" ? req.query.document_title : undefined;
+  const fallback = typeof req.query.fallback === "string" ? req.query.fallback : undefined;
+
+  const resolvedPageTitle = resolvePageTitle({
+    title,
+    documentTitle,
+    fallback
+  });
+
+  res.status(200).json({
+    ok: true,
+    variable: "DOM - Page Title",
+    resolved_page_title: resolvedPageTitle,
+    sources: {
+      title,
+      document_title: documentTitle,
+      fallback
+    }
+  });
+});
+
+app.get("/compatibility/thank-you-action-field", requireIngressToken, (req, res) => {
+  const orderNumber = typeof req.query.order_number === "string" ? req.query.order_number : undefined;
+  const orderName = typeof req.query.order_name === "string" ? req.query.order_name : undefined;
+  const transactionId = typeof req.query.transaction_id === "string" ? req.query.transaction_id : undefined;
+  const ecommerceValue = typeof req.query.ecommerce_value === "string" ? req.query.ecommerce_value : undefined;
+  const totalPrice = typeof req.query.total_price === "string" ? req.query.total_price : undefined;
+  const currency = typeof req.query.currency === "string" ? req.query.currency : undefined;
+  const tax = typeof req.query.tax === "string" ? req.query.tax : undefined;
+  const shipping = typeof req.query.shipping === "string" ? req.query.shipping : undefined;
+
+  const actionField = resolveThankYouActionField({
+    orderNumber,
+    orderName,
+    transactionId,
+    ecommerceValue,
+    totalPrice,
+    currency,
+    tax,
+    shipping
+  });
+
+  res.status(200).json({
+    ok: true,
+    variable: "dlv - Thank You Page - Action Field",
+    resolved_thank_you_action_field: actionField,
+    sources: {
+      order_number: orderNumber,
+      order_name: orderName,
+      transaction_id: transactionId,
+      ecommerce_value: ecommerceValue,
+      total_price: totalPrice,
+      currency,
+      tax,
+      shipping
+    }
+  });
+});
+
+app.get("/compatibility/product-view-price", requireIngressToken, (req, res) => {
+  const price = typeof req.query.price === "string" ? req.query.price : undefined;
+  const ecommercePrice = typeof req.query.ecommerce_price === "string" ? req.query.ecommerce_price : undefined;
+
+  const resolvedPrice = resolveProductViewPrice({
+    price,
+    ecommercePrice
+  });
+
+  res.status(200).json({
+    ok: true,
+    variable: "dlv - Product View - Price",
+    resolved_product_view_price: resolvedPrice,
+    sources: {
+      price,
+      ecommerce_price: ecommercePrice
+    }
+  });
+});
+
+app.get("/compatibility/product-view-name", requireIngressToken, (req, res) => {
+  const name = typeof req.query.name === "string" ? req.query.name : undefined;
+  const title = typeof req.query.title === "string" ? req.query.title : undefined;
+  const productTitle = typeof req.query.product_title === "string" ? req.query.product_title : undefined;
+
+  const resolvedName = resolveProductViewName({
+    name,
+    title,
+    productTitle
+  });
+
+  res.status(200).json({
+    ok: true,
+    variable: "dlv - Product View - Name",
+    resolved_product_view_name: resolvedName,
+    sources: {
+      name,
+      title,
+      product_title: productTitle
+    }
+  });
+});
+
+// Shopify webhooks must use raw body BEFORE express.json() so HMAC verification stays valid.
+app.use(
+  env.WEBHOOK_PATH_PREFIX,
+  express.raw({ type: "application/json", limit: "1mb" }),
+  webhooksRouter
+);
+
 app.use(express.json());
 
 app.post("/compare/elevar", requireIngressToken, async (req, res) => {
@@ -776,13 +1069,10 @@ app.post("/event", requireIngressToken, (req, res) => {
   });
 });
 
-// Shopify webhook routes use raw body so signature verification remains valid.
-app.use(
-  env.WEBHOOK_PATH_PREFIX,
-  express.raw({ type: "application/json", limit: "1mb" }),
-  webhooksRouter
-);
+const isCloudflareWorker = process.env.CF_WORKER === "1";
 
-app.listen(env.PORT, () => {
-  console.log(`GCW-Synapse listening on port ${env.PORT}`);
-});
+if (!isCloudflareWorker) {
+  app.listen(env.PORT, "0.0.0.0", () => {
+    console.log(`GCW-Synapse listening on 0.0.0.0:${env.PORT}`);
+  });
+}

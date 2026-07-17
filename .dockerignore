@@ -1,0 +1,15 @@
+node_modules
+dist
+.git
+.github
+.tools
+.env
+.env.*
+!.env.example
+*.md
+docs
+data
+.wrangler
+.dev.vars
+worker
+agent-transcripts

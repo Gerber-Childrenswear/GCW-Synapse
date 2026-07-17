@@ -34,6 +34,11 @@ GCW-Synapse is a Shopify analytics relay service that replaces Elevar by forward
 - GET /compatibility/impressions
 - GET /compatibility/add-to-cart
 - GET /compatibility/product-view-details
+- GET /compatibility/facebook-product-group
+- GET /compatibility/page-title
+- GET /compatibility/thank-you-action-field
+- GET /compatibility/product-view-price
+- GET /compatibility/product-view-name
 - POST /compare/elevar
 - POST /compare/channel-event
 - POST /compare/channel-event/batch
@@ -46,6 +51,96 @@ GCW-Synapse is a Shopify analytics relay service that replaces Elevar by forward
 - GET /launch/readiness
 - POST /webhooks/shopify/orders/create
 - POST /webhooks/shopify/orders/paid
+
+## Cloudflare Deploy (gcw-dev)
+
+Full gcw-dev checklist (GTM-WH3W368X, webhooks, shadow compare): [`docs/GCW_DEV_SETUP.md`](docs/GCW_DEV_SETUP.md).
+
+Synapse deploys as a Cloudflare Worker running the existing Express app via Node.js compatibility (`httpServerHandler`). No Docker required.
+
+Optional alternate: [`Dockerfile`](Dockerfile) + Containers remain available if you prefer container hosting later (`wrangler` Containers need local Docker).
+
+### Prerequisites
+
+- Cloudflare account (Workers)
+- Wrangler authenticated (`npx wrangler login`)
+
+### Secrets
+
+Set required secrets before first deploy:
+
+```bash
+npx wrangler secret put GTM_SERVER_URL
+npx wrangler secret put SHOPIFY_WEBHOOK_SECRET
+npx wrangler secret put INGRESS_SHARED_TOKEN
+```
+
+Optional channel vars can be added in the Cloudflare dashboard or `wrangler.jsonc` `vars`:
+
+- `GA4_MEASUREMENT_ID`
+- `GA4_MEASUREMENT_ID_BY_SHOP=gcw-dev.myshopify.com=G-XXXXXXXXXX`
+- `FACEBOOK_PIXEL_ID`
+- `PINTEREST_ID`
+
+`wrangler.jsonc` defaults `RUNTIME_MODE=shadow_compare` for gcw-dev validation.
+
+Local secret mirror for `wrangler dev`:
+
+```powershell
+Copy-Item .dev.vars.example .dev.vars
+```
+
+### Deploy
+
+```bash
+npm run deploy
+```
+
+After deploy, note the Worker URL (`https://gcw-synapse.<account>.workers.dev`).
+
+Smoke checks:
+
+```bash
+curl https://HOST/health
+curl -H "X-Synapse-Token: YOUR_TOKEN" "https://HOST/launch/readiness?phase=validation"
+```
+
+### gcw-dev Shopify webhooks
+
+Synapse is the **GCW-Synapse** Partners app (`client_id` `7d011b70562512bd84b85bd3f9a6e68d`). Config lives in [`shopify.app.toml`](shopify.app.toml).
+
+Install on a shop:
+
+```text
+https://gcw-synapse.ncassidy.workers.dev/auth/shopify/install?shop=gcw-dev.myshopify.com
+```
+
+App-owned webhooks (from `shopify.app.toml`) post to:
+
+| Topic | URL |
+|---|---|
+| Order creation | `https://HOST/webhooks/shopify/orders/create` |
+| Order payment | `https://HOST/webhooks/shopify/orders/paid` |
+
+`SHOPIFY_WEBHOOK_SECRET` must be the app **client secret** (same as `SHOPIFY_API_SECRET`) so HMAC verification matches app webhooks.
+
+Push Partner Dashboard config after toml changes:
+
+```bash
+shopify app deploy
+```
+
+Signed remote replay (set `REPLAY_BASE_URL` and `SHOPIFY_WEBHOOK_SECRET`):
+
+```bash
+# PowerShell
+$env:REPLAY_BASE_URL="https://HOST"
+$env:SHOPIFY_WEBHOOK_SECRET="your-app-client-secret"
+$env:REPLAY_SHOP_DOMAIN="gcw-dev.myshopify.com"
+npm run replay:webhook:create
+```
+
+While `RUNTIME_MODE=shadow_compare`, Synapse verifies/maps webhooks but does not forward to GTM. Ingest Elevar baselines via `POST /compare/elevar`, then watch `GET /compare/parity` and `GET /launch/readiness?phase=validation`.
 
 ## Local Setup
 
@@ -327,6 +422,14 @@ All three endpoints accept `line_items_json`.
 Example:
 
 `/compatibility/add-to-cart?line_items_json=%5B%7B%22sku%22%3A%22SKU-123%22%2C%22title%22%3A%22Footie%22%2C%22price%22%3A%2225.00%22%2C%22quantity%22%3A2%2C%22product_type%22%3A%22Onesies%22%7D%5D`
+
+## Remaining Phase A Compatibility
+
+- `GET /compatibility/facebook-product-group` resolves Meta `content_type` (`product_group`) and optional `product_id` as `item_group_id`.
+- `GET /compatibility/page-title` resolves `DOM - Page Title` from `title` / `document_title` / `fallback`.
+- `GET /compatibility/thank-you-action-field` builds thank-you `actionField` (`id`, `revenue`, `currency`, optional `tax`/`shipping`).
+- `GET /compatibility/product-view-price` resolves product view price from `price` then `ecommerce_price`.
+- `GET /compatibility/product-view-name` resolves product view name from `name` / `title` / `product_title`.
 
 ## Local Signed Replay
 
