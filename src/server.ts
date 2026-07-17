@@ -23,6 +23,7 @@ import {
   getRecentChannelEvents,
   ingestChannelEvent
 } from "./services/channelHealth";
+import { buildPlatformMatrix } from "./services/platformMatrix";
 import {
   resolveAddToCartCompatibility,
   resolveEcommerceImpressions,
@@ -1596,6 +1597,15 @@ app.put("/api/mappings", requireIngressToken, async (req, res) => {
   }
 });
 
+app.get("/compare/platforms", requireIngressToken, (_req, res) => {
+  const matrix = buildPlatformMatrix(env.CHANNEL_HEALTH_STALE_MINUTES, env.CHANNEL_HEALTH_WARN_FAILURE_PCT);
+  res.status(200).json({
+    ok: true,
+    runtime_mode: env.RUNTIME_MODE,
+    matrix
+  });
+});
+
 app.get("/compare/channels", requireIngressToken, (_req, res) => {
   const summary = getChannelHealthSummary(env.CHANNEL_HEALTH_STALE_MINUTES, env.CHANNEL_HEALTH_WARN_FAILURE_PCT);
 
@@ -1627,12 +1637,15 @@ app.get("/compare/ui-model", requireIngressToken, (req, res) => {
   const metrics = getMetricsSnapshot();
   const channelSummary = getChannelHealthSummary(env.CHANNEL_HEALTH_STALE_MINUTES, env.CHANNEL_HEALTH_WARN_FAILURE_PCT);
   const issues = getChannelTroubleshooting(channelSummary);
+  const platformMatrix = buildPlatformMatrix(env.CHANNEL_HEALTH_STALE_MINUTES, env.CHANNEL_HEALTH_WARN_FAILURE_PCT);
+  const browserParity = getBrowserParityReport(env.BROWSER_PARITY_MISMATCH_ALERT_PCT);
   const launchReadiness = buildLaunchReadinessReport({
     phase: "validation",
     runtimeMode: env.RUNTIME_MODE,
     parity,
     paritySummary,
     channelSummary,
+    browserParity,
     metrics: {
       webhooks_received: metrics.counters.webhooks_received,
       webhooks_invalid_signature: metrics.counters.webhooks_invalid_signature,
@@ -1643,7 +1656,8 @@ app.get("/compare/ui-model", requireIngressToken, (req, res) => {
     thresholds: {
       minPairedEvents: env.LAUNCH_MIN_PAIRED_EVENTS,
       maxWarningChannels: env.LAUNCH_MAX_WARNING_CHANNELS,
-      maxWebhookFailureRatePct: env.LAUNCH_MAX_WEBHOOK_FAILURE_RATE_PCT
+      maxWebhookFailureRatePct: env.LAUNCH_MAX_WEBHOOK_FAILURE_RATE_PCT,
+      minBrowserPairedEvents: env.LAUNCH_MIN_BROWSER_PAIRED_EVENTS
     }
   });
 
@@ -1652,9 +1666,11 @@ app.get("/compare/ui-model", requireIngressToken, (req, res) => {
     source_of_truth: "elevar",
     runtime_mode: env.RUNTIME_MODE,
     parity,
+    browser_parity: browserParity,
     parity_counts: paritySummary.counts,
     parity_mismatches_preview: paritySummary.mismatches_preview,
     channels: channelSummary,
+    platforms: platformMatrix,
     troubleshooting: {
       issues,
       links: getChannelHelpLinks()
@@ -1662,7 +1678,8 @@ app.get("/compare/ui-model", requireIngressToken, (req, res) => {
     launch_readiness: launchReadiness,
     recent: {
       shadow_events: getRecentShadowEvents(limit),
-      channel_events: getRecentChannelEvents(limit)
+      channel_events: getRecentChannelEvents(limit),
+      browser_events: getRecentBrowserEvents(limit)
     }
   });
 });

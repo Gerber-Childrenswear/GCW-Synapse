@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import {
   getAdvisorAlerts,
   ApiRequestError,
+  getCompareUiModel,
   getEventSchemas,
+  getPlatformMatrix,
   getQaChecklist,
   getRuntimeStatus,
   getShadowComparisons,
@@ -16,15 +18,18 @@ import {
   type AdvisorChatMessage,
   type EndpointProbeResult,
   type EventSchema,
+  type PlatformMatrix,
   type QaChecklistItem,
   type RuntimeStatus,
   type ShadowStats,
   type ShopifyInstallStatus,
-  type SmokeRunResult
+  type SmokeRunResult,
+  type UiModel
 } from "./api";
+import { PlatformsDashboard } from "./PlatformsDashboard";
 import "./app.css";
 
-type NavTab = "runtime" | "advisor" | "events" | "webhooks" | "shadow" | "qa" | "edge";
+type NavTab = "platforms" | "runtime" | "advisor" | "events" | "webhooks" | "shadow" | "qa" | "edge";
 
 type LoadState = {
   loading: boolean;
@@ -32,6 +37,7 @@ type LoadState = {
 };
 
 const NAV_ITEMS: Array<{ id: NavTab; label: string; subtitle: string }> = [
+  { id: "platforms", label: "Platforms", subtitle: "Browser vs server match by destination" },
   { id: "runtime", label: "Runtime Status", subtitle: "System health and adapter status" },
   { id: "advisor", label: "Synapse Advisor", subtitle: "Local AI chat and proactive alerts" },
   { id: "events", label: "Event Schemas", subtitle: "Elevar replacement contracts" },
@@ -41,7 +47,7 @@ const NAV_ITEMS: Array<{ id: NavTab; label: string; subtitle: string }> = [
   { id: "edge", label: "Edge Ops", subtitle: "Toggles and route health checks" }
 ];
 
-const SIMPLE_NAV_IDS: NavTab[] = ["runtime", "edge", "qa"];
+const SIMPLE_NAV_IDS: NavTab[] = ["platforms", "runtime", "qa", "edge"];
 
 type FriendlyError = {
   title: string;
@@ -189,11 +195,27 @@ const EDGE_CHECKS: EdgeCheckDefinition[] = [
   { id: "ops-alerts", label: "Ops Alerts", path: "/ops/alerts", method: "GET", expectedStatuses: [200], group: "webhooks" },
   {
     id: "guard-auth",
-    label: "Auth Guardrail",
-    path: "/auth/shopify/install?shop=gerberchildrenswear.myshopify.com",
+    label: "Auth Install Redirect",
+    path: "/auth/shopify/install?shop=gcw-dev.myshopify.com",
     method: "GET",
-    expectedStatuses: [501],
+    expectedStatuses: [302],
     group: "guardrails"
+  },
+  {
+    id: "compare-platforms",
+    label: "Compare Platforms",
+    path: "/compare/platforms",
+    method: "GET",
+    expectedStatuses: [200],
+    group: "runtime"
+  },
+  {
+    id: "compare-ui-model",
+    label: "Compare UI Model",
+    path: "/compare/ui-model",
+    method: "GET",
+    expectedStatuses: [200],
+    group: "runtime"
   },
   {
     id: "guard-compat",
@@ -820,7 +842,7 @@ function AdvisorSection({
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<NavTab>("runtime");
+  const [activeTab, setActiveTab] = useState<NavTab>("platforms");
   const [state, setState] = useState<LoadState>({ loading: true, error: null });
   const [lastError, setLastError] = useState<unknown>(null);
   const [simpleMode, setSimpleMode] = useState(true);
@@ -833,6 +855,9 @@ export default function App() {
   const [checklist, setChecklist] = useState<QaChecklistItem[]>([]);
   const [smokeResult, setSmokeResult] = useState<SmokeRunResult | null>(null);
   const [shopifyStatus, setShopifyStatus] = useState<ShopifyInstallStatus | null>(null);
+  const [uiModel, setUiModel] = useState<UiModel | null>(null);
+  const [platformMatrix, setPlatformMatrix] = useState<PlatformMatrix | null>(null);
+  const [platformsLoading, setPlatformsLoading] = useState(false);
   const [advisorAlerts, setAdvisorAlerts] = useState<AdvisorAlertItem[]>([]);
   const [advisorMessages, setAdvisorMessages] = useState<AdvisorChatMessage[]>([]);
   const [advisorDraft, setAdvisorDraft] = useState("");
@@ -857,9 +882,26 @@ export default function App() {
 
   useEffect(() => {
     if (!visibleNavItems.some((item) => item.id === activeTab)) {
-      setActiveTab("runtime");
+      setActiveTab("platforms");
     }
   }, [visibleNavItems, activeTab]);
+
+  function loadPlatformsData(): void {
+    setPlatformsLoading(true);
+    Promise.all([getCompareUiModel(100), getPlatformMatrix()])
+      .then(([model, matrix]) => {
+        setUiModel(model);
+        setPlatformMatrix(matrix);
+      })
+      .catch((error: unknown) => {
+        const friendly = getFriendlyError(error);
+        setState((prev) => ({ ...prev, error: friendly.title }));
+        setLastError(error);
+      })
+      .finally(() => {
+        setPlatformsLoading(false);
+      });
+  }
 
   function loadControlPanelData(): void {
     setState({ loading: true, error: null });
@@ -873,9 +915,23 @@ export default function App() {
       getShadowComparisons(50),
       getQaChecklist(),
       getShopifyInstallStatus(),
-      getAdvisorAlerts()
+      getAdvisorAlerts(),
+      getCompareUiModel(100),
+      getPlatformMatrix()
     ])
-      .then(([runtimeData, schemaData, webhookData, shadowData, comparisonData, checklistData, shopifyData, advisorData]) => {
+      .then(
+        ([
+          runtimeData,
+          schemaData,
+          webhookData,
+          shadowData,
+          comparisonData,
+          checklistData,
+          shopifyData,
+          advisorData,
+          model,
+          matrix
+        ]) => {
         setRuntime(runtimeData);
         setSchemas(schemaData);
         setWebhooks(webhookData);
@@ -884,6 +940,8 @@ export default function App() {
         setChecklist(checklistData);
         setShopifyStatus(shopifyData);
         setAdvisorAlerts(advisorData);
+        setUiModel(model);
+        setPlatformMatrix(matrix);
         setState({ loading: false, error: null });
         setLastError(null);
       })
@@ -1071,16 +1129,18 @@ export default function App() {
       </aside>
 
       <main className="content">
-        <QuickStartPanel
-          onGoRuntime={() => setActiveTab("runtime")}
-          onGoEdge={() => setActiveTab("edge")}
-          onGoQa={() => setActiveTab("qa")}
-          simpleMode={simpleMode}
-          onToggleSimpleMode={(checked) => setSimpleMode(checked)}
-        />
+        {activeTab !== "platforms" ? (
+          <QuickStartPanel
+            onGoRuntime={() => setActiveTab("platforms")}
+            onGoEdge={() => setActiveTab("edge")}
+            onGoQa={() => setActiveTab("qa")}
+            simpleMode={simpleMode}
+            onToggleSimpleMode={(checked) => setSimpleMode(checked)}
+          />
+        ) : null}
 
         <header className="page-header">
-          <h1>GCW Synapse - Elevar Migration Control Panel</h1>
+          <h1>GCW Synapse</h1>
           <p>{activeItem.subtitle}</p>
         </header>
 
@@ -1095,6 +1155,14 @@ export default function App() {
 
         {!state.loading ? (
           <>
+            {activeTab === "platforms" ? (
+              <PlatformsDashboard
+                uiModel={uiModel}
+                matrix={platformMatrix}
+                loading={platformsLoading}
+                onRefresh={loadPlatformsData}
+              />
+            ) : null}
             {activeTab === "runtime" ? <RuntimeSection runtime={runtime} shopifyStatus={shopifyStatus} /> : null}
             {activeTab === "advisor" ? (
               <AdvisorSection

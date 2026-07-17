@@ -20,6 +20,14 @@ import {
   getControlPanelSchemas,
   getControlPanelVendors
 } from "../src/services/controlPanelData";
+import {
+  getChannelHealthSummary,
+  getChannelHelpLinks,
+  getChannelTroubleshooting,
+  getRecentChannelEvents,
+  ingestChannelEvent
+} from "../src/services/channelHealth";
+import { buildPlatformMatrix } from "../src/services/platformMatrix";
 
 const PROXY_PREFIXES = [
   "/auth/",
@@ -545,42 +553,89 @@ function getParityModel() {
   };
 }
 
-function getChannelSummary() {
-  const byChannel = new Map<string, { total: number; failed: number; last_seen?: string }>();
+const CHANNEL_CACHE_URL = "https://gcw-synapse-super.internal/channel-events-v1";
 
-  for (const raw of edgeChannelEvents) {
-    const item = raw as { channel?: string; status?: string; observed_at?: string };
-    const key = item.channel ?? "unknown";
-    const prev = byChannel.get(key) ?? { total: 0, failed: 0, last_seen: undefined };
-    prev.total += 1;
-    if (item.status === "error") {
-      prev.failed += 1;
-    }
-    if (item.observed_at) {
-      prev.last_seen = item.observed_at;
-    }
-    byChannel.set(key, prev);
+async function persistChannelEventsToCache(): Promise<void> {
+  try {
+    const events = getRecentChannelEvents(500);
+    await caches.default.put(
+      CHANNEL_CACHE_URL,
+      new Response(JSON.stringify(events), {
+        headers: {
+          "content-type": "application/json",
+          "cache-control": "max-age=86400"
+        }
+      })
+    );
+  } catch {
+    // Cache API may be unavailable in some runtimes; ignore.
   }
+}
 
-  const channels = Array.from(byChannel.entries()).map(([channel, stats]) => {
-    const failureRate = stats.total > 0 ? (stats.failed / stats.total) * 100 : 0;
-    return {
-      channel,
-      total_events: stats.total,
-      failed_events: stats.failed,
-      failure_rate_pct: Number.parseFloat(failureRate.toFixed(2)),
-      status: failureRate > 20 ? "warning" : "ok",
-      last_seen: stats.last_seen ?? null
-    };
+async function hydrateChannelEventsFromCache(): Promise<void> {
+  try {
+    if (getRecentChannelEvents(1).length > 0) return;
+    const cached = await caches.default.match(CHANNEL_CACHE_URL);
+    if (!cached) return;
+    const events = (await cached.json()) as Array<Record<string, unknown>>;
+    if (!Array.isArray(events)) return;
+    for (const event of events.slice().reverse()) {
+      if (typeof event.channel !== "string" || typeof event.event_name !== "string") continue;
+      ingestChannelEvent({
+        channel: event.channel,
+        surface: (event.surface as "pixel" | "server" | "runtime" | "webhook") || "pixel",
+        destination: typeof event.destination === "string" ? event.destination : "unknown",
+        pixel_id: typeof event.pixel_id === "string" ? event.pixel_id : undefined,
+        event_name: event.event_name,
+        event_id: typeof event.event_id === "string" ? event.event_id : undefined,
+        transaction_id: typeof event.transaction_id === "string" ? event.transaction_id : undefined,
+        status: event.status === "error" ? "error" : "ok",
+        error_message: typeof event.error_message === "string" ? event.error_message : undefined,
+        observed_at: typeof event.observed_at === "string" ? event.observed_at : new Date().toISOString()
+      });
+    }
+  } catch {
+    // ignore hydrate failures
+  }
+}
+
+async function getChannelSummary() {
+  await hydrateChannelEventsFromCache();
+  const summary = getChannelHealthSummary(90, 5);
+  return {
+    total_channels: summary.totals.tracked_integrations,
+    warning_channels: summary.totals.warning + summary.totals.critical,
+    status: summary.totals.critical > 0 || summary.totals.warning > 0 ? "warning" : "ok",
+    totals: summary.totals,
+    channels: summary.channels
+  };
+}
+
+function recordSynapseBrowserChannel(eventName: string, eventId: string | undefined, shop: string): void {
+  ingestChannelEvent({
+    channel: "synapse",
+    surface: "pixel",
+    destination: "browser-beacon",
+    event_name: eventName,
+    event_id: eventId,
+    source_theme: "gcw-synapse",
+    source_surface: "storefront",
+    status: "ok",
+    observed_at: new Date().toISOString()
   });
 
-  const warningChannels = channels.filter((channel) => channel.status === "warning").length;
-  return {
-    total_channels: channels.length,
-    warning_channels: warningChannels,
-    status: warningChannels > 0 ? "warning" : "ok",
-    channels
-  };
+  // Mirror into sGTM browser path so Server GTM row shows browser activity.
+  ingestChannelEvent({
+    channel: "server_gtm",
+    surface: "pixel",
+    destination: "gtm-browser-bridge",
+    event_name: eventName,
+    event_id: eventId,
+    source_theme: shop,
+    source_surface: "browser",
+    status: "ok",
+    observed_at: new Date().toISOString()
+  });
 }
 
 function shouldProxy(pathname: string): boolean {
@@ -900,9 +955,28 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
       return jsonResponse({ ok: false, error: "Invalid channel event payload" }, 400);
     }
 
-    edgeChannelEvents.unshift({ ...payload, observed_at: (payload.observed_at as string | undefined) ?? new Date().toISOString() });
+    const observedAt = (payload.observed_at as string | undefined) ?? new Date().toISOString();
+    const item = { ...payload, observed_at: observedAt };
+    edgeChannelEvents.unshift(item);
     if (edgeChannelEvents.length > 500) {
       edgeChannelEvents.length = 500;
+    }
+
+    if (typeof payload.channel === "string" && typeof payload.event_name === "string") {
+      await hydrateChannelEventsFromCache();
+      ingestChannelEvent({
+        channel: payload.channel,
+        surface: (payload.surface as "pixel" | "server" | "runtime" | "webhook") || "pixel",
+        destination: typeof payload.destination === "string" ? payload.destination : "unknown",
+        pixel_id: typeof payload.pixel_id === "string" ? payload.pixel_id : undefined,
+        event_name: payload.event_name,
+        event_id: typeof payload.event_id === "string" ? payload.event_id : undefined,
+        transaction_id: typeof payload.transaction_id === "string" ? payload.transaction_id : undefined,
+        status: payload.status === "error" ? "error" : "ok",
+        error_message: typeof payload.error_message === "string" ? payload.error_message : undefined,
+        observed_at: observedAt
+      });
+      await persistChannelEventsToCache();
     }
 
     return jsonResponse({ ok: true, status: "channel_event_recorded", item: edgeChannelEvents[0] }, 202);
@@ -922,15 +996,31 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
     }
 
     const accepted: Array<Record<string, unknown>> = [];
+    await hydrateChannelEventsFromCache();
     for (const event of events) {
       const item = { ...event, observed_at: (event.observed_at as string | undefined) ?? new Date().toISOString() };
       edgeChannelEvents.unshift(item);
       accepted.push(item);
+      if (typeof event.channel === "string" && typeof event.event_name === "string") {
+        ingestChannelEvent({
+          channel: event.channel,
+          surface: (event.surface as "pixel" | "server" | "runtime" | "webhook") || "pixel",
+          destination: typeof event.destination === "string" ? event.destination : "unknown",
+          pixel_id: typeof event.pixel_id === "string" ? event.pixel_id : undefined,
+          event_name: event.event_name,
+          event_id: typeof event.event_id === "string" ? event.event_id : undefined,
+          transaction_id: typeof event.transaction_id === "string" ? event.transaction_id : undefined,
+          status: event.status === "error" ? "error" : "ok",
+          error_message: typeof event.error_message === "string" ? event.error_message : undefined,
+          observed_at: item.observed_at as string
+        });
+      }
     }
 
     if (edgeChannelEvents.length > 500) {
       edgeChannelEvents.length = 500;
     }
+    await persistChannelEventsToCache();
 
     return jsonResponse({
       ok: true,
@@ -945,63 +1035,72 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
     }, 202);
   }
 
+  if (request.method === "GET" && url.pathname === "/compare/platforms") {
+    await hydrateChannelEventsFromCache();
+    return jsonResponse({
+      ok: true,
+      runtime_mode: "edge",
+      matrix: buildPlatformMatrix(90, 5)
+    });
+  }
+
   if (request.method === "GET" && url.pathname === "/compare/channels") {
     return jsonResponse({
       ok: true,
       runtime_mode: "edge",
-      summary: getChannelSummary()
+      summary: await getChannelSummary()
     });
   }
 
   if (request.method === "GET" && url.pathname === "/compare/troubleshoot") {
-    const summary = getChannelSummary();
-    const issues = summary.channels
-      .filter((channel) => channel.status === "warning")
-      .map((channel) => ({
-        channel: channel.channel,
-        severity: "warning",
-        detail: `High failure rate (${channel.failure_rate_pct}%)`
-      }));
+    await hydrateChannelEventsFromCache();
+    const summary = getChannelHealthSummary(90, 5);
+    const issues = getChannelTroubleshooting(summary);
 
     return jsonResponse({
       ok: true,
       issues,
-      links: [
-        { label: "Event Ingestion", href: "/event" },
-        { label: "Parity Overview", href: "/compare/parity" },
-        { label: "Runtime Summary", href: "/runtime/summary" }
-      ]
+      links: getChannelHelpLinks()
     });
   }
 
   if (request.method === "GET" && url.pathname === "/compare/ui-model") {
     const limit = parseLimit(url.searchParams.get("limit"), 100);
-    const channelSummary = getChannelSummary();
+    const channelSummary = await getChannelSummary();
+    const platformMatrix = buildPlatformMatrix(90, 5);
+    const healthSummary = getChannelHealthSummary(90, 5);
+    const issues = getChannelTroubleshooting(healthSummary);
+    const parity = getParityModel();
 
     return jsonResponse({
       ok: true,
       source_of_truth: "edge",
       runtime_mode: "edge",
-      parity: getParityModel(),
+      parity,
+      browser_parity: {
+        matched_rate_pct: parity.matched_rate_pct,
+        mismatch_rate_pct: parity.mismatch_rate_pct,
+        paired_events: parity.total_pairs,
+        status: parity.status
+      },
       parity_counts: getShadowCounts(),
-      parity_mismatches_preview: edgeShadowComparisons.filter((item) => (item as { type?: string }).type === "mismatched").slice(0, 20),
+      parity_mismatches_preview: edgeShadowComparisons
+        .filter((item) => (item as { type?: string }).type === "mismatched")
+        .slice(0, 20),
       channels: channelSummary,
+      platforms: platformMatrix,
       troubleshooting: {
-        issues: channelSummary.channels
-          .filter((channel) => channel.status === "warning")
-          .map((channel) => ({ channel: channel.channel, severity: "warning" })),
-        links: [
-          { label: "Parity", href: "/compare/parity" },
-          { label: "Channels", href: "/compare/channels" }
-        ]
+        issues,
+        links: getChannelHelpLinks()
       },
       launch_readiness: {
-        status: getParityModel().status === "ok" ? "go" : "hold",
-        rationale: getParityModel().status === "ok" ? ["Parity within threshold"] : ["Parity alert active"]
+        status: parity.status === "ok" ? "go" : "hold",
+        rationale: parity.status === "ok" ? ["Parity within threshold"] : ["Parity alert active"]
       },
       recent: {
         shadow_events: edgeShadowComparisons.slice(0, limit),
-        channel_events: edgeChannelEvents.slice(0, limit)
+        channel_events: getRecentChannelEvents(limit),
+        browser_events: edgeBrowserEvents.slice(0, limit)
       }
     });
   }
@@ -1063,6 +1162,36 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
       edgeWebhookLog.length = 500;
     }
 
+    const orderPayload = (payload ?? {}) as Record<string, unknown>;
+    const orderId =
+      (typeof orderPayload.id === "number" || typeof orderPayload.id === "string"
+        ? String(orderPayload.id)
+        : undefined) ||
+      (typeof orderPayload.order_id === "string" ? orderPayload.order_id : undefined);
+    const topic = url.pathname.includes("refund") ? "refund" : "purchase";
+    await hydrateChannelEventsFromCache();
+    ingestChannelEvent({
+      channel: "server_gtm",
+      surface: "webhook",
+      destination: "synapse-webhook",
+      event_name: topic,
+      event_id: orderId,
+      transaction_id: orderId,
+      status: "ok",
+      observed_at: new Date().toISOString()
+    });
+    ingestChannelEvent({
+      channel: "synapse",
+      surface: "server",
+      destination: "order-webhook",
+      event_name: topic === "refund" ? "refunds/create" : "orders/paid",
+      event_id: orderId,
+      transaction_id: orderId,
+      status: "ok",
+      observed_at: new Date().toISOString()
+    });
+    await persistChannelEventsToCache();
+
     return jsonResponse({ ok: true, status: "webhook_received", path: url.pathname }, 202);
   }
 
@@ -1104,7 +1233,7 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
         suppressed: edgeEventsSuppressed
       },
       parity: getParityModel(),
-      channels: getChannelSummary(),
+      channels: await getChannelSummary(),
       dead_letter: {
         total_records: 0
       },
@@ -1321,6 +1450,9 @@ export default {
 
       edgeBrowserBeaconsAccepted += 1;
       edgeEventsGenerated += 1;
+      await hydrateChannelEventsFromCache();
+      recordSynapseBrowserChannel(eventName, record.event_id, record.shop);
+      await persistChannelEventsToCache();
 
       return addSecurityHeaders(
         addCorsHeaders(

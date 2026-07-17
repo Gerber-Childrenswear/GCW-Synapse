@@ -228,3 +228,86 @@ export async function sendAdvisorMessage(input: {
 }): Promise<AdvisorChatResponse> {
   return requestJson<AdvisorChatResponse>("/api/advisor/chat", "POST", input);
 }
+
+export type SurfacePulse = {
+  status: "firing" | "silent" | "error" | "idle";
+  total_events: number;
+  error_events: number;
+  failure_rate_pct: number;
+  last_event_at: string | null;
+  minutes_since_last_event: number | null;
+  event_counts: Record<string, number>;
+  destinations: string[];
+};
+
+export type TroubleshootingIssue = {
+  key: string;
+  severity: "warning" | "critical";
+  title: string;
+  details: string;
+  recommendations: string[];
+  links: string[];
+};
+
+export type PlatformRow = {
+  id: string;
+  label: string;
+  browser: SurfacePulse;
+  server: SurfacePulse;
+  match_pct: number | null;
+  paired_events: number;
+  status: "healthy" | "warning" | "critical" | "idle";
+  expected_events: string[];
+  docs: string[];
+  issues: TroubleshootingIssue[];
+  tips: string[];
+};
+
+export type PlatformMatrix = {
+  generated_at: string;
+  totals: {
+    platforms: number;
+    healthy: number;
+    warning: number;
+    critical: number;
+    idle: number;
+    avg_match_pct: number | null;
+  };
+  platforms: PlatformRow[];
+  troubleshooting: TroubleshootingIssue[];
+  links: Record<string, string[]>;
+};
+
+export type UiModel = {
+  ok: boolean;
+  runtime_mode?: string;
+  parity?: {
+    matched_rate_pct?: number;
+    mismatch_rate_pct?: number;
+    status?: string;
+    total_pairs?: number;
+  };
+  browser_parity?: {
+    matched_rate_pct?: number;
+    mismatch_rate_pct?: number;
+    paired_events?: number;
+    status?: string;
+  };
+  platforms?: PlatformMatrix;
+  channels?: unknown;
+  troubleshooting?: {
+    issues?: TroubleshootingIssue[];
+    links?: Record<string, string[]> | Array<{ label: string; href: string }>;
+  };
+  launch_readiness?: unknown;
+  recent?: unknown;
+};
+
+export async function getPlatformMatrix(): Promise<PlatformMatrix> {
+  const data = await request<{ ok: boolean; matrix: PlatformMatrix }>("/compare/platforms");
+  return data.matrix;
+}
+
+export async function getCompareUiModel(limit = 100): Promise<UiModel> {
+  return request<UiModel>(`/compare/ui-model?limit=${limit}`);
+}
