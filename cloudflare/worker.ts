@@ -33,8 +33,28 @@ let workerBootMs: number | null = null;
 const edgeWebhookLog: unknown[] = [];
 const edgeShadowComparisons: unknown[] = [];
 const edgeChannelEvents: Array<Record<string, unknown>> = [];
+const edgeBrowserEvents: Array<Record<string, unknown>> = [];
 let edgeEventsGenerated = 0;
 let edgeEventsSuppressed = 0;
+let edgeBrowserBeaconsAccepted = 0;
+
+const ALLOWED_BROWSER_EVENTS = new Set([
+  "dl_user_data",
+  "dl_view_item",
+  "dl_view_item_list",
+  "dl_view_search_results",
+  "dl_select_item",
+  "dl_add_to_cart",
+  "dl_remove_from_cart",
+  "dl_view_cart",
+  "dl_begin_checkout",
+  "dl_add_shipping_info",
+  "dl_add_payment_info",
+  "dl_purchase",
+  "dl_sign_up",
+  "dl_login",
+  "dl_subscribe"
+]);
 const eventRateWindowMs = 60_000;
 const eventRateState = new Map<string, { windowStartMs: number; count: number }>();
 
@@ -141,6 +161,10 @@ function isInternalRouteExempt(pathname: string, method: string): boolean {
   }
 
   if (pathname === "/event" && (method === "POST" || method === "OPTIONS")) {
+    return true;
+  }
+
+  if (pathname === "/browser/beacon" && (method === "POST" || method === "OPTIONS")) {
     return true;
   }
 
@@ -659,6 +683,17 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
     });
   }
 
+  if (request.method === "GET" && url.pathname === "/compare/browser") {
+    const limit = parseLimit(url.searchParams.get("limit"), 100);
+    return jsonResponse({
+      ok: true,
+      runtime_mode: "edge",
+      accepted: edgeBrowserBeaconsAccepted,
+      count: Math.min(limit, edgeBrowserEvents.length),
+      events: edgeBrowserEvents.slice(0, limit)
+    });
+  }
+
   if (request.method === "GET" && url.pathname === "/compare/recent") {
     const limit = parseLimit(url.searchParams.get("limit"), 100);
     const events = edgeShadowComparisons.slice(0, limit);
@@ -873,7 +908,10 @@ export default {
       }
     }
 
-    if (url.pathname === "/event" && request.method === "OPTIONS") {
+    if (
+      (url.pathname === "/event" || url.pathname === "/browser/beacon") &&
+      request.method === "OPTIONS"
+    ) {
       const origin = request.headers.get("origin");
       const allowedOrigins = parseAllowedOrigins(env.PUBLIC_EVENT_ALLOWED_ORIGINS);
 
@@ -882,6 +920,86 @@ export default {
       }
 
       return addSecurityHeaders(addCorsHeaders(new Response(null, { status: 204 }), request, origin));
+    }
+
+    if (url.pathname === "/browser/beacon" && request.method === "POST") {
+      const allowedOrigins = parseAllowedOrigins(env.PUBLIC_EVENT_ALLOWED_ORIGINS);
+      const origin = request.headers.get("origin");
+      // Allow no-origin (web pixel sandbox / keepalive) plus allowlisted storefronts.
+      if (origin && !isAllowedOrigin(origin, allowedOrigins)) {
+        return addSecurityHeaders(
+          addCorsHeaders(jsonResponse({ ok: false, error: "Origin not allowed" }, 403), request, origin)
+        );
+      }
+
+      const rate = checkEventRateLimit(request, env);
+      if (!rate.allowed) {
+        return addSecurityHeaders(
+          addCorsHeaders(jsonResponse({ ok: false, error: "Rate limit exceeded" }, 429), request, origin ?? undefined)
+        );
+      }
+
+      const maxBodyBytes = parsePositiveInt(env.PUBLIC_EVENT_MAX_BODY_BYTES, 16_384);
+      const rawBody = await request.text();
+      const rawBodyBytes = new TextEncoder().encode(rawBody).byteLength;
+      if (rawBodyBytes > maxBodyBytes) {
+        return addSecurityHeaders(
+          addCorsHeaders(jsonResponse({ ok: false, error: "Payload too large" }, 413), request, origin ?? undefined)
+        );
+      }
+
+      let payload: Record<string, unknown> | null = null;
+      try {
+        payload = JSON.parse(rawBody) as Record<string, unknown>;
+      } catch {
+        return addSecurityHeaders(
+          addCorsHeaders(jsonResponse({ ok: false, error: "Invalid JSON payload" }, 400), request, origin ?? undefined)
+        );
+      }
+
+      const eventName = typeof payload.event === "string" ? payload.event : "";
+      if (!eventName || !ALLOWED_BROWSER_EVENTS.has(eventName)) {
+        return addSecurityHeaders(
+          addCorsHeaders(jsonResponse({ ok: false, error: "invalid_event" }, 400), request, origin ?? undefined)
+        );
+      }
+
+      const record = {
+        receivedAt: new Date().toISOString(),
+        source: "edge-browser-beacon",
+        shop: typeof payload.shop === "string" ? payload.shop : "unknown-shop",
+        event: eventName,
+        event_id: typeof payload.event_id === "string" ? payload.event_id : undefined,
+        payload
+      };
+
+      edgeBrowserEvents.unshift(record);
+      edgeWebhookLog.unshift(record);
+      if (edgeBrowserEvents.length > 500) {
+        edgeBrowserEvents.length = 500;
+      }
+      if (edgeWebhookLog.length > 500) {
+        edgeWebhookLog.length = 500;
+      }
+
+      edgeBrowserBeaconsAccepted += 1;
+      edgeEventsGenerated += 1;
+
+      return addSecurityHeaders(
+        addCorsHeaders(
+          jsonResponse(
+            {
+              ok: true,
+              accepted: true,
+              key: `${record.shop}:${eventName}:${record.event_id ?? edgeBrowserBeaconsAccepted}`,
+              event: eventName
+            },
+            202
+          ),
+          request,
+          origin ?? undefined
+        )
+      );
     }
 
     if (url.pathname === "/event" && request.method === "POST") {
