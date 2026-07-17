@@ -12,10 +12,12 @@
 2. On the **live** theme (or the theme you test with), click **Customize**
 3. In the theme editor left sidebar, open **App embeds** (puzzle-piece icon — **not** “Apps” blocks in the page body)
 4. Find **GCW Synapse** and turn it **ON**
-5. Set **Synapse endpoint** to:
-   `https://gcw-synapse-super.gcw-synapse.workers.dev/event`
-6. Leave **Ingress token** blank
-7. Click **Save** (top right)
+5. Set **Browser beacon URL** to:
+   `https://gcw-synapse-super.gcw-synapse.workers.dev/browser/beacon`
+6. Leave **Legacy /event endpoint** as:
+   `https://gcw-synapse-super.gcw-synapse.workers.dev/event` (optional transitional)
+7. Leave **Ingress token** blank
+8. Click **Save** (top right)
 
 If **GCW Synapse** is missing from the App embeds list, the theme extension was not deployed to this shop — see **Deploy extension** below.
 
@@ -61,10 +63,11 @@ After deploy, repeat **App embeds** steps above.
 With embed ON, open **Preview** in theme editor → browser DevTools → Console:
 
 ```js
-window.GCW_SYNAPSE_ENDPOINT
+window.SynapseConfig
+window.dataLayer?.filter(e => String(e.event||'').startsWith('dl_')).slice(-5)
 ```
 
-Should show `https://gcw-synapse-super.gcw-synapse.workers.dev/event`.
+`SynapseConfig.beaconUrl` should be `https://gcw-synapse-super.gcw-synapse.workers.dev/browser/beacon`, and you should see `dl_user_data` / `dl_view_item` (etc.) in `dataLayer`.
 
 ### Storefront
 
