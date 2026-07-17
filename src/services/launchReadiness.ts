@@ -1,3 +1,4 @@
+import type { BrowserParityReport } from "./browserEvents";
 import type { ChannelHealthSummary } from "./channelHealth";
 import type { ShadowParityReport, ShadowCompareSummary } from "./shadowCompare";
 
@@ -20,6 +21,7 @@ export type LaunchReadinessInput = {
   parity: ShadowParityReport;
   paritySummary: ShadowCompareSummary;
   channelSummary: ChannelHealthSummary;
+  browserParity?: BrowserParityReport | undefined;
   metrics: {
     webhooks_received: number;
     webhooks_invalid_signature: number;
@@ -31,6 +33,7 @@ export type LaunchReadinessInput = {
     minPairedEvents: number;
     maxWarningChannels: number;
     maxWebhookFailureRatePct: number;
+    minBrowserPairedEvents?: number;
   };
 };
 
@@ -137,6 +140,29 @@ export function buildLaunchReadinessReport(input: LaunchReadinessInput): LaunchR
     target: `<= ${input.thresholds.maxWebhookFailureRatePct}%`,
     recommendation: "Address signature/topic/forward errors before launch to avoid data gaps."
   });
+
+  if (input.browserParity) {
+    const minBrowser = input.thresholds.minBrowserPairedEvents ?? 50;
+    const browserPairedPass = input.browserParity.paired_events >= minBrowser;
+    checks.push({
+      id: "browser_paired_events",
+      title: "Browser Funnel Paired Volume",
+      status: browserPairedPass ? "pass" : "fail",
+      value: input.browserParity.paired_events.toString(),
+      target: `>= ${minBrowser}`,
+      recommendation: "Collect dual-run browser dl_* traffic (view_item/add_to_cart/begin_checkout/purchase)."
+    });
+
+    const browserParityPass = !input.browserParity.alert_triggered;
+    checks.push({
+      id: "browser_parity_threshold",
+      title: "Browser Parity Mismatch Rate",
+      status: browserParityPass ? "pass" : "fail",
+      value: pct(input.browserParity.mismatch_rate_pct),
+      target: `<= ${input.browserParity.threshold_pct}%`,
+      recommendation: "Compare Synapse vs Elevar dataLayer product ids and event volumes before disabling Elevar."
+    });
+  }
 
   let checksPassed = 0;
   for (const check of checks) {

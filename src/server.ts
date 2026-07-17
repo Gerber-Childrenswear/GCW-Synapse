@@ -5,7 +5,15 @@ import { createPublicEventGuard, parseAllowedOrigins } from "./lib/publicEventGu
 import { securityHeaders } from "./lib/securityHeaders";
 import { logError, logInfo } from "./lib/logger";
 import { refundsRouter } from "./routes/refunds";
+import { browserBeaconRouter } from "./routes/browserBeacon";
 import { webhooksRouter } from "./routes/webhooks";
+import { maybeAlertOnParity } from "./services/alerts";
+import {
+  configureBrowserEvents,
+  getBrowserParityReport,
+  getRecentBrowserEvents,
+  ingestBrowserEvent
+} from "./services/browserEvents";
 import { resolveCartTotal } from "./services/cartTotal";
 import {
   type ChannelEventInput,
@@ -96,6 +104,15 @@ configureShadowCompare({
   maxRecords: env.SHADOW_COMPARE_MAX_RECORDS,
   storePath: env.SHADOW_COMPARE_STORE_PATH
 });
+
+configureBrowserEvents({ maxRecords: env.SHADOW_COMPARE_MAX_RECORDS });
+
+const alertConfig = {
+  slackWebhookUrl: env.SLACK_WEBHOOK_URL,
+  emailTo: env.ALERT_EMAIL_TO,
+  emailFrom: env.ALERT_EMAIL_FROM,
+  emailWebhookUrl: env.ALERT_EMAIL_WEBHOOK_URL
+};
 
 configureMappingRegistry({
   ...(env.CONTROL_PANEL_MAPPING_STORE_PATH
@@ -1357,6 +1374,9 @@ app.get("/compatibility/customer-phone", requireIngressToken, (req, res) => {
 
 app.use(express.json({ limit: env.JSON_BODY_LIMIT, strict: true }));
 
+// Browser beacon is public (CORS) — shop-scoped + rate-limited inside the router.
+app.use("/browser", browserBeaconRouter);
+
 app.post("/compare/elevar", requireIngressToken, async (req, res) => {
   try {
     const event = await ingestElevarShadow(req.body);
@@ -1655,6 +1675,7 @@ app.get("/launch/readiness", requireIngressToken, (req, res) => {
   const parity = getShadowParityReport(env.SHADOW_COMPARE_MISMATCH_ALERT_PCT);
   const channelSummary = getChannelHealthSummary(env.CHANNEL_HEALTH_STALE_MINUTES, env.CHANNEL_HEALTH_WARN_FAILURE_PCT);
   const metrics = getMetricsSnapshot();
+  const browserParity = getBrowserParityReport(env.BROWSER_PARITY_MISMATCH_ALERT_PCT);
 
   const report = buildLaunchReadinessReport({
     phase,
@@ -1662,6 +1683,7 @@ app.get("/launch/readiness", requireIngressToken, (req, res) => {
     parity,
     paritySummary,
     channelSummary,
+    browserParity,
     metrics: {
       webhooks_received: metrics.counters.webhooks_received,
       webhooks_invalid_signature: metrics.counters.webhooks_invalid_signature,
@@ -1672,14 +1694,33 @@ app.get("/launch/readiness", requireIngressToken, (req, res) => {
     thresholds: {
       minPairedEvents: env.LAUNCH_MIN_PAIRED_EVENTS,
       maxWarningChannels: env.LAUNCH_MAX_WARNING_CHANNELS,
-      maxWebhookFailureRatePct: env.LAUNCH_MAX_WEBHOOK_FAILURE_RATE_PCT
+      maxWebhookFailureRatePct: env.LAUNCH_MAX_WEBHOOK_FAILURE_RATE_PCT,
+      minBrowserPairedEvents: env.LAUNCH_MIN_BROWSER_PAIRED_EVENTS
     }
+  });
+
+  void maybeAlertOnParity({
+    config: alertConfig,
+    label: "Purchase shadow",
+    mismatchRatePct: parity.mismatch_rate_pct,
+    thresholdPct: parity.threshold_pct,
+    alertTriggered: parity.alert_triggered,
+    pairedEvents: parity.paired_events
+  });
+  void maybeAlertOnParity({
+    config: alertConfig,
+    label: "Browser data layer",
+    mismatchRatePct: browserParity.mismatch_rate_pct,
+    thresholdPct: browserParity.threshold_pct,
+    alertTriggered: browserParity.alert_triggered,
+    pairedEvents: browserParity.paired_events
   });
 
   res.status(200).json({
     ok: true,
     source_of_truth: "elevar",
     runtime_mode: env.RUNTIME_MODE,
+    browser_parity: browserParity,
     report
   });
 });
@@ -1696,6 +1737,51 @@ app.get("/compare/recent", requireIngressToken, (req, res) => {
     count: events.length,
     events
   });
+});
+
+app.get("/compare/browser", requireIngressToken, (req, res) => {
+  const limitRaw = typeof req.query.limit === "string" ? req.query.limit : "100";
+  const parsedLimit = Number.parseInt(limitRaw, 10);
+  const limit = Number.isFinite(parsedLimit) ? parsedLimit : 100;
+
+  res.status(200).json({
+    ok: true,
+    parity: getBrowserParityReport(env.BROWSER_PARITY_MISMATCH_ALERT_PCT),
+    count: getRecentBrowserEvents(limit).length,
+    events: getRecentBrowserEvents(limit)
+  });
+});
+
+app.post("/compare/browser/elevar", requireIngressToken, (req, res) => {
+  const body = (req.body || {}) as {
+    shop?: string;
+    event?: string;
+    event_id?: string;
+    currency?: string;
+    cart_total?: string;
+    ecommerce?: unknown;
+    marketing?: { session_id?: string; landing_site?: string };
+    observed_at?: string;
+  };
+
+  if (!body.event) {
+    res.status(400).json({ ok: false, error: "event is required" });
+    return;
+  }
+
+  const record = ingestBrowserEvent({
+    source: "elevar",
+    shop: body.shop,
+    event: body.event,
+    event_id: body.event_id,
+    currency: body.currency,
+    cart_total: body.cart_total,
+    ecommerce: body.ecommerce,
+    marketing: body.marketing,
+    observed_at: body.observed_at
+  });
+
+  res.status(202).json({ ok: true, key: record.key });
 });
 
 app.options("/event", publicEventGuard);

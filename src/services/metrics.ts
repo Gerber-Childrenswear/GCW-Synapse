@@ -27,7 +27,10 @@ type CounterKey =
   | "runtime_events_validation_errors"
   | "public_event_origin_rejected"
   | "public_event_rate_limited"
-  | "gtm_dead_letter_written";
+  | "gtm_dead_letter_written"
+  | "browser_beacon_accepted"
+  | "browser_beacon_rejected"
+  | "browser_beacon_rate_limited";
 
 type MetricsState = Record<CounterKey, number>;
 
@@ -62,7 +65,10 @@ const counters: MetricsState = {
   runtime_events_validation_errors: 0,
   public_event_origin_rejected: 0,
   public_event_rate_limited: 0,
-  gtm_dead_letter_written: 0
+  gtm_dead_letter_written: 0,
+  browser_beacon_accepted: 0,
+  browser_beacon_rejected: 0,
+  browser_beacon_rate_limited: 0
 };
 
 export function incrementCounter(key: CounterKey): void {

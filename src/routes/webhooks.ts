@@ -10,6 +10,7 @@ import { forwardToGtmServer } from "../services/gtmForwarder";
 import { captureSynapseShadow } from "../services/shadowCompare";
 import { incrementCounter } from "../services/metrics";
 import { mapOrderToPurchase } from "../services/payloadMapper";
+import { attachSessionMarketing, extractSessionMarketing } from "../services/sessionEnrichment";
 import type { ShopifyOrder } from "../types/shopify";
 
 const router = Router();
@@ -82,12 +83,13 @@ function createOrderWebhookHandler(expectedTopic: string) {
       orderName: order.name
     });
 
-    const payload = mapOrderToPurchase(
+    const basePayload = mapOrderToPurchase(
       order,
       env.SHOP_DEFAULT_CURRENCY,
       eventId,
       env.CUSTOMER_ID_FALLBACK
     );
+    const payload = attachSessionMarketing(basePayload, extractSessionMarketing(order));
 
     if (env.RUNTIME_MODE === "shadow_compare") {
       await captureSynapseShadow(payload);

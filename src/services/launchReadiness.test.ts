@@ -79,3 +79,28 @@ test("launch readiness returns hold when webhook failure exceeds budget", () => 
 
   assert.equal(report.status, "hold");
 });
+
+test("launch readiness includes browser parity checks when provided", () => {
+  const report = buildLaunchReadinessReport({
+    ...baseInput,
+    browserParity: {
+      threshold_pct: 5,
+      mismatch_rate_pct: 1,
+      matched_rate_pct: 99,
+      paired_events: 80,
+      synapse_events: 80,
+      elevar_events: 80,
+      alert_triggered: false,
+      status: "ok",
+      by_event: []
+    },
+    thresholds: {
+      ...baseInput.thresholds,
+      minBrowserPairedEvents: 50
+    }
+  });
+
+  assert.equal(report.status, "go");
+  assert.ok(report.checks.some((c) => c.id === "browser_paired_events" && c.status === "pass"));
+  assert.ok(report.checks.some((c) => c.id === "browser_parity_threshold" && c.status === "pass"));
+});
