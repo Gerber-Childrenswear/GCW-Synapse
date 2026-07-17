@@ -117,12 +117,15 @@
   window.GCW_SYNAPSE_ENDPOINT = {{ block.settings.synapse_endpoint | json }};
   window.GCW_SYNAPSE_INGRESS_TOKEN = {{ block.settings.ingress_token | json }};
 </script>
+{% comment %}
+  Load from Worker CDN to stay under Shopify's 10KB app-embed javascript limit.
+{% endcomment %}
+<script src="{{ block.settings.script_url }}" defer></script>
 
 {% schema %}
 {
   "name": "GCW Synapse",
   "target": "body",
-  "javascript": "gcw-synapse.js",
   "settings": [
     {
       "type": "checkbox",
@@ -144,6 +147,12 @@
     },
     {
       "type": "text",
+      "id": "script_url",
+      "label": "Data layer script URL",
+      "default": "https://gcw-synapse-super.gcwsynapse.workers.dev/gcw-synapse.js"
+    },
+    {
+      "type": "text",
       "id": "synapse_endpoint",
       "label": "Legacy /event endpoint (optional)",
       "default": "https://gcw-synapse-super.gcwsynapse.workers.dev/event"
@@ -151,8 +160,7 @@
     {
       "type": "text",
       "id": "ingress_token",
-      "label": "Ingress token (optional)",
-      "default": ""
+      "label": "Ingress token (optional)"
     }
   ]
 }
