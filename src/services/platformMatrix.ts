@@ -101,7 +101,7 @@ const PLATFORM_DEFS: PlatformDefinition[] = [
     id: "pinterest",
     label: "Pinterest",
     aliases: ["pinterest", "pin"],
-    expected_events: ["page_visit", "view_category", "add_to_cart", "checkout", "checkout"],
+    expected_events: ["page_visit", "view_category", "add_to_cart", "checkout"],
     tips: [
       "Use Pinterest Tag browser events alongside Conversions API.",
       "Match event_id across surfaces for purchase dedupe."
