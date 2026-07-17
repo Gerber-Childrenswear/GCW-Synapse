@@ -6,7 +6,7 @@
   window.SynapseConfig = Object.assign({}, window.SynapseConfig || {}, {
     shop: {{ shop.permanent_domain | json }},
     currency: {{ cart.currency.iso_code | default: shop.currency | json }},
-    beaconUrl: {{ block.settings.beacon_url | default: "https://gcw-synapse-super.gcw-synapse.workers.dev/browser/beacon" | json }},
+    beaconUrl: {{ block.settings.beacon_url | default: "https://gcw-synapse-super.gcwsynapse.workers.dev/browser/beacon" | json }},
     debug: {{ block.settings.debug | json }},
     enabled: {{ block.settings.enabled | json }},
     customer: {
@@ -140,13 +140,13 @@
       "type": "text",
       "id": "beacon_url",
       "label": "Browser beacon URL",
-      "default": "https://gcw-synapse-super.gcw-synapse.workers.dev/browser/beacon"
+      "default": "https://gcw-synapse-super.gcwsynapse.workers.dev/browser/beacon"
     },
     {
       "type": "text",
       "id": "synapse_endpoint",
       "label": "Legacy /event endpoint (optional)",
-      "default": "https://gcw-synapse-super.gcw-synapse.workers.dev/event"
+      "default": "https://gcw-synapse-super.gcwsynapse.workers.dev/event"
     },
     {
       "type": "text",

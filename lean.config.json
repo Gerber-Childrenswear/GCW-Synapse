@@ -1,6 +1,6 @@
 {
   "defaultEnvironment": "dev",
-  "workerBaseUrl": "https://gcw-synapse-super.gcw-synapse.workers.dev",
+  "workerBaseUrl": "https://gcw-synapse-super.gcwsynapse.workers.dev",
   "gtmWebContainerImport": "docs/gtm/GTM-TKW58K8_synapse_runtime_companion_import.json",
   "criticalRuntimeEvents": ["user_data", "view_item", "add_to_cart", "purchase"],
   "environments": {
@@ -10,9 +10,9 @@
       "storefrontOrigins": [
         "https://gcw-dev.myshopify.com"
       ],
-      "themeEmbedEndpoint": "https://gcw-synapse-super.gcw-synapse.workers.dev/browser/beacon",
-      "customerEventsPixelEndpoint": "https://gcw-synapse-super.gcw-synapse.workers.dev/browser/beacon",
-      "legacyEventEndpoint": "https://gcw-synapse-super.gcw-synapse.workers.dev/event",
+      "themeEmbedEndpoint": "https://gcw-synapse-super.gcwsynapse.workers.dev/browser/beacon",
+      "customerEventsPixelEndpoint": "https://gcw-synapse-super.gcwsynapse.workers.dev/browser/beacon",
+      "legacyEventEndpoint": "https://gcw-synapse-super.gcwsynapse.workers.dev/event",
       "notes": "Shopify app + theme extension live on gcw-dev only. Theme emits dl_* to dataLayer; pixel/beacon hit /browser/beacon. Same Worker serves dev and prod via CORS allowlist."
     },
     "production": {
@@ -22,9 +22,9 @@
         "https://www.gerberchildrenswear.com",
         "https://gerberchildrenswear.myshopify.com"
       ],
-      "themeEmbedEndpoint": "https://gcw-synapse-super.gcw-synapse.workers.dev/browser/beacon",
-      "customerEventsPixelEndpoint": "https://gcw-synapse-super.gcw-synapse.workers.dev/browser/beacon",
-      "legacyEventEndpoint": "https://gcw-synapse-super.gcw-synapse.workers.dev/event",
+      "themeEmbedEndpoint": "https://gcw-synapse-super.gcwsynapse.workers.dev/browser/beacon",
+      "customerEventsPixelEndpoint": "https://gcw-synapse-super.gcwsynapse.workers.dev/browser/beacon",
+      "legacyEventEndpoint": "https://gcw-synapse-super.gcwsynapse.workers.dev/event",
       "notes": "Promote only after gcw-dev GTM Preview is green."
     }
   }

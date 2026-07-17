@@ -55,7 +55,7 @@ async function sendBeacon(url, payload) {
 }
 
 register(({ analytics, settings, init }) => {
-  const beaconUrl = settings?.beaconUrl || "https://gcw-synapse-super.gcw-synapse.workers.dev/browser/beacon";
+  const beaconUrl = settings?.beaconUrl || "https://gcw-synapse-super.gcwsynapse.workers.dev/browser/beacon";
   const shop = settings?.shopDomain || init?.data?.shop?.myshopifyDomain || "";
   const currency =
     init?.data?.shop?.paymentSettings?.currencyCode ||

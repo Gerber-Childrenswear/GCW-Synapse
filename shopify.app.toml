@@ -5,7 +5,7 @@
 
 name = "GCW Synapse"
 client_id = "7d011b70562512bd84b85bd3f9a6e68d"
-application_url = "https://gcw-synapse-super.gcw-synapse.workers.dev"
+application_url = "https://gcw-synapse-super.gcwsynapse.workers.dev"
 embedded = true
 
 [access_scopes]
@@ -13,7 +13,7 @@ scopes = "read_products,read_orders,read_customers,read_themes,write_pixels,read
 
 [auth]
 redirect_urls = [
-  "https://gcw-synapse-super.gcw-synapse.workers.dev/auth/shopify/callback"
+  "https://gcw-synapse-super.gcwsynapse.workers.dev/auth/shopify/callback"
 ]
 
 [build]
