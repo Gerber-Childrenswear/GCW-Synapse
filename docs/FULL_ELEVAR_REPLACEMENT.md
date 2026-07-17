@@ -22,8 +22,8 @@ Synapse owns the **browser data layer**, **checkout web pixel**, and **server pu
 1. `npm run build:browser`
 2. `shopify app deploy` (releases theme + web pixel extensions)
 3. On **gcw-dev**: Theme settings → App embeds → enable **Synapse Data Layer**
-4. Create/activate web pixel settings (`beaconUrl`, `shopDomain=gcw-dev.myshopify.com`)
-5. Re-authorize app scopes: `read_orders,read_products,read_customers,write_pixels,read_customer_events`
+4. Re-install / re-authorize the app on the shop so new scopes are granted (see `shopify.app.toml`)
+5. Activate the **app** web pixel via Admin API `webPixelCreate` (App pixels do not appear under “Add custom pixel”). Settings: `beaconUrl`, `shopDomain=gcw-dev.myshopify.com`
 6. Keep Elevar on for dual-run; mirror Elevar browser events to `POST /compare/browser/elevar` (token) if needed
 7. Watch `/app/summary` → browser parity + activity table + GO/HOLD checks
 8. When browser + purchase gates are green, disable Elevar on gcw-dev and validate `GTM-WH3W368X` still fires

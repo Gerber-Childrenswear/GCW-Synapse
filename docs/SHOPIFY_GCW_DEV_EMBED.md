@@ -94,4 +94,12 @@ If **Elevar** or **Triple Whale** app embeds are ON on the same theme, disable o
 
 ## Customer-events pixel (checkout — separate from theme embed)
 
-Checkout events use `extensions/customer-events-pixel/` (web pixel extension). That is configured under **Settings → Customer events → Custom pixels**, not App embeds. Theme embed covers `user_data`, `view_item`, `add_to_cart`, etc. on the storefront.
+Checkout events use `extensions/customer-events-pixel/` (**app** web pixel extension).
+
+App pixels do **not** show under “Add custom pixel”. After app install + scopes (`write_pixels`, `read_customer_events`, …):
+
+1. Re-authorize the app on the shop (updated scopes).
+2. Create/connect the pixel with Admin API `webPixelCreate` (settings: `beaconUrl`, `shopDomain`).
+3. Confirm under **Settings → Customer events → App pixels**.
+
+Theme embed covers storefront `dl_*` (`user_data`, `view_item`, `add_to_cart`, …). The web pixel covers checkout (`dl_begin_checkout` … `dl_purchase`).
