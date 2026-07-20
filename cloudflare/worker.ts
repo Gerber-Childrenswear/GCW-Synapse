@@ -13,6 +13,23 @@ type CloudflareEnv = {
 const DEFAULT_SHOPIFY_SCOPES =
   "read_products,read_orders,read_checkouts,read_customers,read_customer_events,write_pixels,read_themes";
 
+/** Scopes that require Partners "Request access" and break install until approved. */
+const PROTECTED_SHOPIFY_SCOPES = new Set(["read_all_orders"]);
+
+/**
+ * Resolve OAuth scopes for install. Prefer configured scopes, but always strip
+ * protected scopes so a stale SHOPIFY_APP_SCOPES secret cannot re-trigger
+ * Shopify's Request Access loop.
+ */
+function resolveInstallScopes(configured?: string): string {
+  const raw = (configured || DEFAULT_SHOPIFY_SCOPES).trim();
+  const cleaned = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0 && !PROTECTED_SHOPIFY_SCOPES.has(s));
+  return cleaned.length > 0 ? cleaned.join(",") : DEFAULT_SHOPIFY_SCOPES;
+}
+
 const SHOP_DOMAIN_PATTERN = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i;
 
 import {
@@ -421,7 +438,7 @@ async function handleShopifyOAuth(
     );
   }
 
-  const scopes = (env.SHOPIFY_APP_SCOPES || DEFAULT_SHOPIFY_SCOPES).trim();
+  const scopes = resolveInstallScopes(env.SHOPIFY_APP_SCOPES);
   const appOrigin = url.origin;
 
   if (url.pathname === "/auth/shopify/install") {
