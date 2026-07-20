@@ -31,7 +31,7 @@ const envSchema = z.object({
   SHOPIFY_APP_SCOPES: z
     .string()
     .default(
-      "read_products,read_orders,read_all_orders,read_checkouts,read_customers,read_customer_events,write_pixels,read_themes,read_content,read_discounts,read_price_rules,read_shipping,read_markets,read_locales,read_inventory,read_locations,read_fulfillments"
+      "read_products,read_orders,read_checkouts,read_customers,read_customer_events,write_pixels,read_themes"
     ),
   SHOPIFY_AUTH_CALLBACK_PATH: z.string().default("/auth/shopify/callback"),
   SHOPIFY_TOKEN_STORE_PATH: z.string().optional(),

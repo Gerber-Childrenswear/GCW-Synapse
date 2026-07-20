@@ -11,7 +11,7 @@ type CloudflareEnv = {
 };
 
 const DEFAULT_SHOPIFY_SCOPES =
-  "read_products,read_orders,read_all_orders,read_checkouts,read_customers,read_customer_events,write_pixels,read_themes,read_content,read_discounts,read_price_rules,read_shipping,read_markets,read_locales,read_inventory,read_locations,read_fulfillments";
+  "read_products,read_orders,read_checkouts,read_customers,read_customer_events,write_pixels,read_themes";
 
 const SHOP_DOMAIN_PATTERN = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i;
 

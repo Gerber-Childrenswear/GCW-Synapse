@@ -9,9 +9,10 @@ application_url = "https://gcw-synapse-super.gcwsynapse.workers.dev"
 embedded = true
 
 [access_scopes]
-# Analytics / Elevar-replacement surface: pixels, checkout events, orders/refunds,
-# catalog + customer context, and webhook subscription management.
-scopes = "read_products,read_orders,read_all_orders,read_checkouts,read_customers,read_customer_events,write_pixels,read_themes,read_content,read_discounts,read_price_rules,read_shipping,read_markets,read_locales,read_inventory,read_locations,read_fulfillments"
+# Lean install scopes (no protected scopes).
+# NOTE: do NOT include read_all_orders — that requires Shopify Partner
+# "Request access" approval and causes the install loop.
+scopes = "read_products,read_orders,read_checkouts,read_customers,read_customer_events,write_pixels,read_themes"
 
 [auth]
 redirect_urls = [
