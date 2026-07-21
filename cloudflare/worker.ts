@@ -204,12 +204,120 @@ function isInternalRouteExempt(pathname: string, method: string): boolean {
   // Public Shopify OAuth install/callback (must not require ingress token).
   if (
     method === "GET" &&
-    (pathname === "/auth/shopify/install" || pathname === "/auth/shopify/callback")
+    (pathname === "/install" ||
+      pathname === "/auth/shopify/install" ||
+      pathname === "/auth/shopify/callback")
   ) {
     return true;
   }
 
   return false;
+}
+
+function shopHandleFromDomain(shop: string): string {
+  return shop.replace(/\.myshopify\.com$/i, "");
+}
+
+/** Owner-forwardable install landing (permission checklist + install CTA). */
+function handleInstallLanding(url: URL, env: CloudflareEnv): Response {
+  const shopRaw = (url.searchParams.get("shop") || "gcw-dev.myshopify.com").trim();
+  let shop: string;
+  try {
+    shop = normalizeShopDomain(shopRaw);
+  } catch (error) {
+    return htmlResponse(
+      `<h1>Invalid shop</h1><p>${error instanceof Error ? error.message : "Invalid shop"}</p>`,
+      400
+    );
+  }
+
+  const handle = shopHandleFromDomain(shop);
+  const scopes = resolveInstallScopes(env.SHOPIFY_APP_SCOPES);
+  const apiKey = env.SHOPIFY_API_KEY || "7d011b70562512bd84b85bd3f9a6e68d";
+  const oauthInstall = `${url.origin}/auth/shopify/install?shop=${encodeURIComponent(shop)}`;
+  const adminInstall = `https://admin.shopify.com/store/${handle}/oauth/install?client_id=${encodeURIComponent(apiKey)}`;
+  const usersUrl = `https://admin.shopify.com/store/${handle}/settings/users`;
+  const embedUrl = `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${apiKey}/gcw-synapse-app-block`;
+
+  // Auto-start OAuth when ?go=1 (bookmark / owner deep link)
+  if (url.searchParams.get("go") === "1") {
+    return new Response(null, {
+      status: 302,
+      headers: { Location: oauthInstall, "Cache-Control": "no-store" }
+    });
+  }
+
+  return htmlResponse(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Install GCW Synapse</title>
+  <style>
+    :root { color-scheme: light; --ink:#14201a; --muted:#4a5c52; --line:#d5ddd7; --bg:#f3f6f4; --card:#fff; --go:#0f6b4c; --go2:#0a4d38; --warn:#7a4a00; --warnbg:#fff6e5; }
+    * { box-sizing: border-box; }
+    body { margin:0; font:16px/1.45 "Segoe UI", system-ui, sans-serif; color:var(--ink); background: radial-gradient(1200px 500px at 10% -10%, #d9ebe2, transparent), var(--bg); }
+    main { max-width:720px; margin:0 auto; padding:40px 20px 64px; }
+    h1 { font-size:1.75rem; margin:0 0 8px; letter-spacing:-0.02em; }
+    .sub { color:var(--muted); margin:0 0 28px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:20px 22px; margin:0 0 16px; }
+    h2 { font-size:1rem; margin:0 0 10px; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted); }
+    ol, ul { margin:0; padding-left:1.2rem; }
+    li { margin:6px 0; }
+    code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:0.86em; }
+    .actions { display:flex; flex-wrap:wrap; gap:10px; margin:18px 0 8px; }
+    a.btn { display:inline-block; text-decoration:none; border-radius:8px; padding:12px 16px; font-weight:600; }
+    a.btn-primary { background:var(--go); color:#fff; }
+    a.btn-primary:hover { background:var(--go2); }
+    a.btn-secondary { background:#e8eee9; color:var(--ink); }
+    .warn { background:var(--warnbg); border:1px solid #f0d7a8; border-radius:12px; padding:14px 16px; margin:0 0 16px; color:var(--warn); }
+    .meta { font-size:0.9rem; color:var(--muted); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Install GCW Synapse</h1>
+    <p class="sub">Shop: <span class="mono">${shop}</span></p>
+
+    <div class="warn">
+      <strong>If you see “You need permission to install”:</strong>
+      your user can open listed apps, but cannot install <em>new</em> ones.
+      Forward this page to the <strong>store owner</strong>, or get
+      <strong>Manage and install apps and channels</strong> on your role
+      (Settings → Users → Roles → Apps — not App development).
+    </div>
+
+    <div class="card">
+      <h2>Install now</h2>
+      <div class="actions">
+        <a class="btn btn-primary" href="${oauthInstall}">Install with lean scopes</a>
+        <a class="btn btn-secondary" href="${adminInstall}">Admin install link</a>
+      </div>
+      <p class="meta">Scopes: <span class="mono">${scopes}</span></p>
+    </div>
+
+    <div class="card">
+      <h2>Required staff permissions</h2>
+      <ul>
+        <li><strong>Apps → Manage and install apps and channels</strong> (all apps — not a named whitelist)</li>
+        <li><strong>Settings → View customer events</strong></li>
+        <li><strong>Settings → Manage and add custom pixels</strong></li>
+        <li>Products, Orders (view), Customers (view), Online store / Themes</li>
+      </ul>
+      <p class="meta"><a href="${usersUrl}">Open Users &amp; permissions</a></p>
+    </div>
+
+    <div class="card">
+      <h2>After install</h2>
+      <ol>
+        <li>Confirm <strong>Customer events → App pixels</strong> shows GCW Synapse.</li>
+        <li>Enable the theme App embed: <a href="${embedUrl}">open App embeds</a>.</li>
+        <li>Beacon URL: <span class="mono">${url.origin}/browser/beacon</span></li>
+      </ol>
+    </div>
+  </main>
+</body>
+</html>`);
 }
 
 function normalizeShopDomain(shop: string): string {
@@ -1272,7 +1380,9 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
         app_url: "https://gcw-synapse-super.gcwsynapse.workers.dev",
         scopes: DEFAULT_SHOPIFY_SCOPES.split(","),
         install_url:
-          "https://gcw-synapse-super.gcwsynapse.workers.dev/auth/shopify/install?shop=gcw-dev.myshopify.com"
+          "https://gcw-synapse-super.gcwsynapse.workers.dev/auth/shopify/install?shop=gcw-dev.myshopify.com",
+        install_landing_url:
+          "https://gcw-synapse-super.gcwsynapse.workers.dev/install?shop=gcw-dev.myshopify.com"
       }
     });
   }
@@ -1559,6 +1669,10 @@ export default {
           origin
         )
       );
+    }
+
+    if (request.method === "GET" && url.pathname === "/install") {
+      return addSecurityHeaders(handleInstallLanding(url, env));
     }
 
     if (url.pathname.startsWith("/auth/shopify/")) {

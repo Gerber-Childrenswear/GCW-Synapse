@@ -6,6 +6,29 @@
 
 ---
 
+## Install the app (OAuth + web pixel)
+
+Owner-forwardable landing (permission checklist + install CTA):
+
+https://gcw-synapse-super.gcwsynapse.workers.dev/install?shop=gcw-dev.myshopify.com
+
+Direct OAuth (lean scopes, no `read_all_orders`):
+
+https://gcw-synapse-super.gcwsynapse.workers.dev/auth/shopify/install?shop=gcw-dev.myshopify.com
+
+### “You need permission to install”
+
+**App development ≠ install rights.**
+
+On the installing user’s **role** → scroll to **Apps** (not App development / Settings):
+
+1. Enable **Manage and install apps and channels** (all apps — not a named whitelist)
+2. Also need **Settings → View customer events** and **Manage and add custom pixels**
+
+If the role only lists specific apps (Elevar, Commerce Shield, …), that user **cannot** install Synapse. Store owner must install once, or grant the permission above.
+
+---
+
 ## Where the toggle lives (not the Apps list)
 
 1. **gcw-dev admin** → **Online Store** → **Themes**
