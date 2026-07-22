@@ -1804,6 +1804,21 @@ async function serveAsset(request: Request, env: CloudflareEnv): Promise<Respons
     if (url.pathname === "/" || url.pathname === "/index.html" || acceptsHtml) {
       return withAppBridge(response);
     }
+
+    // Cache the storefront tracking bundle aggressively (URL is versioned via ?v=).
+    if (url.pathname === "/gcw-synapse.js" || url.pathname.endsWith("/gcw-synapse.js")) {
+      const headers = new Headers(response.headers);
+      headers.set("Cache-Control", "public, max-age=86400, stale-while-revalidate=604800");
+      headers.set("Content-Type", "application/javascript; charset=utf-8");
+      return addSecurityHeaders(
+        new Response(response.body, {
+          status: response.status,
+          statusText: response.statusText,
+          headers
+        })
+      );
+    }
+
     return addSecurityHeaders(response);
   }
 

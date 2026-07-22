@@ -1,12 +1,14 @@
 {% comment %}
-  GCW Synapse app embed — Elevar-compatible dataLayer for storefront pages.
-  Theme settings → App embeds → GCW Synapse.
+  GCW Synapse app embed — lean Elevar-compatible dataLayer.
+  Script loads deferred from Worker CDN (not inline) to stay under Shopify 10KB limit
+  and keep first paint free of the tracking bundle.
 {% endcomment %}
 <script>
   window.SynapseConfig = Object.assign({}, window.SynapseConfig || {}, {
     shop: {{ shop.permanent_domain | json }},
     currency: {{ cart.currency.iso_code | default: shop.currency | json }},
     beaconUrl: {{ block.settings.beacon_url | default: "https://gcw-synapse-super.gcwsynapse.workers.dev/browser/beacon" | json }},
+    beaconSampleRate: ({{ block.settings.beacon_sample_rate_pct | default: 20 }} / 100),
     debug: {{ block.settings.debug | json }},
     enabled: {{ block.settings.enabled | json }},
     customer: {
@@ -28,7 +30,7 @@
       total: {{ cart.total_price | money_without_currency | json }},
       itemCount: {{ cart.item_count | json }},
       items: [
-        {%- for item in cart.items -%}
+        {%- for item in cart.items limit: 20 -%}
           {
             id: {{ item.sku | default: item.variant_id | json }},
             name: {{ item.product.title | json }},
@@ -38,10 +40,7 @@
             price: {{ item.final_price | money_without_currency | json }},
             quantity: {{ item.quantity | json }},
             product_id: {{ item.product_id | json }},
-            variant_id: {{ item.variant_id | json }},
-            compare_at_price: {% if item.variant.compare_at_price %}{{ item.variant.compare_at_price | money_without_currency | json }}{% else %}"0.0"{% endif %},
-            image: {{ item.image | image_url: width: 200 | json }},
-            url: {{ item.url | json }}
+            variant_id: {{ item.variant_id | json }}
           }{%- unless forloop.last -%},{%- endunless -%}
         {%- endfor -%}
       ]
@@ -58,8 +57,7 @@
         sku: {{ product.selected_or_first_available_variant.sku | json }},
         title: {{ product.selected_or_first_available_variant.title | json }},
         price: {{ product.selected_or_first_available_variant.price | money_without_currency | json }},
-        compareAtPrice: {% if product.selected_or_first_available_variant.compare_at_price %}{{ product.selected_or_first_available_variant.compare_at_price | money_without_currency | json }}{% else %}"0.0"{% endif %},
-        image: {% if product.selected_or_first_available_variant.featured_image %}{{ product.selected_or_first_available_variant.featured_image | image_url: width: 400 | json }}{% elsif product.featured_image %}{{ product.featured_image | image_url: width: 400 | json }}{% else %}""{% endif %}
+        compareAtPrice: {% if product.selected_or_first_available_variant.compare_at_price %}{{ product.selected_or_first_available_variant.compare_at_price | money_without_currency | json }}{% else %}"0.0"{% endif %}
       }
     }
     {%- endif -%}
@@ -69,7 +67,7 @@
       title: {{ collection.title | json }},
       path: {{ collection.url | json }},
       products: [
-        {%- for p in collection.products limit: 24 -%}
+        {%- for p in collection.products limit: 12 -%}
           {
             id: {{ p.selected_or_first_available_variant.sku | default: p.selected_or_first_available_variant.id | json }},
             name: {{ p.title | json }},
@@ -79,7 +77,6 @@
             price: {{ p.selected_or_first_available_variant.price | money_without_currency | json }},
             product_id: {{ p.id | json }},
             variant_id: {{ p.selected_or_first_available_variant.id | json }},
-            compare_at_price: {% if p.selected_or_first_available_variant.compare_at_price %}{{ p.selected_or_first_available_variant.compare_at_price | money_without_currency | json }}{% else %}"0.0"{% endif %},
             position: {{ forloop.index | json }},
             list: {{ collection.url | json }}
           }{%- unless forloop.last -%},{%- endunless -%}
@@ -91,7 +88,7 @@
     ,search: {
       terms: {{ search.terms | json }},
       products: [
-        {%- for p in search.results limit: 24 -%}
+        {%- for p in search.results limit: 12 -%}
           {%- if p.object_type == "product" -%}
           {
             id: {{ p.selected_or_first_available_variant.sku | default: p.selected_or_first_available_variant.id | json }},
@@ -102,7 +99,6 @@
             price: {{ p.selected_or_first_available_variant.price | money_without_currency | json }},
             product_id: {{ p.id | json }},
             variant_id: {{ p.selected_or_first_available_variant.id | json }},
-            compare_at_price: {% if p.selected_or_first_available_variant.compare_at_price %}{{ p.selected_or_first_available_variant.compare_at_price | money_without_currency | json }}{% else %}"0.0"{% endif %},
             position: {{ forloop.index | json }},
             list: "search results"
           }{%- unless forloop.last -%},{%- endunless -%}
@@ -112,15 +108,8 @@
     }
     {%- endif -%}
   });
-
-  // Keep lean /event endpoint globals for transitional callers.
-  window.GCW_SYNAPSE_ENDPOINT = {{ block.settings.synapse_endpoint | json }};
-  window.GCW_SYNAPSE_INGRESS_TOKEN = {{ block.settings.ingress_token | json }};
 </script>
-{% comment %}
-  Load from Worker CDN to stay under Shopify's 10KB app-embed javascript limit.
-{% endcomment %}
-<script src="{{ block.settings.script_url }}" defer></script>
+<script src="{{ block.settings.script_url }}" defer fetchpriority="low"></script>
 
 {% schema %}
 {
@@ -140,6 +129,17 @@
       "default": false
     },
     {
+      "type": "range",
+      "id": "beacon_sample_rate_pct",
+      "min": 0,
+      "max": 100,
+      "step": 5,
+      "unit": "%",
+      "label": "Beacon sample rate (views)",
+      "default": 20,
+      "info": "GTM still gets 100% of dl_* via dataLayer. Beacons are ops-only; funnel events always send."
+    },
+    {
       "type": "text",
       "id": "beacon_url",
       "label": "Browser beacon URL",
@@ -149,18 +149,7 @@
       "type": "text",
       "id": "script_url",
       "label": "Data layer script URL",
-      "default": "https://gcw-synapse-super.gcwsynapse.workers.dev/gcw-synapse.js"
-    },
-    {
-      "type": "text",
-      "id": "synapse_endpoint",
-      "label": "Legacy /event endpoint (optional)",
-      "default": "https://gcw-synapse-super.gcwsynapse.workers.dev/event"
-    },
-    {
-      "type": "text",
-      "id": "ingress_token",
-      "label": "Ingress token (optional)"
+      "default": "https://gcw-synapse-super.gcwsynapse.workers.dev/gcw-synapse.js?v=1.1.0"
     }
   ]
 }

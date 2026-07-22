@@ -21,7 +21,7 @@ function emit(config: SynapseConfig, event: SynapseDataLayerEvent): SynapseDataL
     debug: Boolean(config.debug)
   });
 
-  sendBeacon(config.beaconUrl, config.shop, pushed, session);
+  sendBeacon(config.beaconUrl, config.shop, pushed, session, config.beaconSampleRate ?? 0.2);
   return pushed;
 }
 

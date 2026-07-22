@@ -9,17 +9,14 @@
         "debug": {
           "label": "Debug logging"
         },
+        "beacon_sample_rate_pct": {
+          "label": "Beacon sample rate (views)"
+        },
         "beacon_url": {
           "label": "Browser beacon URL"
         },
         "script_url": {
           "label": "Data layer script URL"
-        },
-        "synapse_endpoint": {
-          "label": "Legacy /event endpoint (optional)"
-        },
-        "ingress_token": {
-          "label": "Ingress token (optional)"
         }
       }
     }

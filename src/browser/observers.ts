@@ -30,26 +30,38 @@ function parseCartLine(line: Record<string, unknown>): SynapseProduct {
   });
 }
 
+function cartUrl(input: RequestInfo | URL): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.href;
+  return input.url;
+}
+
+function isCartMutateUrl(url: string): boolean {
+  return /\/cart\/(add|change)(\.js)?(\?|$)/i.test(url);
+}
+
 export function attachObservers(config: SynapseConfig): void {
-  // Intercept fetch cart add/change for AJAX themes.
+  // Intercept only cart mutate fetches — all other fetch traffic is untouched after a cheap URL check.
   if (typeof window.fetch === "function") {
     const originalFetch = window.fetch.bind(window);
     window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = cartUrl(input);
+      const watch = isCartMutateUrl(url);
       const response = await originalFetch(input, init);
+      if (!watch || !response.ok) return response;
+
       try {
-        const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-        if (/\/cart\/add(\.js)?/i.test(url) && response.ok) {
-          const clone = response.clone();
-          const body = (await clone.json()) as Record<string, unknown>;
+        if (/\/cart\/add(\.js)?/i.test(url)) {
+          const body = (await response.clone().json()) as Record<string, unknown>;
           const items = Array.isArray(body.items)
             ? (body.items as Array<Record<string, unknown>>).map(parseCartLine)
             : [parseCartLine(body)];
           emitAddToCart(config, items);
+          return response;
         }
-        if (/\/cart\/change(\.js)?/i.test(url) && response.ok) {
-          const clone = response.clone();
-          const body = (await clone.json()) as Record<string, unknown>;
 
+        if (/\/cart\/change(\.js)?/i.test(url)) {
+          const body = (await response.clone().json()) as Record<string, unknown>;
           let requestQuantity: number | undefined;
           if (typeof init?.body === "string") {
             try {
@@ -58,7 +70,7 @@ export function attachObservers(config: SynapseConfig): void {
             } catch {
               // ignore
             }
-          } else if (typeof input === "string" && /quantity=0/i.test(input)) {
+          } else if (/quantity=0/i.test(url)) {
             requestQuantity = 0;
           }
 
@@ -76,17 +88,10 @@ export function attachObservers(config: SynapseConfig): void {
               const id = String(item.variant_id || item.id || "");
               return Boolean(id) && !nextIds.has(id);
             });
-            if (!removed.length && prev[0]) {
-              removed = [prev[0]];
-            }
+            if (!removed.length && prev[0]) removed = [prev[0]];
           }
 
-          if (removed.length) {
-            emitRemoveFromCart(config, removed);
-          }
-        }
-        if (/\/cart\.js$/i.test(url) && response.ok) {
-          // ignore polling
+          if (removed.length) emitRemoveFromCart(config, removed);
         }
       } catch {
         // ignore parse errors
@@ -101,33 +106,29 @@ export function attachObservers(config: SynapseConfig): void {
       const form = event.target as HTMLFormElement | null;
       if (!form) return;
       const action = (form.getAttribute("action") || "").toLowerCase();
-      if (action.includes("/cart/add")) {
-        // Native form add — liquid product context is preferred.
-        if (config.product) {
-          const v = config.product.selectedVariant;
-          emitAddToCart(config, [
-            toSynapseProduct({
-              sku: v.sku,
-              name: config.product.title,
-              brand: config.product.vendor,
-              category: config.product.type,
-              variant: v.title,
-              price: v.price,
-              quantity: 1,
-              productId: config.product.id,
-              variantId: v.id,
-              compareAtPrice: v.compareAtPrice,
-              image: v.image,
-              url: config.product.url
-            })
-          ]);
-        }
+      if (action.includes("/cart/add") && config.product) {
+        const v = config.product.selectedVariant;
+        emitAddToCart(config, [
+          toSynapseProduct({
+            sku: v.sku,
+            name: config.product.title,
+            brand: config.product.vendor,
+            category: config.product.type,
+            variant: v.title,
+            price: v.price,
+            quantity: 1,
+            productId: config.product.id,
+            variantId: v.id,
+            compareAtPrice: v.compareAtPrice,
+            image: v.image,
+            url: config.product.url
+          })
+        ]);
       }
 
       if (action.includes("/account") || form.id?.toLowerCase().includes("create_customer")) {
         const emailInput = form.querySelector<HTMLInputElement>('input[type="email"]');
         if (form.querySelector('[name="customer[password]"]') && emailInput) {
-          // Heuristic: create account forms include password + email.
           if (action.includes("register") || form.innerHTML.includes("create_customer")) {
             emitSignUp(config);
           }
@@ -138,8 +139,9 @@ export function attachObservers(config: SynapseConfig): void {
         emitLogin(config);
       }
 
-      // Newsletter / subscribe heuristics
-      const email = form.querySelector<HTMLInputElement>('input[type="email"][name*="email" i], input[name="contact[email]"]');
+      const email = form.querySelector<HTMLInputElement>(
+        'input[type="email"][name*="email" i], input[name="contact[email]"]'
+      );
       const phone = form.querySelector<HTMLInputElement>('input[type="tel"], input[name*="phone" i]');
       if (email && (action.includes("contact") || form.getAttribute("id")?.includes("newsletter"))) {
         emitSubscribe(config, "email", { email: email.value });
@@ -157,24 +159,26 @@ export function attachObservers(config: SynapseConfig): void {
       const target = event.target as HTMLElement | null;
       if (!target) return;
 
-      const link = target.closest("a[href*='/products/']") as HTMLAnchorElement | null;
-      if (link && (config.collection || config.search)) {
-        const href = link.getAttribute("href") || "";
-        const name = (link.getAttribute("aria-label") || link.textContent || "").trim() || href;
-        emitSelectItem(
-          config,
-          toSynapseProduct({
-            name,
-            price: "0.0",
-            productId: undefined,
-            variantId: undefined,
-            list: config.collection?.path || "search results"
-          }),
-          config.collection?.path || "search results"
-        );
+      if (config.collection || config.search) {
+        const link = target.closest("a[href*='/products/']") as HTMLAnchorElement | null;
+        if (link) {
+          const href = link.getAttribute("href") || "";
+          const name = (link.getAttribute("aria-label") || link.textContent || "").trim() || href;
+          emitSelectItem(
+            config,
+            toSynapseProduct({
+              name,
+              price: "0.0",
+              productId: undefined,
+              variantId: undefined,
+              list: config.collection?.path || "search results"
+            }),
+            config.collection?.path || "search results"
+          );
+        }
       }
 
-      if (target.closest('a[href*="/cart"]') || target.closest('[href="/cart"]')) {
+      if (target.closest('a[href*="/cart"], [href="/cart"]')) {
         emitViewCart(config);
       }
 
@@ -182,8 +186,9 @@ export function attachObservers(config: SynapseConfig): void {
         emitBeginCheckout(config);
       }
 
-      // Remove from cart buttons (common theme patterns)
-      const remove = target.closest('a[href*="/cart/change"][href*="quantity=0"], button[data-cart-remove], [data-remove]');
+      const remove = target.closest(
+        'a[href*="/cart/change"][href*="quantity=0"], button[data-cart-remove], [data-remove]'
+      );
       if (remove && config.cart?.items?.[0]) {
         emitRemoveFromCart(config, [config.cart.items[0]]);
       }
@@ -191,7 +196,6 @@ export function attachObservers(config: SynapseConfig): void {
     true
   );
 
-  // Klaviyo / Attentive-ish custom events
   window.addEventListener("synapse:subscribe", ((event: CustomEvent) => {
     const detail = event.detail || {};
     if (detail.email) emitSubscribe(config, "email", { email: detail.email });

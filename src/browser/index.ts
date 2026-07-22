@@ -11,7 +11,7 @@ import {
 } from "./events";
 import type { SynapseConfig, SynapseDataLayerEvent } from "./types";
 
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 
 function boot(): void {
   const config = window.SynapseConfig;
@@ -20,7 +20,7 @@ function boot(): void {
   }
 
   const session = getOrCreateSession();
-  void syncCartAttributes(session);
+  syncCartAttributes(session);
 
   window.SynapseInvalidateContext = () => {
     emitUserData(config);
