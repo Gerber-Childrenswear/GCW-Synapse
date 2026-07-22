@@ -12,6 +12,13 @@ run_worker_first = true
 PUBLIC_EVENT_ALLOWED_ORIGINS = "https://www.gerberchildrenswear.com,https://gerberchildrenswear.com,https://gcw-dev.myshopify.com,https://gerberchildrenswear.myshopify.com"
 PUBLIC_EVENT_MAX_BODY_BYTES = "16384"
 PUBLIC_EVENT_RATE_LIMIT_PER_MINUTE = "120"
+RUNTIME_MODE = "shadow_compare"
+SHOP_DEFAULT_CURRENCY = "USD"
 
-# Configure as a secret if your origin expects ingress auth:
+# Configure as secrets when ready:
 # wrangler secret put SYNAPSE_INGRESS_TOKEN
+# wrangler secret put SHOPIFY_WEBHOOK_SECRET
+# wrangler secret put GTM_SERVER_URL
+# wrangler secret put GTM_FORWARD_SHARED_SECRET
+# wrangler secret put SLACK_WEBHOOK_URL
+# wrangler secret put ALERT_EMAIL_WEBHOOK_URL

@@ -9,7 +9,6 @@ function toPrice(amount) {
   if (amount == null) return "0.0";
   const n = typeof amount === "number" ? amount : Number.parseFloat(String(amount));
   if (!Number.isFinite(n)) return "0.0";
-  // Shopify pixel money often already decimal; if integer cents-like keep as-is when small.
   return n.toFixed(2);
 }
 
@@ -36,6 +35,28 @@ function mapLineItem(item, index) {
   };
 }
 
+function mapVariantProduct(variant, index = 0) {
+  const product = variant?.product || {};
+  const sku = variant?.sku || "";
+  const variantId = asString(variant?.id || "");
+  const productId = asString(product.id || "");
+  return {
+    id: sku || variantId || productId,
+    name: asString(product.title || ""),
+    brand: asString(product.vendor || ""),
+    category: asString(product.type || ""),
+    variant: asString(variant?.title || ""),
+    price: toPrice(variant?.price?.amount),
+    quantity: "1",
+    position: index + 1,
+    product_id: productId,
+    variant_id: variantId,
+    compare_at_price: toPrice(variant?.compareAtPrice?.amount ?? "0.0"),
+    image: asString(variant?.image?.src || product.image?.src || ""),
+    url: asString(product.url || "")
+  };
+}
+
 function buildEventId(parts) {
   return parts.filter(Boolean).join("|").slice(0, 120);
 }
@@ -55,7 +76,8 @@ async function sendBeacon(url, payload) {
 }
 
 register(({ analytics, settings, init }) => {
-  const beaconUrl = settings?.beaconUrl || "https://gcw-synapse-super.gcwsynapse.workers.dev/browser/beacon";
+  const beaconUrl =
+    settings?.beaconUrl || "https://gcw-synapse-super.gcwsynapse.workers.dev/browser/beacon";
   const shop = settings?.shopDomain || init?.data?.shop?.myshopifyDomain || "";
   const currency =
     init?.data?.shop?.paymentSettings?.currencyCode ||
@@ -84,10 +106,57 @@ register(({ analytics, settings, init }) => {
     sendBeacon(beaconUrl, payload);
   }
 
+  // Storefront mirrors (checkout sandbox / pages without theme JS).
+  analytics.subscribe("product_viewed", (event) => {
+    const variant = event.data?.productVariant;
+    if (!variant) return;
+    const product = mapVariantProduct(variant);
+    emit("dl_view_item", {
+      currencyCode: currency,
+      detail: {
+        actionField: { list: "web_pixel", action: "detail" },
+        products: [product]
+      }
+    });
+  });
 
+  analytics.subscribe("product_added_to_cart", (event) => {
+    const line = event.data?.cartLine;
+    if (!line) return;
+    emit("dl_add_to_cart", {
+      currencyCode: currency,
+      add: {
+        actionField: { list: "web_pixel" },
+        products: [mapLineItem(line, 0)]
+      }
+    });
+  });
 
+  analytics.subscribe("product_removed_from_cart", (event) => {
+    const line = event.data?.cartLine;
+    if (!line) return;
+    emit("dl_remove_from_cart", {
+      currencyCode: currency,
+      remove: {
+        actionField: { list: "web_pixel" },
+        products: [mapLineItem(line, 0)]
+      }
+    });
+  });
 
-
+  analytics.subscribe("cart_viewed", (event) => {
+    const lines = event.data?.cart?.lines || [];
+    const impressions = lines.map((line, i) => mapLineItem(line, i));
+    emit(
+      "dl_view_cart",
+      {
+        currencyCode: currency,
+        actionField: {},
+        impressions
+      },
+      { cart_total: toPrice(event.data?.cart?.cost?.totalAmount?.amount) }
+    );
+  });
 
   analytics.subscribe("checkout_started", (event) => {
     const lines = event.data?.checkout?.lineItems || [];

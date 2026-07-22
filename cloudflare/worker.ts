@@ -8,6 +8,16 @@ type CloudflareEnv = {
   SHOPIFY_API_KEY?: string;
   SHOPIFY_API_SECRET?: string;
   SHOPIFY_APP_SCOPES?: string;
+  SHOPIFY_WEBHOOK_SECRET?: string;
+  GTM_SERVER_URL?: string;
+  GTM_FORWARD_SHARED_SECRET?: string;
+  RUNTIME_MODE?: string;
+  SHOP_DEFAULT_CURRENCY?: string;
+  BROWSER_PARITY_MISMATCH_ALERT_PCT?: string;
+  SLACK_WEBHOOK_URL?: string;
+  ALERT_EMAIL_TO?: string;
+  ALERT_EMAIL_FROM?: string;
+  ALERT_EMAIL_WEBHOOK_URL?: string;
 };
 
 const DEFAULT_SHOPIFY_SCOPES =
@@ -45,6 +55,13 @@ import {
   ingestChannelEvent
 } from "../src/services/channelHealth";
 import { buildPlatformMatrix } from "../src/services/platformMatrix";
+import {
+  getBrowserParityReport,
+  getRecentBrowserEvents,
+  ingestBrowserEvent
+} from "../src/services/browserEvents";
+import { processPurchaseWebhookEdge } from "../src/services/edgeWebhook";
+import { maybeAlertOnParity } from "../src/services/alerts";
 
 const PROXY_PREFIXES = [
   "/auth/",
@@ -198,6 +215,11 @@ function isInternalRouteExempt(pathname: string, method: string): boolean {
   }
 
   if (pathname === "/browser/beacon" && (method === "POST" || method === "OPTIONS")) {
+    return true;
+  }
+
+  // Shopify webhooks authenticate via HMAC, not ingress token.
+  if (method === "POST" && pathname.startsWith("/webhooks/")) {
     return true;
   }
 
@@ -646,6 +668,52 @@ async function handleShopifyOAuth(
   }
 }
 
+function getBrowserParityThreshold(env?: CloudflareEnv): number {
+  const raw = env?.BROWSER_PARITY_MISMATCH_ALERT_PCT;
+  if (!raw) return 5;
+  const parsed = Number.parseFloat(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 5;
+}
+
+function getAlertConfig(env: CloudflareEnv) {
+  return {
+    slackWebhookUrl: env.SLACK_WEBHOOK_URL,
+    emailTo: env.ALERT_EMAIL_TO,
+    emailFrom: env.ALERT_EMAIL_FROM,
+    emailWebhookUrl: env.ALERT_EMAIL_WEBHOOK_URL
+  };
+}
+
+function buildLaunchReadiness(purchaseParity: ReturnType<typeof getParityModel>, browserParity: ReturnType<typeof getBrowserParityReport>) {
+  const browserGo = browserParity.status === "ok" && browserParity.matched_rate_pct >= 95;
+  const purchaseGo = purchaseParity.status === "ok";
+  const checks = [
+    {
+      id: "purchase_shadow_parity",
+      status: purchaseGo ? "pass" : "hold",
+      detail: `matched ${purchaseParity.matched_rate_pct}%`
+    },
+    {
+      id: "browser_parity_threshold",
+      status: browserGo ? "pass" : "hold",
+      detail: `core funnel matched ${browserParity.matched_rate_pct}% (paired=${browserParity.paired_events})`
+    },
+    {
+      id: "browser_dual_run_volume",
+      status: browserParity.paired_events > 0 || browserParity.synapse_events > 0 ? "pass" : "hold",
+      detail: `synapse=${browserParity.synapse_events} elevar=${browserParity.elevar_events}`
+    }
+  ];
+  const hold = checks.some((c) => c.status === "hold");
+  return {
+    status: hold ? "hold" : "go",
+    rationale: checks.filter((c) => c.status === "hold").map((c) => c.detail),
+    checks,
+    purchase_parity: purchaseParity,
+    browser_parity: browserParity
+  };
+}
+
 function getShadowCounts(): {
   paired_events: number;
   matched_pairs: number;
@@ -953,7 +1021,7 @@ async function runEdgeQaSmoke(): Promise<{ passed: number; failed: number; total
   };
 }
 
-async function handleNativeApi(request: Request): Promise<Response | null> {
+async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Response | null> {
   const url = new URL(request.url);
 
   if (request.method === "GET" && url.pathname === "/health") {
@@ -1309,6 +1377,8 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
     const healthSummary = getChannelHealthSummary(90, 5);
     const issues = getChannelTroubleshooting(healthSummary);
     const parity = getParityModel();
+    const browserParity = getBrowserParityReport(5);
+    const launch = buildLaunchReadiness(parity, browserParity);
 
     return jsonResponse({
       ok: true,
@@ -1316,10 +1386,13 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
       runtime_mode: "edge",
       parity,
       browser_parity: {
-        matched_rate_pct: parity.matched_rate_pct,
-        mismatch_rate_pct: parity.mismatch_rate_pct,
-        paired_events: parity.total_pairs,
-        status: parity.status
+        matched_rate_pct: browserParity.matched_rate_pct,
+        mismatch_rate_pct: browserParity.mismatch_rate_pct,
+        paired_events: browserParity.paired_events,
+        synapse_events: browserParity.synapse_events,
+        elevar_events: browserParity.elevar_events,
+        status: browserParity.status,
+        by_event: browserParity.by_event
       },
       parity_counts: getShadowCounts(),
       parity_mismatches_preview: edgeShadowComparisons
@@ -1331,27 +1404,54 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
         issues,
         links: getChannelHelpLinks()
       },
-      launch_readiness: {
-        status: parity.status === "ok" ? "go" : "hold",
-        rationale: parity.status === "ok" ? ["Parity within threshold"] : ["Parity alert active"]
-      },
+      launch_readiness: launch,
       recent: {
         shadow_events: edgeShadowComparisons.slice(0, limit),
         channel_events: getRecentChannelEvents(limit),
-        browser_events: edgeBrowserEvents.slice(0, limit)
+        browser_events: getRecentBrowserEvents(limit)
       }
     });
   }
 
   if (request.method === "GET" && url.pathname === "/compare/browser") {
     const limit = parseLimit(url.searchParams.get("limit"), 100);
+    const browserParity = getBrowserParityReport(5);
     return jsonResponse({
       ok: true,
       runtime_mode: "edge",
       accepted: edgeBrowserBeaconsAccepted,
-      count: Math.min(limit, edgeBrowserEvents.length),
-      events: edgeBrowserEvents.slice(0, limit)
+      parity: browserParity,
+      count: Math.min(limit, getRecentBrowserEvents(limit).length),
+      events: getRecentBrowserEvents(limit),
+      edge_log: edgeBrowserEvents.slice(0, limit)
     });
+  }
+
+  if (request.method === "POST" && url.pathname === "/compare/browser/elevar") {
+    try {
+      const body = (await request.json()) as Record<string, unknown>;
+      const eventName = typeof body.event === "string" ? body.event : "";
+      if (!eventName) {
+        return jsonResponse({ ok: false, error: "event is required" }, 400);
+      }
+      const record = ingestBrowserEvent({
+        source: "elevar",
+        shop: typeof body.shop === "string" ? body.shop : undefined,
+        event: eventName,
+        event_id: typeof body.event_id === "string" ? body.event_id : undefined,
+        currency: typeof body.currency === "string" ? body.currency : undefined,
+        cart_total: typeof body.cart_total === "string" ? body.cart_total : undefined,
+        ecommerce: body.ecommerce,
+        marketing:
+          body.marketing && typeof body.marketing === "object"
+            ? (body.marketing as { session_id?: string; landing_site?: string })
+            : undefined,
+        observed_at: typeof body.observed_at === "string" ? body.observed_at : undefined
+      });
+      return jsonResponse({ ok: true, key: record.key }, 202);
+    } catch {
+      return jsonResponse({ ok: false, error: "invalid_json" }, 400);
+    }
   }
 
   if (request.method === "GET" && url.pathname === "/compare/recent") {
@@ -1368,69 +1468,120 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
 
   if (request.method === "GET" && url.pathname === "/launch/readiness") {
     const parity = getParityModel();
+    const browserParity = getBrowserParityReport(5);
+    const report = buildLaunchReadiness(parity, browserParity);
     return jsonResponse({
       ok: true,
       source_of_truth: "edge",
       runtime_mode: "edge",
       report: {
-        status: parity.status === "ok" ? "go" : "hold",
-        parity,
+        ...report,
         counts: getShadowCounts(),
         generated_at: new Date().toISOString(),
-        actions: parity.status === "ok" ? [] : ["Review /compare/parity mismatches"]
+        actions: report.status === "go" ? [] : ["Review /compare/browser and /compare/parity mismatches"]
       }
     });
   }
 
   if (request.method === "POST" && url.pathname.startsWith("/webhooks/")) {
-    let payload: unknown = null;
-    try {
-      payload = await request.json();
-    } catch {
-      return jsonResponse({ ok: false, error: "Invalid webhook payload" }, 400);
+    const hmacHeader = request.headers.get("X-Shopify-Hmac-Sha256");
+    const shop = request.headers.get("X-Shopify-Shop-Domain") || "unknown-shop";
+    const webhookId = request.headers.get("X-Shopify-Webhook-Id");
+    const topicHeader = request.headers.get("X-Shopify-Topic") || "";
+    const rawBody = await request.arrayBuffer();
+    const topic =
+      topicHeader ||
+      (url.pathname.includes("refund")
+        ? "refunds/create"
+        : url.pathname.includes("create")
+          ? "orders/create"
+          : "orders/paid");
+
+    // Refunds: accept + log (purchase forward path is primary for sGTM).
+    if (topic.toLowerCase().includes("refund")) {
+      let payload: unknown = null;
+      try {
+        payload = JSON.parse(new TextDecoder().decode(rawBody));
+      } catch {
+        return jsonResponse({ ok: false, error: "Invalid webhook payload" }, 400);
+      }
+      edgeWebhookLog.unshift({
+        receivedAt: new Date().toISOString(),
+        source: "edge-webhook",
+        path: url.pathname,
+        topic,
+        shop,
+        payload
+      });
+      if (edgeWebhookLog.length > 500) edgeWebhookLog.length = 500;
+      return jsonResponse({ ok: true, status: "refund_accepted", path: url.pathname }, 202);
     }
+
+    const result = await processPurchaseWebhookEdge({
+      env,
+      rawBody,
+      hmacHeader,
+      shop,
+      topic,
+      webhookId
+    });
 
     edgeWebhookLog.unshift({
       receivedAt: new Date().toISOString(),
       source: "edge-webhook",
       path: url.pathname,
-      payload
+      topic,
+      shop,
+      result: result.body
     });
-    if (edgeWebhookLog.length > 500) {
-      edgeWebhookLog.length = 500;
+    if (edgeWebhookLog.length > 500) edgeWebhookLog.length = 500;
+
+    const orderId =
+      typeof result.body.transaction_id === "string"
+        ? result.body.transaction_id
+        : typeof result.body.event_id === "string"
+          ? result.body.event_id
+          : undefined;
+
+    if (result.ok) {
+      edgeShadowComparisons.unshift({
+        type: "synapse_only",
+        comparedAt: new Date().toISOString(),
+        score: 100,
+        event_name: "purchase",
+        event_id: result.body.event_id,
+        transaction_id: result.body.transaction_id,
+        session_attached: result.body.session_attached,
+        payload: result.body.payload
+      });
+      if (edgeShadowComparisons.length > 500) edgeShadowComparisons.length = 500;
+
+      await hydrateChannelEventsFromCache();
+      ingestChannelEvent({
+        channel: "server_gtm",
+        surface: "webhook",
+        destination: "synapse-webhook",
+        event_name: "purchase",
+        event_id: typeof result.body.event_id === "string" ? result.body.event_id : orderId,
+        transaction_id: orderId,
+        status: "ok",
+        observed_at: new Date().toISOString()
+      });
+      ingestChannelEvent({
+        channel: "synapse",
+        surface: "server",
+        destination: "order-webhook",
+        event_name: topic,
+        event_id: typeof result.body.event_id === "string" ? result.body.event_id : orderId,
+        transaction_id: orderId,
+        status: "ok",
+        observed_at: new Date().toISOString()
+      });
+      await persistChannelEventsToCache();
+      edgeEventsGenerated += 1;
     }
 
-    const orderPayload = (payload ?? {}) as Record<string, unknown>;
-    const orderId =
-      (typeof orderPayload.id === "number" || typeof orderPayload.id === "string"
-        ? String(orderPayload.id)
-        : undefined) ||
-      (typeof orderPayload.order_id === "string" ? orderPayload.order_id : undefined);
-    const topic = url.pathname.includes("refund") ? "refund" : "purchase";
-    await hydrateChannelEventsFromCache();
-    ingestChannelEvent({
-      channel: "server_gtm",
-      surface: "webhook",
-      destination: "synapse-webhook",
-      event_name: topic,
-      event_id: orderId,
-      transaction_id: orderId,
-      status: "ok",
-      observed_at: new Date().toISOString()
-    });
-    ingestChannelEvent({
-      channel: "synapse",
-      surface: "server",
-      destination: "order-webhook",
-      event_name: topic === "refund" ? "refunds/create" : "orders/paid",
-      event_id: orderId,
-      transaction_id: orderId,
-      status: "ok",
-      observed_at: new Date().toISOString()
-    });
-    await persistChannelEventsToCache();
-
-    return jsonResponse({ ok: true, status: "webhook_received", path: url.pathname }, 202);
+    return jsonResponse(result.body, result.status);
   }
 
   if (request.method === "GET" && url.pathname === "/ops/dead-letter") {
@@ -1450,12 +1601,46 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
 
   if (request.method === "GET" && url.pathname === "/ops/alerts") {
     const parity = getParityModel();
+    const browserParity = getBrowserParityReport(getBrowserParityThreshold(env));
+    const alerts: Array<{ severity: string; message: string }> = [];
+    if (parity.status !== "ok") {
+      alerts.push({
+        severity: "warning",
+        message: `Purchase shadow mismatch ${parity.mismatch_rate_pct}% above threshold`
+      });
+    }
+    if (browserParity.alert_triggered) {
+      alerts.push({
+        severity: "warning",
+        message: `Browser dual-run mismatch ${browserParity.mismatch_rate_pct}% (paired=${browserParity.paired_events})`
+      });
+    }
+
+    void maybeAlertOnParity({
+      config: getAlertConfig(env),
+      label: "Purchase shadow",
+      mismatchRatePct: parity.mismatch_rate_pct,
+      thresholdPct: 5,
+      alertTriggered: parity.status !== "ok",
+      pairedEvents: parity.total_pairs
+    });
+    void maybeAlertOnParity({
+      config: getAlertConfig(env),
+      label: "Browser dual-run",
+      mismatchRatePct: browserParity.mismatch_rate_pct,
+      thresholdPct: browserParity.threshold_pct,
+      alertTriggered: browserParity.alert_triggered,
+      pairedEvents: browserParity.paired_events
+    });
+
     return jsonResponse({
       ok: true,
-      status: parity.status === "ok" ? "ok" : "warning",
+      status: alerts.length === 0 ? "ok" : "warning",
       generated_at: new Date().toISOString(),
-      alerts: parity.status === "ok" ? [] : [{ severity: "warning", message: "Parity mismatch rate above threshold" }],
-      quick_actions: ["GET /runtime/summary", "GET /compare/parity", "GET /ops/dead-letter"]
+      alerts,
+      browser_parity: browserParity,
+      purchase_parity: parity,
+      quick_actions: ["GET /runtime/summary", "GET /compare/parity", "GET /compare/browser", "GET /ops/dead-letter"]
     });
   }
 
@@ -1700,12 +1885,31 @@ export default {
         );
       }
 
-      const record = {
-        receivedAt: new Date().toISOString(),
-        source: "edge-browser-beacon",
-        shop: typeof payload.shop === "string" ? payload.shop : "unknown-shop",
+      const shop = typeof payload.shop === "string" ? payload.shop : "unknown-shop";
+      const eventId = typeof payload.event_id === "string" ? payload.event_id : undefined;
+      const marketing =
+        payload.marketing && typeof payload.marketing === "object"
+          ? (payload.marketing as { session_id?: string; landing_site?: string })
+          : undefined;
+
+      const ingested = ingestBrowserEvent({
+        source: "synapse",
+        shop,
         event: eventName,
-        event_id: typeof payload.event_id === "string" ? payload.event_id : undefined,
+        event_id: eventId,
+        currency: typeof payload.currency === "string" ? payload.currency : undefined,
+        cart_total: typeof payload.cart_total === "string" ? payload.cart_total : undefined,
+        ecommerce: payload.ecommerce,
+        marketing
+      });
+
+      const record = {
+        receivedAt: ingested.observed_at,
+        source: "edge-browser-beacon",
+        shop,
+        event: eventName,
+        event_id: eventId,
+        key: ingested.key,
         payload
       };
 
@@ -1721,7 +1925,7 @@ export default {
       edgeBrowserBeaconsAccepted += 1;
       edgeEventsGenerated += 1;
       await hydrateChannelEventsFromCache();
-      recordSynapseBrowserChannel(eventName, record.event_id, record.shop);
+      recordSynapseBrowserChannel(eventName, eventId, shop);
       await persistChannelEventsToCache();
 
       return addSecurityHeaders(
@@ -1730,8 +1934,9 @@ export default {
             {
               ok: true,
               accepted: true,
-              key: `${record.shop}:${eventName}:${record.event_id ?? edgeBrowserBeaconsAccepted}`,
-              event: eventName
+              key: ingested.key,
+              event: eventName,
+              ingested: true
             },
             202
           ),
@@ -1840,7 +2045,7 @@ export default {
       }
     }
 
-    const native = await handleNativeApi(request);
+    const native = await handleNativeApi(request, env);
     if (native) {
       return addSecurityHeaders(native);
     }

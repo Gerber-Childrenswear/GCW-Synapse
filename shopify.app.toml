@@ -25,3 +25,15 @@ automatically_update_urls_on_dev = true
 
 [webhooks]
 api_version = "2025-10"
+
+  [[webhooks.subscriptions]]
+  topics = ["orders/create"]
+  uri = "https://gcw-synapse-super.gcwsynapse.workers.dev/webhooks/shopify/orders/create"
+
+  [[webhooks.subscriptions]]
+  topics = ["orders/paid"]
+  uri = "https://gcw-synapse-super.gcwsynapse.workers.dev/webhooks/shopify/orders/paid"
+
+  [[webhooks.subscriptions]]
+  topics = ["refunds/create"]
+  uri = "https://gcw-synapse-super.gcwsynapse.workers.dev/webhooks/shopify/refunds/create"

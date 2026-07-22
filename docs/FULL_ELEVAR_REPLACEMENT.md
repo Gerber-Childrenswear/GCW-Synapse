@@ -37,11 +37,19 @@ Optional env:
 - `ALERT_EMAIL_TO` + `ALERT_EMAIL_WEBHOOK_URL` (+ optional `ALERT_EMAIL_FROM`)
 
 Parity alerts fire (rate-limited) when purchase or browser mismatch exceeds threshold.
+Hit `GET /ops/alerts` to evaluate and dispatch.
+
+## Ownership & cutover
+
+- Ownership matrix: [`docs/OWNERSHIP_MATRIX.md`](./OWNERSHIP_MATRIX.md)
+- Dev cutover: [`docs/GCW_DEV_GTM_CUTOVER.md`](./GCW_DEV_GTM_CUTOVER.md)
+- Prod playbook: [`docs/PROD_ELEVAR_CUTOVER_PLAYBOOK.md`](./PROD_ELEVAR_CUTOVER_PLAYBOOK.md)
 
 ## Build notes
 
 ```bash
-npm run build:browser   # esbuild → theme asset
+npm run build:browser   # esbuild → theme asset + Worker CDN public/
 npm test
 npm run typecheck
+npm run cf:deploy
 ```

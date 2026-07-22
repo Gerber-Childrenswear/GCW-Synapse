@@ -360,7 +360,10 @@ export type UiModel = {
     matched_rate_pct?: number;
     mismatch_rate_pct?: number;
     paired_events?: number;
+    synapse_events?: number;
+    elevar_events?: number;
     status?: string;
+    by_event?: Array<{ event: string; synapse: number; elevar: number }>;
   };
   platforms?: PlatformMatrix;
   channels?: {

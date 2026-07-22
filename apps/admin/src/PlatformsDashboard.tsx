@@ -404,10 +404,22 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
     "status" in uiModel.launch_readiness
       ? String((uiModel.launch_readiness as { status?: string }).status ?? "—")
       : "—";
+  const browserParity = uiModel?.browser_parity;
+  const browserParityHold =
+    browserParity?.status === "alert" ||
+    (typeof browserParity?.matched_rate_pct === "number" &&
+      browserParity.matched_rate_pct < 95 &&
+      (browserParity.paired_events ?? 0) > 0);
   const launchStatus =
     (data?.totals.critical_causes ?? 0) > 0 || (data?.totals.critical ?? 0) > 0
       ? "HOLD"
-      : launchStatusRaw;
+      : browserParityHold
+        ? "HOLD"
+        : launchStatusRaw.toUpperCase() === "GO"
+          ? "GO"
+          : launchStatusRaw.toUpperCase() === "HOLD"
+            ? "HOLD"
+            : launchStatusRaw;
 
   return (
     <section className="platforms-dashboard">
@@ -473,6 +485,15 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
           <small>platforms with full browser↔server key match</small>
         </div>
         <div className="summary-card">
+          <span className="label">Browser dual-run</span>
+          <strong>{formatPct(browserParity?.matched_rate_pct)}</strong>
+          <small>
+            {browserParity
+              ? `${browserParity.paired_events ?? 0} paired · ${browserParity.status ?? "—"}`
+              : "waiting for Synapse + Elevar beacons"}
+          </small>
+        </div>
+        <div className="summary-card">
           <span className="label">Avg dedupe rate</span>
           <strong>{formatPct(data?.totals.avg_dedupe_pct ?? data?.totals.avg_match_pct)}</strong>
           <small>shared event_id / transaction_id</small>
@@ -493,22 +514,15 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
           <strong>{data?.totals.open_causes ?? topCauses.length}</strong>
           <small>{data?.totals.critical_causes ?? 0} critical · vendor-doc mapped</small>
         </div>
-        <div className="summary-card">
-          <span className="label">Channels tracked</span>
-          <strong>{channelSummary?.totals?.tracked_integrations ?? channelSummary?.total_channels ?? 0}</strong>
-          <small>
-            {channelSummary?.totals
-              ? `${channelSummary.totals.healthy ?? 0} healthy · ${channelSummary.totals.warning ?? 0} warn`
-              : "waiting"}
-          </small>
-        </div>
-        <div className={`summary-card ${(data?.totals.critical_causes ?? 0) > 0 ? "tone-bad" : ""}`}>
+        <div className={`summary-card ${(data?.totals.critical_causes ?? 0) > 0 || browserParityHold ? "tone-bad" : ""}`}>
           <span className="label">Launch gate</span>
           <strong>{launchStatus}</strong>
           <small>
             {(data?.totals.critical_causes ?? 0) > 0
               ? "Blocked by critical destination causes"
-              : "GO / HOLD from readiness checks"}
+              : browserParityHold
+                ? "HOLD — browser dual-run below 95%"
+                : "GO / HOLD from readiness + browser parity"}
           </small>
         </div>
       </div>

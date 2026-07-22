@@ -49,11 +49,41 @@ export function attachObservers(config: SynapseConfig): void {
         if (/\/cart\/change(\.js)?/i.test(url) && response.ok) {
           const clone = response.clone();
           const body = (await clone.json()) as Record<string, unknown>;
-          // Best-effort: when quantity becomes 0, treat as remove.
-          if (Array.isArray(body.items)) {
-            // no-op; theme-specific remove often uses /cart/change
+
+          let requestQuantity: number | undefined;
+          if (typeof init?.body === "string") {
+            try {
+              const parsed = JSON.parse(init.body) as { quantity?: number };
+              if (typeof parsed.quantity === "number") requestQuantity = parsed.quantity;
+            } catch {
+              // ignore
+            }
+          } else if (typeof input === "string" && /quantity=0/i.test(input)) {
+            requestQuantity = 0;
           }
-          void body;
+
+          let removed: SynapseProduct[] = [];
+          if (Array.isArray(body.items_removed)) {
+            removed = (body.items_removed as Array<Record<string, unknown>>).map(parseCartLine);
+          } else if (requestQuantity === 0) {
+            const prev = config.cart?.items ?? [];
+            const nextIds = new Set(
+              (Array.isArray(body.items) ? (body.items as Array<Record<string, unknown>>) : []).map(
+                (line) => String(line.variant_id || line.key || line.id || "")
+              )
+            );
+            removed = prev.filter((item) => {
+              const id = String(item.variant_id || item.id || "");
+              return Boolean(id) && !nextIds.has(id);
+            });
+            if (!removed.length && prev[0]) {
+              removed = [prev[0]];
+            }
+          }
+
+          if (removed.length) {
+            emitRemoveFromCart(config, removed);
+          }
         }
         if (/\/cart\.js$/i.test(url) && response.ok) {
           // ignore polling
