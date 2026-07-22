@@ -112,6 +112,57 @@ body {
   border-radius: 10px;
   color: #cbd5e1;
   font-size: 13px;
+  line-height: 1.45;
+}
+
+.sidebar-link {
+  color: #b7e0cc;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.embed-banner {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  border-radius: 14px;
+  border: 1px solid #c6ddcf;
+  background: linear-gradient(135deg, #f3faf6, #ffffff);
+}
+
+.embed-banner strong {
+  display: block;
+  margin-bottom: 2px;
+}
+
+.embed-banner p {
+  margin: 0;
+}
+
+.embed-banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.btn-mini {
+  display: inline-block;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #e5eee9;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.btn-mini.primary {
+  background: var(--accent);
+  color: #fff;
 }
 
 .content {

@@ -339,6 +339,12 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
   const [seeding, setSeeding] = useState(false);
   const [seedError, setSeedError] = useState<string | null>(null);
 
+  const data = matrix ?? uiModel?.platforms ?? null;
+  const channelSummary = uiModel?.channels;
+  const recentEvents = (uiModel?.recent?.channel_events ?? []) as RecentChannelEvent[];
+  const allIdle = Boolean(data && data.totals.idle === data.totals.platforms);
+  const topCauses = data?.top_causes ?? [];
+
   useEffect(() => {
     localStorage.setItem(MONITOR_KEY, JSON.stringify(monitored));
   }, [monitored]);
@@ -348,12 +354,6 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
     const firstCritical = data.platforms.find((p) => p.status === "critical");
     if (firstCritical) setExpandedId(firstCritical.id);
   }, [data, expandedId]);
-
-  const data = matrix ?? uiModel?.platforms ?? null;
-  const channelSummary = uiModel?.channels;
-  const recentEvents = (uiModel?.recent?.channel_events ?? []) as RecentChannelEvent[];
-  const allIdle = Boolean(data && data.totals.idle === data.totals.platforms);
-  const topCauses = data?.top_causes ?? [];
 
   const byId = useMemo(() => {
     const map = new Map<string, PlatformRow>();

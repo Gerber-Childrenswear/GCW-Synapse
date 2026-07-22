@@ -27,6 +27,7 @@ import {
   type UiModel
 } from "./api";
 import { PlatformsDashboard } from "./PlatformsDashboard";
+import { getShopifyEmbedContext, type ShopifyEmbedContext } from "./shopifyEmbed";
 
 type NavTab = "platforms" | "runtime" | "advisor" | "events" | "webhooks" | "shadow" | "qa" | "edge";
 
@@ -845,6 +846,7 @@ export default function App() {
   const [state, setState] = useState<LoadState>({ loading: true, error: null });
   const [lastError, setLastError] = useState<unknown>(null);
   const [simpleMode, setSimpleMode] = useState(true);
+  const [embed] = useState<ShopifyEmbedContext>(() => getShopifyEmbedContext());
 
   const [runtime, setRuntime] = useState<RuntimeStatus | null>(null);
   const [schemas, setSchemas] = useState<EventSchema[]>([]);
@@ -1106,11 +1108,11 @@ export default function App() {
   }
 
   return (
-    <div className="shell">
+    <div className={`shell ${simpleMode ? "shell-simple" : ""} ${embed.embedded ? "shell-embedded" : ""}`}>
       <aside className="sidebar">
         <div className="brand">
           <h1>SYNAPSE</h1>
-          <p>v0.2.0-merged</p>
+          <p>{embed.shopHandle ? embed.shopHandle : "gcw control panel"}</p>
         </div>
 
         <nav>
@@ -1127,10 +1129,82 @@ export default function App() {
           ))}
         </nav>
 
-        <div className="sidebar-footer">Connected to GCW Production</div>
+        <div className="sidebar-footer">
+          {embed.embedded ? "Embedded in Shopify admin" : "Standalone Worker admin"}
+          {embed.adminAppUrl ? (
+            <>
+              <br />
+              <a className="sidebar-link" href={embed.adminAppUrl} target="_top" rel="noreferrer">
+                Open in Shopify
+              </a>
+            </>
+          ) : (
+            <>
+              <br />
+              <a className="sidebar-link" href={embed.installUrl}>
+                Install on shop
+              </a>
+            </>
+          )}
+        </div>
       </aside>
 
       <main className="content">
+        {embed.shop ? (
+          <div className="embed-banner">
+            <div>
+              <strong>Live on {embed.shop}</strong>
+              <p className="muted tiny">
+                Platforms, dedupe, and destination causes are the GCW Synapse app home.
+              </p>
+            </div>
+            <div className="embed-banner-actions">
+              {embed.adminAppUrl ? (
+                <a className="btn-mini" href={embed.adminAppUrl} target="_top" rel="noreferrer">
+                  Shopify app
+                </a>
+              ) : null}
+              <a className="btn-mini" href={embed.installUrl}>
+                Reinstall / scopes
+              </a>
+              <a
+                className="btn-mini"
+                href={
+                  embed.shopHandle
+                    ? `https://${embed.shop}/admin/themes/current/editor?context=apps&activateAppId=7d011b70562512bd84b85bd3f9a6e68d/gcw-synapse-app-block`
+                    : "/install"
+                }
+                target="_blank"
+                rel="noreferrer"
+              >
+                Theme embed
+              </a>
+            </div>
+          </div>
+        ) : (
+          <div className="embed-banner">
+            <div>
+              <strong>Open this app inside Shopify to go live on a shop</strong>
+              <p className="muted tiny">
+                Install on gcw-dev, then launch GCW Synapse from Apps — this platforms UI is the app home.
+              </p>
+            </div>
+            <div className="embed-banner-actions">
+              <a className="btn-mini primary" href="/install?shop=gcw-dev.myshopify.com">
+                Install gcw-dev
+              </a>
+              <a
+                className="btn-mini"
+                href="https://admin.shopify.com/store/gcw-dev/apps/7d011b70562512bd84b85bd3f9a6e68d"
+                target="_top"
+                rel="noreferrer"
+              >
+                Open Shopify app
+              </a>
+            </div>
+          </div>
+        )}
+
         {activeTab !== "platforms" ? (
           <QuickStartPanel
             onGoRuntime={() => setActiveTab("platforms")}

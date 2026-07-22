@@ -292,6 +292,7 @@ function handleInstallLanding(url: URL, env: CloudflareEnv): Response {
       <div class="actions">
         <a class="btn btn-primary" href="${oauthInstall}">Install with lean scopes</a>
         <a class="btn btn-secondary" href="${adminInstall}">Admin install link</a>
+        <a class="btn btn-secondary" href="https://admin.shopify.com/store/${handle}/apps/${apiKey}">Open app (if installed)</a>
       </div>
       <p class="meta">Scopes: <span class="mono">${scopes}</span></p>
     </div>
@@ -608,18 +609,36 @@ async function handleShopifyOAuth(
       ? `Web pixel ${String(pixel.detail.action)}d successfully.`
       : `Web pixel activation issue: ${JSON.stringify(pixel.detail.errors || pixel.detail)}`;
 
+    const handle = shop.replace(/\.myshopify\.com$/i, "");
+    const appHome = `${appOrigin}/?shop=${encodeURIComponent(shop)}&embedded=1`;
+    const adminApp = `https://admin.shopify.com/store/${handle}/apps/${apiKey}`;
+    const embedEditor = `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${apiKey}/gcw-synapse-app-block`;
+    const customerEvents = `https://admin.shopify.com/store/${handle}/settings/customer_events`;
+
     return htmlResponse(`<!doctype html>
-<html><head><meta charset="utf-8"><title>GCW Synapse installed</title></head>
-<body style="font-family:system-ui;max-width:640px;margin:40px auto;padding:0 16px">
-  <h1>GCW Synapse installed</h1>
+<html><head>
+  <meta charset="utf-8">
+  <meta http-equiv="refresh" content="2;url=${appHome}">
+  <title>GCW Synapse installed</title>
+  <style>
+    body{font-family:IBM Plex Sans,Segoe UI,sans-serif;max-width:640px;margin:40px auto;padding:0 16px;color:#12241c;background:#f5f8f6}
+    a.btn{display:inline-block;margin:6px 8px 6px 0;padding:12px 16px;border-radius:8px;background:#0f6b4c;color:#fff;text-decoration:none;font-weight:600}
+    a.btn.secondary{background:#e5eee9;color:#12241c}
+    .ok{color:#0f6b4c}
+  </style>
+</head>
+<body>
+  <h1 class="ok">GCW Synapse is live</h1>
   <p><strong>Shop:</strong> ${shop}</p>
   <p><strong>Scopes:</strong> ${token.scope || scopes}</p>
   <p>${pixelStatus}</p>
-  <ol>
-    <li>Re-enable the theme App embed if needed.</li>
-    <li>Confirm <a href="https://admin.shopify.com/store/${shop.replace(".myshopify.com", "")}/settings/customer_events">Customer events → App pixels</a>.</li>
-  </ol>
-  <p><a href="https://${shop}/admin">Open Shopify admin</a></p>
+  <p>Opening the platforms control panel…</p>
+  <p>
+    <a class="btn" href="${adminApp}">Open app in Shopify admin</a>
+    <a class="btn secondary" href="${appHome}">Open platforms UI</a>
+    <a class="btn secondary" href="${embedEditor}">Enable theme embed</a>
+    <a class="btn secondary" href="${customerEvents}">Customer events</a>
+  </p>
 </body></html>`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Install callback failed";
@@ -1565,13 +1584,43 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
 
 async function serveAsset(request: Request, env: CloudflareEnv): Promise<Response> {
   const response = await env.ASSETS.fetch(request);
-
-  if (response.status !== 404) {
-    return addSecurityHeaders(response);
-  }
-
   const url = new URL(request.url);
   const acceptsHtml = (request.headers.get("accept") ?? "").includes("text/html");
+
+  async function withAppBridge(htmlResponse: Response): Promise<Response> {
+    const contentType = htmlResponse.headers.get("content-type") ?? "";
+    if (!contentType.includes("text/html")) {
+      return addSecurityHeaders(htmlResponse);
+    }
+
+    const apiKey = (env.SHOPIFY_API_KEY || "7d011b70562512bd84b85bd3f9a6e68d").trim();
+    let html = await htmlResponse.text();
+    if (!html.includes("shopify-api-key")) {
+      const bridge = `
+    <meta name="shopify-api-key" content="${apiKey}" />
+    <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>`;
+      html = html.includes("</head>")
+        ? html.replace("</head>", `${bridge}\n  </head>`)
+        : `${bridge}\n${html}`;
+    }
+
+    const headers = new Headers(htmlResponse.headers);
+    headers.set("content-type", "text/html; charset=utf-8");
+    return addSecurityHeaders(
+      new Response(html, {
+        status: htmlResponse.status,
+        statusText: htmlResponse.statusText,
+        headers
+      })
+    );
+  }
+
+  if (response.status !== 404) {
+    if (url.pathname === "/" || url.pathname === "/index.html" || acceptsHtml) {
+      return withAppBridge(response);
+    }
+    return addSecurityHeaders(response);
+  }
 
   if (!acceptsHtml || url.pathname.includes(".")) {
     return addSecurityHeaders(response);
@@ -1579,7 +1628,7 @@ async function serveAsset(request: Request, env: CloudflareEnv): Promise<Respons
 
   const spaRequest = new Request(new URL("/index.html", url.origin).toString(), request);
   const spaResponse = await env.ASSETS.fetch(spaRequest);
-  return addSecurityHeaders(spaResponse);
+  return withAppBridge(spaResponse);
 }
 
 export default {
