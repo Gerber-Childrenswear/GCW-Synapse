@@ -1169,31 +1169,44 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
       event_name: string;
       status: "ok" | "error";
       pixel_id?: string;
+      event_id?: string;
+      transaction_id?: string;
       error_message?: string;
       minutesAgo: number;
     };
     const samples: DemoSample[] = [
-      { channel: "meta", surface: "pixel", destination: "Meta Pixel", event_name: "PageView", status: "ok", pixel_id: "demo-meta", minutesAgo: 2 },
-      { channel: "meta", surface: "server", destination: "Meta CAPI", event_name: "PageView", status: "ok", minutesAgo: 2 },
-      { channel: "meta", surface: "pixel", destination: "Meta Pixel", event_name: "ViewContent", status: "ok", pixel_id: "demo-meta", minutesAgo: 4 },
-      { channel: "meta", surface: "server", destination: "Meta CAPI", event_name: "ViewContent", status: "ok", minutesAgo: 4 },
-      { channel: "meta", surface: "pixel", destination: "Meta Pixel", event_name: "Purchase", status: "ok", pixel_id: "demo-meta", minutesAgo: 8 },
-      { channel: "meta", surface: "server", destination: "Meta CAPI", event_name: "Purchase", status: "ok", minutesAgo: 8 },
-      { channel: "ga4", surface: "pixel", destination: "GA4 Browser", event_name: "page_view", status: "ok", minutesAgo: 1 },
-      { channel: "ga4", surface: "server", destination: "GA4 MP", event_name: "page_view", status: "ok", minutesAgo: 1 },
-      { channel: "ga4", surface: "pixel", destination: "GA4 Browser", event_name: "purchase", status: "ok", minutesAgo: 9 },
-      { channel: "ga4", surface: "server", destination: "GA4 MP", event_name: "purchase", status: "ok", minutesAgo: 9 },
-      { channel: "google_ads", surface: "pixel", destination: "Google Ads Tag", event_name: "purchase", status: "ok", minutesAgo: 10 },
-      { channel: "google_ads", surface: "server", destination: "Enhanced Conv", event_name: "purchase", status: "ok", minutesAgo: 10 },
-      { channel: "tiktok", surface: "pixel", destination: "TikTok Pixel", event_name: "ViewContent", status: "ok", minutesAgo: 6 },
-      { channel: "tiktok", surface: "server", destination: "TikTok Events API", event_name: "ViewContent", status: "error", error_message: "Invalid access token", minutesAgo: 6 },
-      { channel: "reddit", surface: "pixel", destination: "Reddit Pixel", event_name: "PageVisit", status: "ok", minutesAgo: 3 },
-      { channel: "reddit", surface: "server", destination: "Reddit CAPI", event_name: "PageVisit", status: "ok", minutesAgo: 3 },
-      { channel: "bloomreach", surface: "server", destination: "Bloomreach Engagement", event_name: "purchase", status: "ok", minutesAgo: 12 },
-      { channel: "triple_whale", surface: "pixel", destination: "Triple Whale Pixel", event_name: "Purchase", status: "ok", minutesAgo: 11 },
-      { channel: "cj", surface: "server", destination: "CJ AffNet", event_name: "purchase", status: "ok", minutesAgo: 15 },
-      { channel: "server_gtm", surface: "server", destination: "sGTM N45F3JCC", event_name: "purchase", status: "ok", minutesAgo: 8 },
-      { channel: "synapse", surface: "runtime", destination: "Worker /event", event_name: "dl_purchase", status: "ok", minutesAgo: 8 }
+      // Meta — full dedupe confirmed
+      { channel: "meta", surface: "pixel", destination: "Meta Pixel", event_name: "PageView", status: "ok", pixel_id: "demo-meta", event_id: "meta_pv_1", minutesAgo: 2 },
+      { channel: "meta", surface: "server", destination: "Meta CAPI", event_name: "PageView", status: "ok", event_id: "meta_pv_1", minutesAgo: 2 },
+      { channel: "meta", surface: "pixel", destination: "Meta Pixel", event_name: "ViewContent", status: "ok", pixel_id: "demo-meta", event_id: "meta_vc_1", minutesAgo: 4 },
+      { channel: "meta", surface: "server", destination: "Meta CAPI", event_name: "ViewContent", status: "ok", event_id: "meta_vc_1", minutesAgo: 4 },
+      { channel: "meta", surface: "pixel", destination: "Meta Pixel", event_name: "Purchase", status: "ok", pixel_id: "demo-meta", event_id: "meta_pur_1", minutesAgo: 8 },
+      { channel: "meta", surface: "server", destination: "Meta CAPI", event_name: "Purchase", status: "ok", event_id: "meta_pur_1", minutesAgo: 8 },
+      // GA4 — transaction_id aligned
+      { channel: "ga4", surface: "pixel", destination: "GA4 Browser", event_name: "page_view", status: "ok", event_id: "ga4_pv_1", minutesAgo: 1 },
+      { channel: "ga4", surface: "server", destination: "GA4 MP", event_name: "page_view", status: "ok", event_id: "ga4_pv_1", minutesAgo: 1 },
+      { channel: "ga4", surface: "pixel", destination: "GA4 Browser", event_name: "purchase", status: "ok", transaction_id: "GCW-10042", event_id: "ga4_pur_1", minutesAgo: 9 },
+      { channel: "ga4", surface: "server", destination: "GA4 MP", event_name: "purchase", status: "ok", transaction_id: "GCW-10042", event_id: "ga4_pur_1", minutesAgo: 9 },
+      // Google Ads — purchase aligned
+      { channel: "google_ads", surface: "pixel", destination: "Google Ads Tag", event_name: "purchase", status: "ok", transaction_id: "GCW-10042", minutesAgo: 10 },
+      { channel: "google_ads", surface: "server", destination: "Enhanced Conv", event_name: "purchase", status: "ok", transaction_id: "GCW-10042", minutesAgo: 10 },
+      // TikTok — browser ok, server auth failure + mismatched event_id (browser-only dedupe)
+      { channel: "tiktok", surface: "pixel", destination: "TikTok Pixel", event_name: "ViewContent", status: "ok", event_id: "tt_vc_browser", minutesAgo: 6 },
+      { channel: "tiktok", surface: "server", destination: "TikTok Events API", event_name: "ViewContent", status: "error", event_id: "tt_vc_server_other", error_message: "access_token_invalid: Events API access token is invalid", minutesAgo: 6 },
+      // Reddit — confirmed
+      { channel: "reddit", surface: "pixel", destination: "Reddit Pixel", event_name: "PageVisit", status: "ok", event_id: "rd_pv_1", minutesAgo: 3 },
+      { channel: "reddit", surface: "server", destination: "Reddit CAPI", event_name: "PageVisit", status: "ok", event_id: "rd_pv_1", minutesAgo: 3 },
+      // Bloomreach server-only + schema hint
+      { channel: "bloomreach", surface: "server", destination: "Bloomreach Engagement", event_name: "purchase", status: "ok", transaction_id: "GCW-10042", minutesAgo: 12 },
+      // Triple Whale browser-only
+      { channel: "triple_whale", surface: "pixel", destination: "Triple Whale Pixel", event_name: "Purchase", status: "ok", event_id: "tw_pur_1", minutesAgo: 11 },
+      // CJ server-only
+      { channel: "cj", surface: "server", destination: "CJ AffNet", event_name: "purchase", status: "ok", transaction_id: "GCW-10042", minutesAgo: 15 },
+      // Pipe
+      { channel: "server_gtm", surface: "server", destination: "sGTM N45F3JCC", event_name: "purchase", status: "ok", transaction_id: "GCW-10042", event_id: "sgtm_pur_1", minutesAgo: 8 },
+      { channel: "synapse", surface: "runtime", destination: "Worker /event", event_name: "dl_purchase", status: "ok", transaction_id: "GCW-10042", event_id: "syn_pur_1", minutesAgo: 8 },
+      // Meta browser-only orphan to show partial dedupe sample elsewhere
+      { channel: "meta", surface: "pixel", destination: "Meta Pixel", event_name: "AddToCart", status: "ok", pixel_id: "demo-meta", event_id: "meta_atc_orphan", minutesAgo: 5 }
     ];
 
     await hydrateChannelEventsFromCache();
@@ -1207,6 +1220,8 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
         event_name: sample.event_name,
         status: sample.status,
         pixel_id: sample.pixel_id,
+        event_id: sample.event_id,
+        transaction_id: sample.transaction_id,
         error_message: sample.error_message,
         observed_at: observedAt
       };
@@ -1217,6 +1232,8 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
         destination: sample.destination,
         pixel_id: sample.pixel_id,
         event_name: sample.event_name,
+        event_id: sample.event_id,
+        transaction_id: sample.transaction_id,
         status: sample.status,
         error_message: sample.error_message,
         observed_at: observedAt
@@ -1227,7 +1244,7 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
       edgeChannelEvents.length = 500;
     }
     await persistChannelEventsToCache();
-    return jsonResponse({ ok: true, seeded, note: "Demo channel pulses recorded for UI preview" }, 202);
+    return jsonResponse({ ok: true, seeded, note: "Demo channel pulses with dedupe keys recorded" }, 202);
   }
 
   if (request.method === "GET" && url.pathname === "/api/advisor/alerts") {

@@ -7,6 +7,11 @@ import {
   type ChannelHealthSummary,
   type TroubleshootingIssue
 } from "./channelHealth";
+import {
+  dedupeKeyFieldForPlatform,
+  diagnoseErrorMessage,
+  type DiagnosedCause
+} from "./platformDiagnostics";
 
 export type SurfacePulse = {
   status: "firing" | "silent" | "error" | "idle";
@@ -17,19 +22,46 @@ export type SurfacePulse = {
   minutes_since_last_event: number | null;
   event_counts: Record<string, number>;
   destinations: string[];
+  last_error_message?: string | null;
+};
+
+export type DedupeStats = {
+  key_field: "event_id" | "transaction_id" | "either";
+  status: "confirmed" | "partial" | "missing" | "idle";
+  confirmed: number;
+  browser_only: number;
+  server_only: number;
+  browser_keys: number;
+  server_keys: number;
+  confirmation_pct: number | null;
+  sample_confirmed: string[];
+  sample_browser_only: string[];
+  sample_server_only: string[];
+};
+
+export type EventCoverage = {
+  name: string;
+  browser: number;
+  server: number;
+  status: "both" | "browser_only" | "server_only" | "missing";
 };
 
 export type PlatformRow = {
   id: string;
   label: string;
+  group: string;
   browser: SurfacePulse;
   server: SurfacePulse;
   match_pct: number | null;
   paired_events: number;
   status: "healthy" | "warning" | "critical" | "idle";
   expected_events: string[];
+  event_coverage: EventCoverage[];
+  coverage_pct: number | null;
+  dedupe: DedupeStats;
   docs: string[];
   issues: TroubleshootingIssue[];
+  causes: DiagnosedCause[];
   tips: string[];
 };
 
@@ -42,15 +74,22 @@ export type PlatformMatrix = {
     critical: number;
     idle: number;
     avg_match_pct: number | null;
+    avg_dedupe_pct: number | null;
+    dedupe_confirmed_platforms: number;
+    monitored_with_traffic: number;
+    open_causes: number;
+    critical_causes: number;
   };
   platforms: PlatformRow[];
   troubleshooting: TroubleshootingIssue[];
+  top_causes: DiagnosedCause[];
   links: Record<string, string[]>;
 };
 
 type PlatformDefinition = {
   id: string;
   label: string;
+  group: string;
   aliases: string[];
   expected_events: string[];
   tips: string[];
@@ -60,106 +99,117 @@ const PLATFORM_DEFS: PlatformDefinition[] = [
   {
     id: "meta",
     label: "Meta (Facebook)",
+    group: "paid-social",
     aliases: ["meta", "facebook", "fb"],
     expected_events: ["PageView", "ViewContent", "AddToCart", "InitiateCheckout", "Purchase"],
     tips: [
-      "Browser Pixel and Conversions API should share the same event_id for dedupe.",
-      "Confirm Advanced Matching fields (email/phone) when consent allows."
+      "Pixel eventID must equal CAPI event_id and event names must match (Meta 48h window).",
+      "Send fbp/fbc + hashed em/ph when consent allows to protect EMQ."
     ]
   },
   {
     id: "ga4",
     label: "Google Analytics 4",
+    group: "search-analytics",
     aliases: ["ga4", "google_analytics", "analytics"],
     expected_events: ["page_view", "view_item", "add_to_cart", "begin_checkout", "purchase"],
     tips: [
-      "Compare browser GA4 hits vs Measurement Protocol / sGTM purchase.",
-      "transaction_id must match between client and server purchase."
+      "Align transaction_id on browser GA4 purchase and Measurement Protocol / sGTM purchase.",
+      "Confirm measurement_id + API secret in the server tag."
     ]
   },
   {
     id: "google_ads",
     label: "Google Ads",
-    aliases: ["google_ads", "google-ads", "aw", "google"],
+    group: "search-analytics",
+    aliases: ["google_ads", "google-ads", "aw"],
     expected_events: ["page_view", "add_to_cart", "begin_checkout", "purchase"],
     tips: [
-      "Enhanced conversions need hashed PII consistency across browser and server.",
-      "Check conversion label mapping in sGTM after Synapse cutover."
+      "Enhanced conversions need identical hashed PII on browser and server.",
+      "Re-check conversion ID/label mapping after Synapse cutover."
     ]
   },
   {
     id: "tiktok",
     label: "TikTok",
+    group: "paid-social",
     aliases: ["tiktok", "tt"],
     expected_events: ["Pageview", "ViewContent", "AddToCart", "InitiateCheckout", "CompletePayment"],
     tips: [
-      "Pixel + Events API should dedupe with event_id / order id.",
-      "Validate TikTok Pixel ID in GTM and Events API access token."
+      "Pixel + Events API should share event_id (and order id on CompletePayment).",
+      "Keep Pixel ID and Events API access token on the same TikTok pixel."
     ]
   },
   {
     id: "pinterest",
     label: "Pinterest",
+    group: "paid-social",
     aliases: ["pinterest", "pin"],
     expected_events: ["page_visit", "view_category", "add_to_cart", "checkout"],
     tips: [
-      "Use Pinterest Tag browser events alongside Conversions API.",
-      "Match event_id across surfaces for purchase dedupe."
+      "Send event_id on both Pinterest Tag and Conversions API.",
+      "Validate Tag ID vs Conversions API token in Ads Manager."
     ]
   },
   {
     id: "reddit",
     label: "Reddit",
+    group: "paid-social",
     aliases: ["reddit"],
     expected_events: ["PageVisit", "ViewContent", "AddToCart", "Purchase"],
     tips: [
-      "Reddit Pixel + CAPI both need the same conversion ID strategy.",
-      "Confirm Pixel Guard / bot suppression is not blocking legitimate Reddit traffic."
+      "Use one conversion ID strategy across Pixel + CAPI.",
+      "Ensure bot suppression is not dropping legitimate Reddit-driven shoppers."
     ]
   },
   {
     id: "bloomreach",
     label: "Bloomreach",
+    group: "commerce",
     aliases: ["bloomreach", "exponea"],
     expected_events: ["view_item", "cart_update", "purchase", "consent"],
     tips: [
-      "Bloomreach GTM variables still expect Elevar-shaped dl_* until remapped.",
-      "Validate catalog IDs and customer identity after Synapse dual-run."
+      "Remap GTM variables off Elevar-only dataLayer paths before cutover.",
+      "Validate catalog IDs and customer identity on Synapse events."
     ]
   },
   {
     id: "triple_whale",
     label: "Triple Whale",
+    group: "commerce",
     aliases: ["triple_whale", "triplewhale", "tw"],
     expected_events: ["page_view", "add_to_cart", "purchase"],
     tips: [
-      "Keep TW pixel on during Synapse dual-run only if you accept double client events.",
-      "Server purchases should arrive once via Synapse → sGTM path."
+      "Dual-run with TW pixel ON will double client events — plan the cutover.",
+      "Prefer a single server purchase path via Synapse → sGTM."
     ]
   },
   {
     id: "cj",
     label: "Commission Junction",
+    group: "commerce",
     aliases: ["cj", "commission_junction", "commissionjunction"],
     expected_events: ["purchase"],
     tips: [
-      "CJ usually needs server-side order confirmation with discount/coupon fidelity.",
-      "Verify action IDs and enterprise CID after webhook mapping changes."
+      "CJ needs reliable server-side order confirmation with coupon fidelity.",
+      "Verify enterprise CID / action IDs after webhook mapping changes."
     ]
   },
   {
     id: "server_gtm",
     label: "Server GTM",
+    group: "pipe",
     aliases: ["server_gtm", "sgtm", "gtm_server", "gtm"],
     expected_events: ["purchase", "refund", "page_view"],
     tips: [
-      "sGTM is the fan-out hub — if this is silent, destination platforms will starve.",
-      "Confirm Synapse webhook forward + browser beacon tags both land in GTM-N45F3JCC."
+      "If sGTM is silent, every destination downstream starves.",
+      "Confirm Synapse webhook + browser beacon clients land in GTM-N45F3JCC."
     ]
   },
   {
     id: "synapse",
     label: "Synapse (source)",
+    group: "pipe",
     aliases: ["synapse", "gcw_synapse", "gcw-synapse"],
     expected_events: [
       "dl_user_data",
@@ -170,7 +220,7 @@ const PLATFORM_DEFS: PlatformDefinition[] = [
     ],
     tips: [
       "Theme embed covers storefront dl_*; web pixel covers checkout.",
-      "Beacon 202s here are the source of truth before GTM destinations."
+      "Beacon 202s are the source of truth before destination fan-out."
     ]
   }
 ];
@@ -184,7 +234,8 @@ function idlePulse(): SurfacePulse {
     last_event_at: null,
     minutes_since_last_event: null,
     event_counts: {},
-    destinations: []
+    destinations: [],
+    last_error_message: null
   };
 }
 
@@ -193,7 +244,10 @@ function matchesPlatform(channel: string, def: PlatformDefinition): boolean {
   return def.aliases.some((alias) => normalized === alias || normalized.includes(alias));
 }
 
-function mergePulse(items: ChannelHealthItem[], surface: "pixel" | "server" | "runtime" | "webhook"): SurfacePulse {
+function mergePulse(
+  items: ChannelHealthItem[],
+  surface: "pixel" | "server" | "runtime" | "webhook"
+): SurfacePulse {
   const relevant = items.filter((item) => {
     if (surface === "pixel") return item.surface === "pixel" || item.surface === "runtime";
     if (surface === "server") return item.surface === "server" || item.surface === "webhook";
@@ -208,6 +262,8 @@ function mergePulse(items: ChannelHealthItem[], surface: "pixel" | "server" | "r
   const destinations = new Set<string>();
   let latest: string | null = null;
   let latestMs = 0;
+  let lastError: string | null = null;
+  let lastErrorMs = 0;
 
   for (const item of relevant) {
     destinations.add(item.destination);
@@ -218,6 +274,13 @@ function mergePulse(items: ChannelHealthItem[], surface: "pixel" | "server" | "r
     if (Number.isFinite(ms) && ms >= latestMs) {
       latestMs = ms;
       latest = item.last_event_at;
+    }
+    if (item.last_error_message && item.last_error_at) {
+      const errMs = new Date(item.last_error_at).getTime();
+      if (Number.isFinite(errMs) && errMs >= lastErrorMs) {
+        lastErrorMs = errMs;
+        lastError = item.last_error_message;
+      }
     }
   }
 
@@ -236,51 +299,148 @@ function mergePulse(items: ChannelHealthItem[], surface: "pixel" | "server" | "r
     last_event_at: latest,
     minutes_since_last_event: minutes,
     event_counts: eventCounts,
-    destinations: [...destinations]
+    destinations: [...destinations],
+    last_error_message: lastError
   };
 }
 
-function computeMatchPct(platformId: string, aliases: string[]): { match_pct: number | null; paired_events: number } {
+function eventKey(
+  event: ReturnType<typeof getRecentChannelEvents>[number],
+  keyField: DedupeStats["key_field"]
+): string | null {
+  const eventId = event.event_id?.trim();
+  const txnId = event.transaction_id?.trim();
+  if (keyField === "event_id") return eventId || null;
+  if (keyField === "transaction_id") return txnId || eventId || null;
+  return eventId || txnId || null;
+}
+
+function computeDedupe(platformId: string, aliases: string[]): DedupeStats {
+  const keyField = dedupeKeyFieldForPlatform(platformId);
   const recent = getRecentChannelEvents(500);
-  const browserKeys = new Set<string>();
-  const serverKeys = new Set<string>();
+  const browserKeys = new Map<string, string>();
+  const serverKeys = new Map<string, string>();
 
   for (const event of recent) {
-    if (!aliases.some((alias) => event.channel.toLowerCase().includes(alias))) {
-      // also allow exact platform id
-      if (event.channel.toLowerCase() !== platformId) continue;
-    }
-    const key =
-      event.event_id ||
-      event.transaction_id ||
-      `${event.event_name}|${event.observed_at ?? ""}`;
+    const channel = event.channel.toLowerCase().replace(/[\s-]+/g, "_");
+    const matched =
+      channel === platformId ||
+      aliases.some((alias) => channel === alias || channel.includes(alias));
+    if (!matched) continue;
+
+    const key = eventKey(event, keyField);
     if (!key) continue;
-    if (event.surface === "pixel" || event.surface === "runtime") browserKeys.add(key);
-    if (event.surface === "server" || event.surface === "webhook") serverKeys.add(key);
+    const label = `${event.event_name}:${key}`;
+    if (event.surface === "pixel" || event.surface === "runtime") browserKeys.set(key, label);
+    if (event.surface === "server" || event.surface === "webhook") serverKeys.set(key, label);
   }
 
-  if (browserKeys.size === 0 || serverKeys.size === 0) {
-    return { match_pct: null, paired_events: 0 };
+  const confirmed: string[] = [];
+  const browserOnly: string[] = [];
+  const serverOnly: string[] = [];
+
+  for (const [key, label] of browserKeys) {
+    if (serverKeys.has(key)) confirmed.push(label);
+    else browserOnly.push(label);
+  }
+  for (const [key, label] of serverKeys) {
+    if (!browserKeys.has(key)) serverOnly.push(label);
   }
 
-  let paired = 0;
-  for (const key of browserKeys) {
-    if (serverKeys.has(key)) paired += 1;
-  }
-  const denom = Math.max(browserKeys.size, serverKeys.size);
+  const browserCount = browserKeys.size;
+  const serverCount = serverKeys.size;
+  const confirmedCount = confirmed.length;
+  const denom = Math.max(browserCount, serverCount);
+
+  let status: DedupeStats["status"] = "idle";
+  if (browserCount === 0 && serverCount === 0) status = "idle";
+  else if (confirmedCount > 0 && browserOnly.length === 0 && serverOnly.length === 0) status = "confirmed";
+  else if (confirmedCount > 0) status = "partial";
+  else status = "missing";
+
   return {
-    paired_events: paired,
-    match_pct: Number(((paired / denom) * 100).toFixed(2))
+    key_field: keyField,
+    status,
+    confirmed: confirmedCount,
+    browser_only: browserOnly.length,
+    server_only: serverOnly.length,
+    browser_keys: browserCount,
+    server_keys: serverCount,
+    confirmation_pct: denom > 0 ? Number(((confirmedCount / denom) * 100).toFixed(2)) : null,
+    sample_confirmed: confirmed.slice(0, 3),
+    sample_browser_only: browserOnly.slice(0, 3),
+    sample_server_only: serverOnly.slice(0, 3)
   };
 }
 
-function rowStatus(browser: SurfacePulse, server: SurfacePulse, matchPct: number | null): PlatformRow["status"] {
+function buildEventCoverage(
+  expected: string[],
+  browser: SurfacePulse,
+  server: SurfacePulse
+): { coverage: EventCoverage[]; coverage_pct: number | null } {
+  const coverage = expected.map((name) => {
+    const b = browser.event_counts[name] ?? 0;
+    const s = server.event_counts[name] ?? 0;
+    let status: EventCoverage["status"] = "missing";
+    if (b > 0 && s > 0) status = "both";
+    else if (b > 0) status = "browser_only";
+    else if (s > 0) status = "server_only";
+    return { name, browser: b, server: s, status };
+  });
+  const both = coverage.filter((c) => c.status === "both").length;
+  return {
+    coverage,
+    coverage_pct:
+      expected.length === 0 ? null : Number(((both / expected.length) * 100).toFixed(1))
+  };
+}
+
+function rowStatus(
+  browser: SurfacePulse,
+  server: SurfacePulse,
+  dedupe: DedupeStats,
+  causes: DiagnosedCause[],
+  group: string
+): PlatformRow["status"] {
   if (browser.status === "idle" && server.status === "idle") return "idle";
-  if (browser.status === "error" || server.status === "error") return "critical";
-  if (matchPct != null && matchPct < 85) return "warning";
+  if (causes.some((c) => c.severity === "critical") || browser.status === "error" || server.status === "error") {
+    return "critical";
+  }
+  if (group === "pipe") {
+    if (browser.status === "firing" || server.status === "firing") return "healthy";
+    if (browser.status === "silent" || server.status === "silent") return "warning";
+    return "warning";
+  }
+  if (dedupe.status === "missing" && (browser.status === "firing" || server.status === "firing")) {
+    return "warning";
+  }
+  if (dedupe.status === "partial") return "warning";
   if (browser.status === "silent" || server.status === "silent") return "warning";
   if (browser.status === "idle" || server.status === "idle") return "warning";
   return "healthy";
+}
+
+function buildCausesForPlatform(
+  def: PlatformDefinition,
+  browser: SurfacePulse,
+  server: SurfacePulse,
+  dedupe: DedupeStats,
+  items: ChannelHealthItem[]
+): DiagnosedCause[] {
+  const errorMessages = items
+    .map((i) => i.last_error_message)
+    .filter((m): m is string => Boolean(m));
+  const primaryError = server.last_error_message || browser.last_error_message || errorMessages[0];
+
+  return diagnoseErrorMessage(def.id, primaryError, {
+    missingDedupe:
+      dedupe.status === "missing" &&
+      (dedupe.browser_keys > 0 || dedupe.server_keys > 0) &&
+      def.group !== "pipe",
+    partialDedupe: dedupe.status === "partial" && def.group !== "pipe",
+    browserOnly: browser.status === "firing" && server.status === "idle" && def.group !== "pipe",
+    serverOnly: server.status === "firing" && browser.status === "idle" && def.group !== "pipe"
+  });
 }
 
 export function buildPlatformMatrix(
@@ -295,25 +455,41 @@ export function buildPlatformMatrix(
     const items = summary.channels.filter((item) => matchesPlatform(item.channel, def));
     const browser = mergePulse(items, "pixel");
     const server = mergePulse(items, "server");
-    const { match_pct, paired_events } = computeMatchPct(def.id, def.aliases);
+    const dedupe = computeDedupe(def.id, def.aliases);
+    const { coverage, coverage_pct } = buildEventCoverage(def.expected_events, browser, server);
+    const causes = buildCausesForPlatform(def, browser, server, dedupe, items);
     const issues = allIssues.filter((issue) =>
-      items.some((item) => issue.key === item.key || issue.title.toLowerCase().includes(def.id))
+      items.some(
+        (item) =>
+          issue.key === item.key ||
+          issue.title.toLowerCase().includes(def.id) ||
+          issue.title.toLowerCase().includes(def.label.toLowerCase().split(" ")[0] ?? "")
+      )
     );
     const docs = links[def.id] ?? links[def.aliases[0] ?? ""] ?? [
       "https://help.shopify.com/en/manual/promoting-marketing/pixels"
     ];
 
+    // Prefer real dedupe confirmation % as match_pct (no observed_at false pairs)
+    const match_pct = dedupe.confirmation_pct;
+    const paired_events = dedupe.confirmed;
+
     return {
       id: def.id,
       label: def.label,
+      group: def.group,
       browser,
       server,
       match_pct,
       paired_events,
-      status: rowStatus(browser, server, match_pct),
+      status: rowStatus(browser, server, dedupe, causes, def.group),
       expected_events: def.expected_events,
+      event_coverage: coverage,
+      coverage_pct,
+      dedupe,
       docs,
       issues,
+      causes,
       tips: def.tips
     } satisfies PlatformRow;
   });
@@ -323,10 +499,28 @@ export function buildPlatformMatrix(
   const critical = platforms.filter((p) => p.status === "critical").length;
   const idle = platforms.filter((p) => p.status === "idle").length;
   const matchValues = platforms.map((p) => p.match_pct).filter((v): v is number => v != null);
+  const dedupeValues = platforms
+    .map((p) => p.dedupe.confirmation_pct)
+    .filter((v): v is number => v != null);
   const avgMatch =
     matchValues.length > 0
       ? Number((matchValues.reduce((a, b) => a + b, 0) / matchValues.length).toFixed(2))
       : null;
+  const avgDedupe =
+    dedupeValues.length > 0
+      ? Number((dedupeValues.reduce((a, b) => a + b, 0) / dedupeValues.length).toFixed(2))
+      : null;
+
+  const topCausesMap = new Map<string, DiagnosedCause>();
+  for (const platform of platforms) {
+    for (const cause of platform.causes) {
+      if (!topCausesMap.has(cause.code)) topCausesMap.set(cause.code, cause);
+    }
+  }
+  const top_causes = [...topCausesMap.values()].sort((a, b) => {
+    if (a.severity === b.severity) return a.title.localeCompare(b.title);
+    return a.severity === "critical" ? -1 : 1;
+  });
 
   return {
     generated_at: new Date().toISOString(),
@@ -336,10 +530,16 @@ export function buildPlatformMatrix(
       warning,
       critical,
       idle,
-      avg_match_pct: avgMatch
+      avg_match_pct: avgMatch,
+      avg_dedupe_pct: avgDedupe,
+      dedupe_confirmed_platforms: platforms.filter((p) => p.dedupe.status === "confirmed").length,
+      monitored_with_traffic: platforms.filter((p) => p.status !== "idle").length,
+      open_causes: top_causes.length,
+      critical_causes: top_causes.filter((c) => c.severity === "critical").length
     },
     platforms,
     troubleshooting: allIssues,
+    top_causes,
     links
   };
 }

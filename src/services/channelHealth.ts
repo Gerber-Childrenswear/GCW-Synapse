@@ -1,3 +1,5 @@
+import { diagnoseErrorMessage } from "./platformDiagnostics";
+
 type ChannelSurface = "pixel" | "server" | "runtime" | "webhook";
 
 type EventStatus = "ok" | "error";
@@ -327,9 +329,18 @@ export function getChannelTroubleshooting(summary: ChannelHealthSummary): Troubl
       continue;
     }
 
+    const diagnosed = diagnoseErrorMessage(item.channel, item.last_error_message, {
+      browserOnly: item.surface === "pixel" || item.surface === "runtime" ? item.total_events > 0 : false,
+      serverOnly: item.surface === "server" || item.surface === "webhook" ? false : false
+    });
+
     const recommendations: string[] = [];
     const channel = item.channel.toLowerCase();
     const surface = item.surface;
+
+    for (const cause of diagnosed) {
+      recommendations.push(`${cause.title}: ${cause.fix}`);
+    }
 
     if (item.minutes_since_last_event > 90) {
       recommendations.push("Check trigger conditions and recent storefront/checkout traffic for this destination.");
@@ -342,38 +353,35 @@ export function getChannelTroubleshooting(summary: ChannelHealthSummary): Troubl
       }
     }
 
-    if (item.failure_rate_pct > 0) {
+    if (item.failure_rate_pct > 0 && !item.last_error_message) {
       recommendations.push("Inspect latest error payloads and destination HTTP responses.");
       recommendations.push("Validate API tokens, pixel IDs, and required event parameters against vendor docs.");
-      if (item.last_error_message) {
-        recommendations.push(`Last error: ${item.last_error_message}`);
-      }
     }
 
     if (channel.includes("meta") || channel.includes("facebook")) {
       recommendations.push("Confirm Pixel + CAPI share event_name + event_id for dedupe (Meta Conversions API docs).");
-      recommendations.push("Check fbp/fbc cookies are present on browser events when available.");
     }
-    if (channel.includes("ga4") || channel === "google") {
+    if (channel.includes("ga4")) {
       recommendations.push("Ensure client/server purchase share the same transaction_id.");
     }
-    if (channel.includes("tiktok")) {
-      recommendations.push("Validate Events API access token and that event_id matches the browser pixel event.");
-    }
-    if (channel.includes("bloomreach")) {
-      recommendations.push("Bloomreach may still read Elevar-shaped dataLayer fields — remap GTM variables to Synapse companions before cutover.");
-    }
-    if (channel.includes("reddit")) {
-      recommendations.push("Confirm Reddit CAPI tags are not suppressed by bot filters for legitimate shoppers.");
-    }
+
+    const primary = diagnosed[0];
+    const links = [
+      ...diagnosed.map((d) => d.doc_url),
+      ...linksForChannel(item.channel)
+    ].filter((url, idx, arr) => arr.indexOf(url) === idx);
 
     issues.push({
       key: item.key,
-      severity: item.status === "critical" ? "critical" : "warning",
-      title: `${item.channel} ${item.surface} integration needs attention`,
-      details: `Failure rate ${item.failure_rate_pct}% with last activity ${item.minutes_since_last_event} minutes ago.`,
-      recommendations,
-      links: linksForChannel(item.channel)
+      severity: item.status === "critical" || primary?.severity === "critical" ? "critical" : "warning",
+      title: primary
+        ? `${item.channel}: ${primary.title}`
+        : `${item.channel} ${item.surface} integration needs attention`,
+      details: primary
+        ? `${primary.cause}${item.last_error_message ? ` Evidence: ${item.last_error_message}.` : ""} Failure rate ${item.failure_rate_pct}% · last activity ${item.minutes_since_last_event}m ago.`
+        : `Failure rate ${item.failure_rate_pct}% with last activity ${item.minutes_since_last_event} minutes ago.`,
+      recommendations: [...new Set(recommendations)],
+      links
     });
   }
 

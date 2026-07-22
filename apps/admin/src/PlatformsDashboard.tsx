@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import type { PlatformMatrix, PlatformRow, RecentChannelEvent, UiModel } from "./api";
+import type {
+  DiagnosedCause,
+  DedupeStats,
+  PlatformMatrix,
+  PlatformRow,
+  RecentChannelEvent,
+  UiModel
+} from "./api";
 import { seedDemoPlatformTraffic } from "./api";
 
 type Props = {
@@ -22,7 +29,7 @@ const GROUPS: PlatformGroup[] = [
   {
     id: "paid-social",
     label: "Paid social",
-    blurb: "Browser pixel + CAPI / Events API dedupe",
+    blurb: "Pixel + CAPI / Events API with event_id dedupe",
     platformIds: ["meta", "tiktok", "pinterest", "reddit"]
   },
   {
@@ -40,7 +47,7 @@ const GROUPS: PlatformGroup[] = [
   {
     id: "pipe",
     label: "Server pipe",
-    blurb: "sGTM + Synapse ingest health",
+    blurb: "sGTM hub + Synapse source of truth",
     platformIds: ["server_gtm", "synapse"]
   }
 ];
@@ -56,15 +63,41 @@ function loadMonitored(): Record<string, boolean> {
 }
 
 function statusClass(status: string): string {
-  if (status === "healthy" || status === "firing" || status === "ok") return "ok";
-  if (status === "warning" || status === "silent") return "warn";
-  if (status === "critical" || status === "error" || status === "alert") return "bad";
+  if (status === "healthy" || status === "firing" || status === "ok" || status === "confirmed" || status === "both") {
+    return "ok";
+  }
+  if (
+    status === "warning" ||
+    status === "silent" ||
+    status === "partial" ||
+    status === "browser_only" ||
+    status === "server_only"
+  ) {
+    return "warn";
+  }
+  if (status === "critical" || status === "error" || status === "alert" || status === "missing") return "bad";
   return "idle";
 }
 
-function formatPct(value: number | null | undefined, pairs: number | null | undefined): string {
-  if (pairs == null || pairs <= 0 || value == null) return "—";
+function formatPct(value: number | null | undefined): string {
+  if (value == null) return "—";
   return `${value.toFixed(1)}%`;
+}
+
+function idleDedupe(): DedupeStats {
+  return {
+    key_field: "event_id",
+    status: "idle",
+    confirmed: 0,
+    browser_only: 0,
+    server_only: 0,
+    browser_keys: 0,
+    server_keys: 0,
+    confirmation_pct: null,
+    sample_confirmed: [],
+    sample_browser_only: [],
+    sample_server_only: []
+  };
 }
 
 function SurfaceCell({ label, pulse }: { label: string; pulse: PlatformRow["browser"] }) {
@@ -83,6 +116,11 @@ function SurfaceCell({ label, pulse }: { label: string; pulse: PlatformRow["brow
             : `${pulse.minutes_since_last_event}m ago`}
         </span>
       </div>
+      {pulse.last_error_message ? (
+        <div className="surface-error" title={pulse.last_error_message}>
+          {pulse.last_error_message}
+        </div>
+      ) : null}
       {pulse.destinations.length > 0 ? (
         <div className="muted tiny">{pulse.destinations.join(" · ")}</div>
       ) : null}
@@ -90,22 +128,68 @@ function SurfaceCell({ label, pulse }: { label: string; pulse: PlatformRow["brow
   );
 }
 
-function MatchMeter({ value, paired }: { value: number | null; paired: number }) {
-  if (value == null || paired <= 0) {
-    return <div className="match-meter empty">Waiting for paired browser ↔ server hits</div>;
-  }
-  const tone = value >= 95 ? "ok" : value >= 85 ? "warn" : "bad";
+function DedupeBadge({ dedupe }: { dedupe: DedupeStats }) {
+  const label =
+    dedupe.status === "confirmed"
+      ? "Dedupe confirmed"
+      : dedupe.status === "partial"
+        ? "Dedupe partial"
+        : dedupe.status === "missing"
+          ? "Dedupe missing"
+          : "Dedupe idle";
+
   return (
-    <div className={`match-meter ${tone}`}>
-      <div className="match-meter-top">
-        <strong>{value.toFixed(1)}%</strong>
+    <div className={`dedupe-badge ${statusClass(dedupe.status)}`}>
+      <div className="dedupe-badge-top">
+        <strong>{label}</strong>
+        <span className="mono tiny">via {dedupe.key_field}</span>
+      </div>
+      <div className="dedupe-metrics">
         <span>
-          match · {paired} pair{paired === 1 ? "" : "s"}
+          <b>{dedupe.confirmed}</b> paired
+        </span>
+        <span>
+          <b>{dedupe.browser_only}</b> browser-only
+        </span>
+        <span>
+          <b>{dedupe.server_only}</b> server-only
+        </span>
+        <span>
+          <b>{formatPct(dedupe.confirmation_pct)}</b> confirm
         </span>
       </div>
-      <div className="match-track">
-        <div className="match-fill" style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
+      {dedupe.sample_confirmed[0] ? (
+        <div className="muted tiny mono">ok · {dedupe.sample_confirmed[0]}</div>
+      ) : null}
+      {dedupe.sample_browser_only[0] ? (
+        <div className="muted tiny mono">browser · {dedupe.sample_browser_only[0]}</div>
+      ) : null}
+      {dedupe.sample_server_only[0] ? (
+        <div className="muted tiny mono">server · {dedupe.sample_server_only[0]}</div>
+      ) : null}
+    </div>
+  );
+}
+
+function CauseCard({ cause }: { cause: DiagnosedCause }) {
+  return (
+    <div className={`cause-card ${cause.severity}`}>
+      <div className="cause-card-head">
+        <strong>{cause.title}</strong>
+        <span className={`pill ${statusClass(cause.severity)}`}>{cause.severity}</span>
       </div>
+      <p>
+        <span className="cause-label">Cause</span> {cause.cause}
+      </p>
+      <p>
+        <span className="cause-label">Fix</span> {cause.fix}
+      </p>
+      {cause.evidence ? (
+        <p className="mono tiny evidence">Evidence: {cause.evidence}</p>
+      ) : null}
+      <a href={cause.doc_url} target="_blank" rel="noreferrer">
+        {cause.doc_label} ↗
+      </a>
     </div>
   );
 }
@@ -123,11 +207,9 @@ function PlatformCard({
   expanded: boolean;
   onExpand: (id: string | null) => void;
 }) {
-  const expectedFired = row.expected_events.filter((eventName) => {
-    const browserCount = row.browser.event_counts[eventName] ?? 0;
-    const serverCount = row.server.event_counts[eventName] ?? 0;
-    return browserCount + serverCount > 0;
-  });
+  const dedupe = row.dedupe ?? idleDedupe();
+  const causes = row.causes ?? [];
+  const coverage = row.event_coverage ?? [];
 
   return (
     <article className={`platform-card status-${row.status} ${monitored ? "" : "dimmed"}`}>
@@ -135,7 +217,8 @@ function PlatformCard({
         <div>
           <h3>{row.label}</h3>
           <p className="muted">
-            {row.paired_events} paired · {row.issues.length} issue{row.issues.length === 1 ? "" : "s"}
+            {row.paired_events} deduped · {causes.length} cause{causes.length === 1 ? "" : "s"} ·{" "}
+            {formatPct(row.coverage_pct ?? null)} event coverage
           </p>
         </div>
         <div className="platform-card-actions">
@@ -156,45 +239,52 @@ function PlatformCard({
         <SurfaceCell label="Server" pulse={row.server} />
       </div>
 
-      <MatchMeter value={row.match_pct} paired={row.paired_events} />
+      <DedupeBadge dedupe={dedupe} />
 
       <div className="expected-events">
-        {row.expected_events.map((eventName) => {
-          const on = expectedFired.includes(eventName);
-          return (
-            <span key={eventName} className={`event-chip ${on ? "on" : "off"}`}>
-              {on ? "●" : "○"} {eventName}
-            </span>
-          );
-        })}
+        {(coverage.length > 0
+          ? coverage
+          : row.expected_events.map((name) => ({
+              name,
+              browser: 0,
+              server: 0,
+              status: "missing" as const
+            }))
+        ).map((event) => (
+          <span key={event.name} className={`event-chip ${statusClass(event.status)}`}>
+            {event.status === "both" ? "●" : event.status === "missing" ? "○" : "◐"} {event.name}
+            {event.status !== "missing" ? (
+              <em>
+                {event.browser}/{event.server}
+              </em>
+            ) : null}
+          </span>
+        ))}
       </div>
 
+      {causes[0] ? (
+        <div className="cause-preview">
+          <strong>{causes[0].title}</strong>
+          <span className="muted tiny">{causes[0].fix}</span>
+        </div>
+      ) : null}
+
       <button type="button" className="linkish" onClick={() => onExpand(expanded ? null : row.id)}>
-        {expanded ? "Hide troubleshooting" : "Troubleshoot"}
+        {expanded ? "Hide diagnostics" : "Open diagnostics + vendor docs"}
       </button>
 
       {expanded ? (
         <div className="troubleshoot-panel">
+          {causes.length > 0 ? (
+            causes.map((cause) => <CauseCard key={cause.code} cause={cause} />)
+          ) : (
+            <p className="muted">No diagnosed causes. Keep dual-run on until dedupe stays confirmed.</p>
+          )}
           {row.tips.map((tip) => (
             <p key={tip} className="tip">
               {tip}
             </p>
           ))}
-          {row.issues.length === 0 ? (
-            <p className="muted">No active issues. Keep dual-run on until match % is stable.</p>
-          ) : (
-            row.issues.map((issue) => (
-              <div key={issue.key} className={`issue ${issue.severity}`}>
-                <strong>{issue.title}</strong>
-                <p>{issue.details}</p>
-                <ul>
-                  {issue.recommendations.map((rec) => (
-                    <li key={rec}>{rec}</li>
-                  ))}
-                </ul>
-              </div>
-            ))
-          )}
           <div className="doc-links">
             {row.docs.map((href) => (
               <a key={href} href={href} target="_blank" rel="noreferrer">
@@ -219,7 +309,7 @@ function ActivityFeed({ events }: { events: RecentChannelEvent[] }) {
 
   return (
     <ul className="activity-feed">
-      {events.slice(0, 24).map((event, index) => {
+      {events.slice(0, 28).map((event, index) => {
         const key = `${event.observed_at ?? "t"}-${event.channel}-${event.event_name}-${index}`;
         const tone = event.status === "error" ? "bad" : "ok";
         return (
@@ -243,6 +333,9 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showIdle, setShowIdle] = useState(true);
   const [onlyMonitored, setOnlyMonitored] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<"all" | "healthy" | "warning" | "critical" | "idle">(
+    "all"
+  );
   const [seeding, setSeeding] = useState(false);
   const [seedError, setSeedError] = useState<string | null>(null);
 
@@ -250,15 +343,17 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
     localStorage.setItem(MONITOR_KEY, JSON.stringify(monitored));
   }, [monitored]);
 
+  useEffect(() => {
+    if (!data || expandedId) return;
+    const firstCritical = data.platforms.find((p) => p.status === "critical");
+    if (firstCritical) setExpandedId(firstCritical.id);
+  }, [data, expandedId]);
+
   const data = matrix ?? uiModel?.platforms ?? null;
-  const parity = uiModel?.parity;
-  const browserParity = uiModel?.browser_parity;
   const channelSummary = uiModel?.channels;
   const recentEvents = (uiModel?.recent?.channel_events ?? []) as RecentChannelEvent[];
-
-  const parityPairs = parity?.total_pairs ?? 0;
-  const browserPairs = browserParity?.paired_events ?? 0;
   const allIdle = Boolean(data && data.totals.idle === data.totals.platforms);
+  const topCauses = data?.top_causes ?? [];
 
   const byId = useMemo(() => {
     const map = new Map<string, PlatformRow>();
@@ -273,13 +368,18 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
         .filter((row): row is PlatformRow => Boolean(row))
         .filter((row) => {
           if (!showIdle && row.status === "idle") return false;
+          if (statusFilter !== "all" && row.status !== statusFilter) return false;
           if (onlyMonitored && monitored[row.id] === false) return false;
           if (onlyMonitored && monitored[row.id] == null && row.status === "idle") return false;
           return true;
+        })
+        .sort((a, b) => {
+          const rank = { critical: 0, warning: 1, healthy: 2, idle: 3 } as const;
+          return rank[a.status] - rank[b.status];
         });
       return { ...group, rows };
     }).filter((group) => group.rows.length > 0);
-  }, [byId, showIdle, onlyMonitored, monitored]);
+  }, [byId, showIdle, onlyMonitored, monitored, statusFilter]);
 
   function toggleMonitored(id: string, next: boolean) {
     setMonitored((prev) => ({ ...prev, [id]: next }));
@@ -298,22 +398,26 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
     }
   }
 
-  const launchStatus =
+  const launchStatusRaw =
     typeof uiModel?.launch_readiness === "object" &&
     uiModel.launch_readiness &&
     "status" in uiModel.launch_readiness
       ? String((uiModel.launch_readiness as { status?: string }).status ?? "—")
       : "—";
+  const launchStatus =
+    (data?.totals.critical_causes ?? 0) > 0 || (data?.totals.critical ?? 0) > 0
+      ? "HOLD"
+      : launchStatusRaw;
 
   return (
     <section className="platforms-dashboard">
       <div className="platforms-hero">
         <div>
-          <p className="eyebrow">Tracking control</p>
-          <h2>Platforms &amp; parity</h2>
+          <p className="eyebrow">Elevar-grade tracking control</p>
+          <h2>Platforms, dedupe &amp; causes</h2>
           <p className="muted">
-            Grouped destinations with browser vs server health, match rates, expected events, and a live
-            activity feed — the Elevar-style view for Synapse.
+            Browser vs server health, confirmed event_id / transaction_id dedupe, and vendor-doc exact
+            error causes — organized the way Synapse replaces Elevar.
           </p>
         </div>
         <div className="platforms-hero-actions">
@@ -346,7 +450,7 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
             <strong>No live platform traffic yet</strong>
             <p className="muted">
               After OAuth install + theme embed, events land here. Or click <em>Load sample traffic</em> to
-              preview how grouped monitoring looks with dual-run data.
+              preview dedupe confirmation and vendor-doc causes.
             </p>
           </div>
           <ol className="setup-steps">
@@ -359,27 +463,24 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
         </div>
       ) : null}
 
-      <div className="summary-strip">
+      <div className="summary-strip summary-strip-6">
         <div className="summary-card">
-          <span className="label">Purchase shadow</span>
-          <strong>{formatPct(parity?.matched_rate_pct, parityPairs)}</strong>
-          <small>
-            {parityPairs > 0 ? `${parityPairs} pairs · ${parity?.status ?? "ok"}` : "no pairs yet"}
-          </small>
+          <span className="label">Dedupe confirmed</span>
+          <strong>
+            {data?.totals.dedupe_confirmed_platforms ?? 0}
+            <small className="inline-den">/{data?.totals.monitored_with_traffic ?? 0}</small>
+          </strong>
+          <small>platforms with full browser↔server key match</small>
         </div>
         <div className="summary-card">
-          <span className="label">Browser data layer</span>
-          <strong>{formatPct(browserParity?.matched_rate_pct, browserPairs)}</strong>
-          <small>
-            {browserPairs > 0 ? `${browserPairs} pairs · ${browserParity?.status ?? "ok"}` : "no pairs yet"}
-          </small>
+          <span className="label">Avg dedupe rate</span>
+          <strong>{formatPct(data?.totals.avg_dedupe_pct ?? data?.totals.avg_match_pct)}</strong>
+          <small>shared event_id / transaction_id</small>
         </div>
         <div className="summary-card">
           <span className="label">Platform health</span>
           <strong>
-            {data
-              ? `${data.totals.healthy}/${data.totals.platforms}`
-              : "—"}
+            {data ? `${data.totals.healthy}/${data.totals.platforms}` : "—"}
           </strong>
           <small>
             {data
@@ -388,15 +489,42 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
           </small>
         </div>
         <div className="summary-card">
+          <span className="label">Open causes</span>
+          <strong>{data?.totals.open_causes ?? topCauses.length}</strong>
+          <small>{data?.totals.critical_causes ?? 0} critical · vendor-doc mapped</small>
+        </div>
+        <div className="summary-card">
           <span className="label">Channels tracked</span>
           <strong>{channelSummary?.totals?.tracked_integrations ?? channelSummary?.total_channels ?? 0}</strong>
           <small>
-            Launch {launchStatus}
             {channelSummary?.totals
-              ? ` · ${channelSummary.totals.healthy ?? 0} healthy`
-              : ""}
+              ? `${channelSummary.totals.healthy ?? 0} healthy · ${channelSummary.totals.warning ?? 0} warn`
+              : "waiting"}
           </small>
         </div>
+        <div className={`summary-card ${(data?.totals.critical_causes ?? 0) > 0 ? "tone-bad" : ""}`}>
+          <span className="label">Launch gate</span>
+          <strong>{launchStatus}</strong>
+          <small>
+            {(data?.totals.critical_causes ?? 0) > 0
+              ? "Blocked by critical destination causes"
+              : "GO / HOLD from readiness checks"}
+          </small>
+        </div>
+      </div>
+
+      <div className="status-filters">
+        {(["all", "critical", "warning", "healthy", "idle"] as const).map((value) => (
+          <button
+            key={value}
+            type="button"
+            className={`filter-chip ${statusFilter === value ? "active" : ""}`}
+            onClick={() => setStatusFilter(value)}
+          >
+            {value}
+            {data && value !== "all" ? ` · ${data.totals[value]}` : ""}
+          </button>
+        ))}
       </div>
 
       <div className="platforms-layout">
@@ -432,22 +560,24 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
 
         <aside className="platforms-aside">
           <div className="aside-card">
+            <h3>Diagnosed causes</h3>
+            <p className="muted tiny">Mapped to each platform’s developer docs</p>
+            {topCauses.length === 0 ? (
+              <div className="activity-empty">No open causes. Dual-run looks clean.</div>
+            ) : (
+              <div className="aside-causes">
+                {topCauses.slice(0, 6).map((cause) => (
+                  <CauseCard key={cause.code} cause={cause} />
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="aside-card">
             <h3>Live activity</h3>
             <p className="muted tiny">Recent channel / destination pulses</p>
             <ActivityFeed events={recentEvents} />
           </div>
-
-          {data && data.troubleshooting.length > 0 ? (
-            <div className="aside-card">
-              <h3>Active issues</h3>
-              {data.troubleshooting.slice(0, 6).map((issue) => (
-                <div key={issue.key} className={`issue ${issue.severity}`}>
-                  <strong>{issue.title}</strong>
-                  <p>{issue.details}</p>
-                </div>
-              ))}
-            </div>
-          ) : null}
         </aside>
       </div>
     </section>

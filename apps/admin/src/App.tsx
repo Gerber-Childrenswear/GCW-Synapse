@@ -36,7 +36,7 @@ type LoadState = {
 };
 
 const NAV_ITEMS: Array<{ id: NavTab; label: string; subtitle: string }> = [
-  { id: "platforms", label: "Platforms", subtitle: "Browser vs server match by destination" },
+  { id: "platforms", label: "Platforms", subtitle: "Dedupe, causes, browser vs server" },
   { id: "runtime", label: "Runtime Status", subtitle: "System health and adapter status" },
   { id: "advisor", label: "Synapse Advisor", subtitle: "Local AI chat and proactive alerts" },
   { id: "events", label: "Event Schemas", subtitle: "Elevar replacement contracts" },
@@ -1141,10 +1141,12 @@ export default function App() {
           />
         ) : null}
 
-        <header className="page-header">
-          <h1>GCW Synapse</h1>
-          <p>{activeItem.subtitle}</p>
-        </header>
+        {activeTab !== "platforms" ? (
+          <header className="page-header">
+            <h1>GCW Synapse</h1>
+            <p>{activeItem.subtitle}</p>
+          </header>
+        ) : null}
 
         {state.error && lastError ? (
           <ErrorHelpPanel

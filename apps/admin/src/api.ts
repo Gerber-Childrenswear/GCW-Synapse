@@ -238,6 +238,7 @@ export type SurfacePulse = {
   minutes_since_last_event: number | null;
   event_counts: Record<string, number>;
   destinations: string[];
+  last_error_message?: string | null;
 };
 
 export type TroubleshootingIssue = {
@@ -249,17 +250,54 @@ export type TroubleshootingIssue = {
   links: string[];
 };
 
+export type DiagnosedCause = {
+  code: string;
+  title: string;
+  severity: "warning" | "critical";
+  cause: string;
+  fix: string;
+  doc_url: string;
+  doc_label: string;
+  evidence?: string;
+};
+
+export type DedupeStats = {
+  key_field: "event_id" | "transaction_id" | "either";
+  status: "confirmed" | "partial" | "missing" | "idle";
+  confirmed: number;
+  browser_only: number;
+  server_only: number;
+  browser_keys: number;
+  server_keys: number;
+  confirmation_pct: number | null;
+  sample_confirmed: string[];
+  sample_browser_only: string[];
+  sample_server_only: string[];
+};
+
+export type EventCoverage = {
+  name: string;
+  browser: number;
+  server: number;
+  status: "both" | "browser_only" | "server_only" | "missing";
+};
+
 export type PlatformRow = {
   id: string;
   label: string;
+  group?: string;
   browser: SurfacePulse;
   server: SurfacePulse;
   match_pct: number | null;
   paired_events: number;
   status: "healthy" | "warning" | "critical" | "idle";
   expected_events: string[];
+  event_coverage?: EventCoverage[];
+  coverage_pct?: number | null;
+  dedupe?: DedupeStats;
   docs: string[];
   issues: TroubleshootingIssue[];
+  causes?: DiagnosedCause[];
   tips: string[];
 };
 
@@ -272,9 +310,15 @@ export type PlatformMatrix = {
     critical: number;
     idle: number;
     avg_match_pct: number | null;
+    avg_dedupe_pct?: number | null;
+    dedupe_confirmed_platforms?: number;
+    monitored_with_traffic?: number;
+    open_causes?: number;
+    critical_causes?: number;
   };
   platforms: PlatformRow[];
   troubleshooting: TroubleshootingIssue[];
+  top_causes?: DiagnosedCause[];
   links: Record<string, string[]>;
 };
 
