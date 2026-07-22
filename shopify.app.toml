@@ -1,10 +1,8 @@
-# Link this file to your existing Partners app (gcw-dev install).
-# 1. Partners → Apps → GCW Synapse → Client credentials → copy Client ID below.
-# 2. shopify app config link
-# 3. shopify app deploy
+# Link this file to the Shopify Dev Dashboard app for gcw-dev.
+# Dev Dashboard client ID (custom app) — installable without store-owner "install apps" ping.
 
 name = "GCW Synapse"
-client_id = "7d011b70562512bd84b85bd3f9a6e68d"
+client_id = "ad45451a4c49376bdeae4dae0f3ac26a"
 application_url = "https://gcw-synapse-super.gcwsynapse.workers.dev"
 embedded = true
 

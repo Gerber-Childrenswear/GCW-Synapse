@@ -1,128 +1,47 @@
 # Enable GCW Synapse on gcw-dev
 
-**Symptom:** App is installed on `gcw-dev.myshopify.com` but there is no **GCW Synapse** toggle under App embeds.
+**Preferred path (no director ping):** Dev Dashboard custom app  
+→ see [`docs/DEV_DASHBOARD_APP_SETUP.md`](./DEV_DASHBOARD_APP_SETUP.md)
 
-**Most common cause:** OAuth app install ≠ theme extension deployed. The storefront pixel lives in a **theme app extension** (`extensions/theme-app-extension/`). Until that extension is released to the store via `shopify app deploy`, App embeds stays empty.
+**Client ID:** `ad45451a4c49376bdeae4dae0f3ac26a`
 
 ---
 
-## Install the app (OAuth + web pixel)
+## Install
 
-Owner-forwardable landing (permission checklist + install CTA):
-
-https://gcw-synapse-super.gcwsynapse.workers.dev/install?shop=gcw-dev.myshopify.com
-
-Direct OAuth (lean scopes, no `read_all_orders`):
-
-https://gcw-synapse-super.gcwsynapse.workers.dev/auth/shopify/install?shop=gcw-dev.myshopify.com
-
-### “You need permission to install”
-
-**App development ≠ install rights.**
-
-On the installing user’s **role** → scroll to **Apps** (not App development / Settings):
-
-1. Enable **Manage and install apps and channels** (all apps — not a named whitelist)
-2. Also need **Settings → View customer events** and **Manage and add custom pixels**
-
-If the role only lists specific apps (Elevar, Commerce Shield, …), that user **cannot** install Synapse. Store owner must install once, or grant the permission above.
+1. Configure App URL + redirect + scopes in Dev Dashboard (doc above).
+2. Set Worker `SHOPIFY_API_SECRET` to the Dev Dashboard **Client secret**.
+3. Install via the Dev Dashboard **Install** link for this custom app.
+4. Fallback: https://gcw-synapse-super.gcwsynapse.workers.dev/install?shop=gcw-dev.myshopify.com
 
 ---
 
 ## Where the toggle lives (not the Apps list)
 
 1. **gcw-dev admin** → **Online Store** → **Themes**
-2. On the **live** theme (or the theme you test with), click **Customize**
-3. In the theme editor left sidebar, open **App embeds** (puzzle-piece icon — **not** “Apps” blocks in the page body)
-4. Find **GCW Synapse** and turn it **ON**
-5. Set **Browser beacon URL** to:
-   `https://gcw-synapse-super.gcwsynapse.workers.dev/browser/beacon`
-6. Leave **Legacy /event endpoint** as:
-   `https://gcw-synapse-super.gcwsynapse.workers.dev/event` (optional transitional)
-7. Leave **Ingress token** blank
-8. Click **Save** (top right)
+2. On the **live** theme, click **Customize**
+3. Left sidebar → **App embeds** (puzzle piece)
+4. **GCW Synapse** → ON → Save
+5. Beacon URL: `https://gcw-synapse-super.gcwsynapse.workers.dev/browser/beacon`
+6. Script URL: `https://gcw-synapse-super.gcwsynapse.workers.dev/gcw-synapse.js?v=1.1.0`
 
-If **GCW Synapse** is missing from the App embeds list, the theme extension was not deployed to this shop — see **Deploy extension** below.
+Deep link (after extensions are deployed to this app):
+
+```
+https://gcw-dev.myshopify.com/admin/themes/current/editor?context=apps&activateAppId=ad45451a4c49376bdeae4dae0f3ac26a/gcw-synapse-app-block
+```
+
+If the embed is missing: `npx shopify app deploy` for the Dev Dashboard app (extensions must be released to **this** client ID).
 
 ---
 
-## Deep link (fastest path when extension is deployed)
+## Verify
 
-Replace `YOUR_CLIENT_ID` with the app **Client ID** from Partners → App setup → Client credentials (`7d011b70562512bd84b85bd3f9a6e68d` for GCW Synapse):
-
-```
-https://gcw-dev.myshopify.com/admin/themes/current/editor?context=apps&activateAppId=7d011b70562512bd84b85bd3f9a6e68d/gcw-synapse-app-block
-```
-
-That opens the theme editor with the embed pre-selected; click **Save**.
-
-Block handle = liquid filename without `.liquid`: `gcw-synapse-app-block`.
-
----
-
-## Deploy extension (if embed is missing)
-
-From repo root, with Shopify CLI logged into the Partners org:
-
-```bash
-shopify app config link    # pick existing GCW Synapse app
-shopify app deploy         # releases theme extension to installed shops
-```
-
-Repo files:
-
-- `shopify.app.toml` — app shell (set `client_id` or use `config link`)
-- `extensions/theme-app-extension/shopify.extension.toml`
-- `extensions/theme-app-extension/blocks/gcw-synapse-app-block.liquid` (`"target": "body"` = app embed)
-
-After deploy, repeat **App embeds** steps above.
-
----
-
-## Verify it is working
-
-### Admin (theme editor)
-
-With embed ON, open **Preview** in theme editor → browser DevTools → Console:
+Storefront password unlocked → product page → console:
 
 ```js
-window.SynapseConfig
+window.Synapse?.version
 window.dataLayer?.filter(e => String(e.event||'').startsWith('dl_')).slice(-5)
 ```
 
-`SynapseConfig.beaconUrl` should be `https://gcw-synapse-super.gcwsynapse.workers.dev/browser/beacon`, and you should see `dl_user_data` / `dl_view_item` (etc.) in `dataLayer`.
-
-### Storefront
-
-**Note:** `gcw-dev.myshopify.com` is currently **password-protected**. GTM Preview and anonymous curls hit the password page, not the theme. Either:
-
-- Use theme editor **Preview**, or
-- Temporarily disable the storefront password for dev testing
-
-### Worker (no theme required)
-
-```bash
-npm run lean:verify:dev
-```
-
-Confirms the Worker accepts gcw-dev-origin events; does **not** prove the theme embed is on.
-
----
-
-## Conflicts on gcw-dev
-
-If **Elevar** or **Triple Whale** app embeds are ON on the same theme, disable one while validating Synapse to avoid double-firing (`docs/gtm/THEME_TRACKING_AUDIT.md`).
-
----
-
-## Customer-events pixel (checkout — separate from theme embed)
-
-Checkout events use `extensions/customer-events-pixel/` (**app** web pixel extension).
-
-App pixels do **not** show under “Add custom pixel”. After app install + scopes (`write_pixels`, `read_customer_events`, …):
-
-1. Re-authorize the app on the shop (updated scopes).
-2. Create/connect the pixel with Admin API `webPixelCreate` (settings: `beaconUrl`, `shopDomain`).
-3. Confirm under **Settings → Customer events → App pixels**.
-
-Theme embed covers storefront `dl_*` (`user_data`, `view_item`, `add_to_cart`, …). The web pixel covers checkout (`dl_begin_checkout` … `dl_purchase`).
+Worker: https://gcw-synapse-super.gcwsynapse.workers.dev/compare/browser

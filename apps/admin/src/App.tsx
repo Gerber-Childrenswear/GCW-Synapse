@@ -1171,7 +1171,7 @@ export default function App() {
                 className="btn-mini"
                 href={
                   embed.shopHandle
-                    ? `https://${embed.shop}/admin/themes/current/editor?context=apps&activateAppId=7d011b70562512bd84b85bd3f9a6e68d/gcw-synapse-app-block`
+                    ? `https://${embed.shop}/admin/themes/current/editor?context=apps&activateAppId=ad45451a4c49376bdeae4dae0f3ac26a/gcw-synapse-app-block`
                     : "/install"
                 }
                 target="_blank"
@@ -1195,7 +1195,7 @@ export default function App() {
               </a>
               <a
                 className="btn-mini"
-                href="https://admin.shopify.com/store/gcw-dev/apps/7d011b70562512bd84b85bd3f9a6e68d"
+                href="https://admin.shopify.com/store/gcw-dev/apps/ad45451a4c49376bdeae4dae0f3ac26a"
                 target="_top"
                 rel="noreferrer"
               >

@@ -8,7 +8,7 @@ export type ShopifyEmbedContext = {
   installUrl: string;
 };
 
-const CLIENT_ID = "7d011b70562512bd84b85bd3f9a6e68d";
+const CLIENT_ID = "ad45451a4c49376bdeae4dae0f3ac26a";
 
 export function getShopifyEmbedContext(): ShopifyEmbedContext {
   const params = new URLSearchParams(window.location.search);
