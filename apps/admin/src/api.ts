@@ -278,6 +278,31 @@ export type PlatformMatrix = {
   links: Record<string, string[]>;
 };
 
+export type ChannelHealthItem = {
+  key: string;
+  channel: string;
+  surface: string;
+  destination: string;
+  pixel_id?: string;
+  status: string;
+  failure_rate_pct: number;
+  minutes_since_last_event: number;
+  total_events: number;
+  error_events: number;
+  last_event_at: string;
+  event_counts: Record<string, number>;
+};
+
+export type RecentChannelEvent = {
+  channel?: string;
+  surface?: string;
+  destination?: string;
+  event_name?: string;
+  status?: string;
+  observed_at?: string;
+  error_message?: string;
+};
+
 export type UiModel = {
   ok: boolean;
   runtime_mode?: string;
@@ -294,14 +319,33 @@ export type UiModel = {
     status?: string;
   };
   platforms?: PlatformMatrix;
-  channels?: unknown;
+  channels?: {
+    total_channels?: number;
+    warning_channels?: number;
+    status?: string;
+    totals?: {
+      tracked_integrations?: number;
+      healthy?: number;
+      warning?: number;
+      critical?: number;
+    };
+    channels?: ChannelHealthItem[];
+  };
   troubleshooting?: {
     issues?: TroubleshootingIssue[];
     links?: Record<string, string[]> | Array<{ label: string; href: string }>;
   };
   launch_readiness?: unknown;
-  recent?: unknown;
+  recent?: {
+    channel_events?: RecentChannelEvent[];
+    browser_events?: unknown[];
+    shadow_comparisons?: unknown[];
+  };
 };
+
+export async function seedDemoPlatformTraffic(): Promise<{ ok: boolean; seeded: number }> {
+  return requestJson<{ ok: boolean; seeded: number }>("/compare/demo-seed", "POST");
+}
 
 export async function getPlatformMatrix(): Promise<PlatformMatrix> {
   const data = await request<{ ok: boolean; matrix: PlatformMatrix }>("/compare/platforms");

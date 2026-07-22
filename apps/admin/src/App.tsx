@@ -27,7 +27,6 @@ import {
   type UiModel
 } from "./api";
 import { PlatformsDashboard } from "./PlatformsDashboard";
-import "./app.css";
 
 type NavTab = "platforms" | "runtime" | "advisor" | "events" | "webhooks" | "shadow" | "qa" | "edge";
 
@@ -907,6 +906,9 @@ export default function App() {
     setState({ loading: true, error: null });
     setLastError(null);
 
+    // Advisor is Node-only; soft-fail so platforms still load on the edge Worker.
+    const advisorPromise = getAdvisorAlerts().catch(() => [] as AdvisorAlertItem[]);
+
     Promise.all([
       getRuntimeStatus(),
       getEventSchemas(),
@@ -915,7 +917,7 @@ export default function App() {
       getShadowComparisons(50),
       getQaChecklist(),
       getShopifyInstallStatus(),
-      getAdvisorAlerts(),
+      advisorPromise,
       getCompareUiModel(100),
       getPlatformMatrix()
     ])

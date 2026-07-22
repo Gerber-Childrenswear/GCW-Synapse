@@ -1160,6 +1160,83 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
     }, 202);
   }
 
+  if (request.method === "POST" && url.pathname === "/compare/demo-seed") {
+    const now = Date.now();
+    type DemoSample = {
+      channel: string;
+      surface: "pixel" | "server" | "runtime" | "webhook";
+      destination: string;
+      event_name: string;
+      status: "ok" | "error";
+      pixel_id?: string;
+      error_message?: string;
+      minutesAgo: number;
+    };
+    const samples: DemoSample[] = [
+      { channel: "meta", surface: "pixel", destination: "Meta Pixel", event_name: "PageView", status: "ok", pixel_id: "demo-meta", minutesAgo: 2 },
+      { channel: "meta", surface: "server", destination: "Meta CAPI", event_name: "PageView", status: "ok", minutesAgo: 2 },
+      { channel: "meta", surface: "pixel", destination: "Meta Pixel", event_name: "ViewContent", status: "ok", pixel_id: "demo-meta", minutesAgo: 4 },
+      { channel: "meta", surface: "server", destination: "Meta CAPI", event_name: "ViewContent", status: "ok", minutesAgo: 4 },
+      { channel: "meta", surface: "pixel", destination: "Meta Pixel", event_name: "Purchase", status: "ok", pixel_id: "demo-meta", minutesAgo: 8 },
+      { channel: "meta", surface: "server", destination: "Meta CAPI", event_name: "Purchase", status: "ok", minutesAgo: 8 },
+      { channel: "ga4", surface: "pixel", destination: "GA4 Browser", event_name: "page_view", status: "ok", minutesAgo: 1 },
+      { channel: "ga4", surface: "server", destination: "GA4 MP", event_name: "page_view", status: "ok", minutesAgo: 1 },
+      { channel: "ga4", surface: "pixel", destination: "GA4 Browser", event_name: "purchase", status: "ok", minutesAgo: 9 },
+      { channel: "ga4", surface: "server", destination: "GA4 MP", event_name: "purchase", status: "ok", minutesAgo: 9 },
+      { channel: "google_ads", surface: "pixel", destination: "Google Ads Tag", event_name: "purchase", status: "ok", minutesAgo: 10 },
+      { channel: "google_ads", surface: "server", destination: "Enhanced Conv", event_name: "purchase", status: "ok", minutesAgo: 10 },
+      { channel: "tiktok", surface: "pixel", destination: "TikTok Pixel", event_name: "ViewContent", status: "ok", minutesAgo: 6 },
+      { channel: "tiktok", surface: "server", destination: "TikTok Events API", event_name: "ViewContent", status: "error", error_message: "Invalid access token", minutesAgo: 6 },
+      { channel: "reddit", surface: "pixel", destination: "Reddit Pixel", event_name: "PageVisit", status: "ok", minutesAgo: 3 },
+      { channel: "reddit", surface: "server", destination: "Reddit CAPI", event_name: "PageVisit", status: "ok", minutesAgo: 3 },
+      { channel: "bloomreach", surface: "server", destination: "Bloomreach Engagement", event_name: "purchase", status: "ok", minutesAgo: 12 },
+      { channel: "triple_whale", surface: "pixel", destination: "Triple Whale Pixel", event_name: "Purchase", status: "ok", minutesAgo: 11 },
+      { channel: "cj", surface: "server", destination: "CJ AffNet", event_name: "purchase", status: "ok", minutesAgo: 15 },
+      { channel: "server_gtm", surface: "server", destination: "sGTM N45F3JCC", event_name: "purchase", status: "ok", minutesAgo: 8 },
+      { channel: "synapse", surface: "runtime", destination: "Worker /event", event_name: "dl_purchase", status: "ok", minutesAgo: 8 }
+    ];
+
+    await hydrateChannelEventsFromCache();
+    let seeded = 0;
+    for (const sample of samples) {
+      const observedAt = new Date(now - sample.minutesAgo * 60_000).toISOString();
+      const item = {
+        channel: sample.channel,
+        surface: sample.surface,
+        destination: sample.destination,
+        event_name: sample.event_name,
+        status: sample.status,
+        pixel_id: sample.pixel_id,
+        error_message: sample.error_message,
+        observed_at: observedAt
+      };
+      edgeChannelEvents.unshift(item);
+      ingestChannelEvent({
+        channel: sample.channel,
+        surface: sample.surface,
+        destination: sample.destination,
+        pixel_id: sample.pixel_id,
+        event_name: sample.event_name,
+        status: sample.status,
+        error_message: sample.error_message,
+        observed_at: observedAt
+      });
+      seeded += 1;
+    }
+    if (edgeChannelEvents.length > 500) {
+      edgeChannelEvents.length = 500;
+    }
+    await persistChannelEventsToCache();
+    return jsonResponse({ ok: true, seeded, note: "Demo channel pulses recorded for UI preview" }, 202);
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/advisor/alerts") {
+    return jsonResponse({
+      alerts: [],
+      note: "Advisor alerts require the Node control-panel origin; edge returns an empty list."
+    });
+  }
+
   if (request.method === "GET" && url.pathname === "/compare/platforms") {
     await hydrateChannelEventsFromCache();
     return jsonResponse({

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import type { PlatformMatrix, PlatformRow, UiModel } from "./api";
+import type { PlatformMatrix, PlatformRow, RecentChannelEvent, UiModel } from "./api";
+import { seedDemoPlatformTraffic } from "./api";
 
 type Props = {
   uiModel: UiModel | null;
@@ -9,6 +10,40 @@ type Props = {
 };
 
 const MONITOR_KEY = "synapse.platform.monitored";
+
+type PlatformGroup = {
+  id: string;
+  label: string;
+  blurb: string;
+  platformIds: string[];
+};
+
+const GROUPS: PlatformGroup[] = [
+  {
+    id: "paid-social",
+    label: "Paid social",
+    blurb: "Browser pixel + CAPI / Events API dedupe",
+    platformIds: ["meta", "tiktok", "pinterest", "reddit"]
+  },
+  {
+    id: "search-analytics",
+    label: "Search & analytics",
+    blurb: "GA4 + Google Ads enhanced conversions",
+    platformIds: ["ga4", "google_ads"]
+  },
+  {
+    id: "commerce",
+    label: "Commerce engines",
+    blurb: "CRM, attribution, and affiliate fan-out",
+    platformIds: ["bloomreach", "triple_whale", "cj"]
+  },
+  {
+    id: "pipe",
+    label: "Server pipe",
+    blurb: "sGTM + Synapse ingest health",
+    platformIds: ["server_gtm", "synapse"]
+  }
+];
 
 function loadMonitored(): Record<string, boolean> {
   try {
@@ -27,13 +62,12 @@ function statusClass(status: string): string {
   return "idle";
 }
 
-function SurfaceCell({
-  label,
-  pulse
-}: {
-  label: string;
-  pulse: PlatformRow["browser"];
-}) {
+function formatPct(value: number | null | undefined, pairs: number | null | undefined): string {
+  if (pairs == null || pairs <= 0 || value == null) return "—";
+  return `${value.toFixed(1)}%`;
+}
+
+function SurfaceCell({ label, pulse }: { label: string; pulse: PlatformRow["browser"] }) {
   return (
     <div className={`surface-cell ${statusClass(pulse.status)}`}>
       <div className="surface-cell-head">
@@ -56,16 +90,18 @@ function SurfaceCell({
   );
 }
 
-function MatchMeter({ value }: { value: number | null }) {
-  if (value == null) {
-    return <div className="match-meter empty">No paired browser/server events yet</div>;
+function MatchMeter({ value, paired }: { value: number | null; paired: number }) {
+  if (value == null || paired <= 0) {
+    return <div className="match-meter empty">Waiting for paired browser ↔ server hits</div>;
   }
   const tone = value >= 95 ? "ok" : value >= 85 ? "warn" : "bad";
   return (
     <div className={`match-meter ${tone}`}>
       <div className="match-meter-top">
         <strong>{value.toFixed(1)}%</strong>
-        <span>browser ↔ server match</span>
+        <span>
+          match · {paired} pair{paired === 1 ? "" : "s"}
+        </span>
       </div>
       <div className="match-track">
         <div className="match-fill" style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
@@ -120,7 +156,7 @@ function PlatformCard({
         <SurfaceCell label="Server" pulse={row.server} />
       </div>
 
-      <MatchMeter value={row.match_pct} />
+      <MatchMeter value={row.match_pct} paired={row.paired_events} />
 
       <div className="expected-events">
         {row.expected_events.map((eventName) => {
@@ -133,12 +169,8 @@ function PlatformCard({
         })}
       </div>
 
-      <button
-        type="button"
-        className="linkish"
-        onClick={() => onExpand(expanded ? null : row.id)}
-      >
-        {expanded ? "Hide troubleshooting" : "Troubleshoot with vendor docs"}
+      <button type="button" className="linkish" onClick={() => onExpand(expanded ? null : row.id)}>
+        {expanded ? "Hide troubleshooting" : "Troubleshoot"}
       </button>
 
       {expanded ? (
@@ -176,11 +208,43 @@ function PlatformCard({
   );
 }
 
+function ActivityFeed({ events }: { events: RecentChannelEvent[] }) {
+  if (events.length === 0) {
+    return (
+      <div className="activity-empty">
+        No channel events yet. Install the app pixel, enable the theme embed, or load sample traffic.
+      </div>
+    );
+  }
+
+  return (
+    <ul className="activity-feed">
+      {events.slice(0, 24).map((event, index) => {
+        const key = `${event.observed_at ?? "t"}-${event.channel}-${event.event_name}-${index}`;
+        const tone = event.status === "error" ? "bad" : "ok";
+        return (
+          <li key={key} className={`activity-row ${tone}`}>
+            <span className={`pill ${tone}`}>{event.surface ?? "—"}</span>
+            <strong>{event.channel ?? "unknown"}</strong>
+            <span className="mono">{event.event_name ?? "event"}</span>
+            <span className="muted tiny">{event.destination ?? ""}</span>
+            <time className="muted tiny">
+              {event.observed_at ? new Date(event.observed_at).toLocaleTimeString() : "—"}
+            </time>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Props) {
   const [monitored, setMonitored] = useState<Record<string, boolean>>(() => loadMonitored());
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showIdle, setShowIdle] = useState(true);
   const [onlyMonitored, setOnlyMonitored] = useState(false);
+  const [seeding, setSeeding] = useState(false);
+  const [seedError, setSeedError] = useState<string | null>(null);
 
   useEffect(() => {
     localStorage.setItem(MONITOR_KEY, JSON.stringify(monitored));
@@ -189,35 +253,75 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
   const data = matrix ?? uiModel?.platforms ?? null;
   const parity = uiModel?.parity;
   const browserParity = uiModel?.browser_parity;
+  const channelSummary = uiModel?.channels;
+  const recentEvents = (uiModel?.recent?.channel_events ?? []) as RecentChannelEvent[];
 
-  const rows = useMemo(() => {
-    if (!data) return [];
-    return data.platforms.filter((row) => {
-      if (!showIdle && row.status === "idle") return false;
-      if (onlyMonitored && monitored[row.id] === false) return false;
-      if (onlyMonitored && monitored[row.id] == null && row.status === "idle") return false;
-      return true;
-    });
-  }, [data, showIdle, onlyMonitored, monitored]);
+  const parityPairs = parity?.total_pairs ?? 0;
+  const browserPairs = browserParity?.paired_events ?? 0;
+  const allIdle = Boolean(data && data.totals.idle === data.totals.platforms);
+
+  const byId = useMemo(() => {
+    const map = new Map<string, PlatformRow>();
+    for (const row of data?.platforms ?? []) map.set(row.id, row);
+    return map;
+  }, [data]);
+
+  const grouped = useMemo(() => {
+    return GROUPS.map((group) => {
+      const rows = group.platformIds
+        .map((id) => byId.get(id))
+        .filter((row): row is PlatformRow => Boolean(row))
+        .filter((row) => {
+          if (!showIdle && row.status === "idle") return false;
+          if (onlyMonitored && monitored[row.id] === false) return false;
+          if (onlyMonitored && monitored[row.id] == null && row.status === "idle") return false;
+          return true;
+        });
+      return { ...group, rows };
+    }).filter((group) => group.rows.length > 0);
+  }, [byId, showIdle, onlyMonitored, monitored]);
 
   function toggleMonitored(id: string, next: boolean) {
     setMonitored((prev) => ({ ...prev, [id]: next }));
   }
 
+  async function handleSeedDemo(): Promise<void> {
+    setSeeding(true);
+    setSeedError(null);
+    try {
+      await seedDemoPlatformTraffic();
+      onRefresh();
+    } catch (error) {
+      setSeedError(error instanceof Error ? error.message : "Failed to seed demo traffic");
+    } finally {
+      setSeeding(false);
+    }
+  }
+
+  const launchStatus =
+    typeof uiModel?.launch_readiness === "object" &&
+    uiModel.launch_readiness &&
+    "status" in uiModel.launch_readiness
+      ? String((uiModel.launch_readiness as { status?: string }).status ?? "—")
+      : "—";
+
   return (
     <section className="platforms-dashboard">
       <div className="platforms-hero">
         <div>
-          <p className="eyebrow">Elevar-style destination health</p>
-          <h2>Browser vs Server by platform</h2>
+          <p className="eyebrow">Tracking control</p>
+          <h2>Platforms &amp; parity</h2>
           <p className="muted">
-            Live match rates, firing status, and vendor-doc troubleshooting for every destination Synapse
-            feeds through GTM.
+            Grouped destinations with browser vs server health, match rates, expected events, and a live
+            activity feed — the Elevar-style view for Synapse.
           </p>
         </div>
         <div className="platforms-hero-actions">
           <button type="button" className="primary" onClick={onRefresh} disabled={loading}>
             {loading ? "Refreshing…" : "Refresh"}
+          </button>
+          <button type="button" className="secondary" onClick={() => void handleSeedDemo()} disabled={seeding}>
+            {seeding ? "Loading sample…" : "Load sample traffic"}
           </button>
           <label className="toggle">
             <input type="checkbox" checked={showIdle} onChange={(e) => setShowIdle(e.target.checked)} />
@@ -234,78 +338,118 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
         </div>
       </div>
 
+      {seedError ? <div className="banner bad">{seedError}</div> : null}
+
+      {allIdle ? (
+        <div className="setup-banner">
+          <div>
+            <strong>No live platform traffic yet</strong>
+            <p className="muted">
+              After OAuth install + theme embed, events land here. Or click <em>Load sample traffic</em> to
+              preview how grouped monitoring looks with dual-run data.
+            </p>
+          </div>
+          <ol className="setup-steps">
+            <li>
+              <a href="/install?shop=gcw-dev.myshopify.com">Install GCW Synapse</a>
+            </li>
+            <li>Enable theme App embed + Customer events app pixel</li>
+            <li>Browse the storefront / place a test order</li>
+          </ol>
+        </div>
+      ) : null}
+
       <div className="summary-strip">
         <div className="summary-card">
-          <span className="label">Purchase shadow match</span>
-          <strong>{parity?.matched_rate_pct != null ? `${parity.matched_rate_pct}%` : "—"}</strong>
-          <small>{parity?.status ?? "waiting"}</small>
+          <span className="label">Purchase shadow</span>
+          <strong>{formatPct(parity?.matched_rate_pct, parityPairs)}</strong>
+          <small>
+            {parityPairs > 0 ? `${parityPairs} pairs · ${parity?.status ?? "ok"}` : "no pairs yet"}
+          </small>
         </div>
         <div className="summary-card">
-          <span className="label">Browser data-layer match</span>
-          <strong>
-            {browserParity?.matched_rate_pct != null ? `${browserParity.matched_rate_pct}%` : "—"}
-          </strong>
-          <small>{browserParity?.status ?? "waiting"}</small>
+          <span className="label">Browser data layer</span>
+          <strong>{formatPct(browserParity?.matched_rate_pct, browserPairs)}</strong>
+          <small>
+            {browserPairs > 0 ? `${browserPairs} pairs · ${browserParity?.status ?? "ok"}` : "no pairs yet"}
+          </small>
         </div>
         <div className="summary-card">
-          <span className="label">Avg platform match</span>
+          <span className="label">Platform health</span>
           <strong>
-            {data?.totals.avg_match_pct != null ? `${data.totals.avg_match_pct}%` : "—"}
+            {data
+              ? `${data.totals.healthy}/${data.totals.platforms}`
+              : "—"}
           </strong>
           <small>
             {data
-              ? `${data.totals.healthy} healthy · ${data.totals.warning} warn · ${data.totals.critical} critical`
+              ? `${data.totals.warning} warn · ${data.totals.critical} critical · ${data.totals.idle} idle`
               : "loading"}
           </small>
         </div>
         <div className="summary-card">
-          <span className="label">Launch gate</span>
-          <strong>
-            {typeof uiModel?.launch_readiness === "object" &&
-            uiModel.launch_readiness &&
-            "status" in uiModel.launch_readiness
-              ? String((uiModel.launch_readiness as { status?: string }).status ?? "—")
-              : "—"}
-          </strong>
-          <small>GO / HOLD from readiness checks</small>
+          <span className="label">Channels tracked</span>
+          <strong>{channelSummary?.totals?.tracked_integrations ?? channelSummary?.total_channels ?? 0}</strong>
+          <small>
+            Launch {launchStatus}
+            {channelSummary?.totals
+              ? ` · ${channelSummary.totals.healthy ?? 0} healthy`
+              : ""}
+          </small>
         </div>
       </div>
 
-      {!data ? (
-        <div className="loading">Loading platform matrix…</div>
-      ) : (
-        <div className="platform-list">
-          {rows.map((row) => (
-            <PlatformCard
-              key={row.id}
-              row={row}
-              monitored={monitored[row.id] !== false}
-              onToggle={toggleMonitored}
-              expanded={expandedId === row.id}
-              onExpand={setExpandedId}
-            />
-          ))}
+      <div className="platforms-layout">
+        <div className="platforms-main">
+          {!data ? (
+            <div className="loading">Loading platform matrix…</div>
+          ) : (
+            grouped.map((group) => (
+              <section key={group.id} className="platform-group">
+                <header className="platform-group-head">
+                  <div>
+                    <h3>{group.label}</h3>
+                    <p className="muted">{group.blurb}</p>
+                  </div>
+                  <span className="pill idle">{group.rows.length}</span>
+                </header>
+                <div className="platform-list">
+                  {group.rows.map((row) => (
+                    <PlatformCard
+                      key={row.id}
+                      row={row}
+                      monitored={monitored[row.id] !== false}
+                      onToggle={toggleMonitored}
+                      expanded={expandedId === row.id}
+                      onExpand={setExpandedId}
+                    />
+                  ))}
+                </div>
+              </section>
+            ))
+          )}
         </div>
-      )}
 
-      {data && data.troubleshooting.length > 0 ? (
-        <div className="global-issues">
-          <h3>Active issues</h3>
-          {data.troubleshooting.slice(0, 8).map((issue) => (
-            <div key={issue.key} className={`issue ${issue.severity}`}>
-              <strong>{issue.title}</strong>
-              <p>{issue.details}</p>
-              <div className="doc-links">
-                {issue.links.slice(0, 2).map((href) => (
-                  <a key={href} href={href} target="_blank" rel="noreferrer">
-                    Vendor docs ↗
-                  </a>
-                ))}
-              </div>
+        <aside className="platforms-aside">
+          <div className="aside-card">
+            <h3>Live activity</h3>
+            <p className="muted tiny">Recent channel / destination pulses</p>
+            <ActivityFeed events={recentEvents} />
+          </div>
+
+          {data && data.troubleshooting.length > 0 ? (
+            <div className="aside-card">
+              <h3>Active issues</h3>
+              {data.troubleshooting.slice(0, 6).map((issue) => (
+                <div key={issue.key} className={`issue ${issue.severity}`}>
+                  <strong>{issue.title}</strong>
+                  <p>{issue.details}</p>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      ) : null}
+          ) : null}
+        </aside>
+      </div>
     </section>
   );
 }
