@@ -255,7 +255,7 @@ function handleInstallLanding(url: URL, env: CloudflareEnv): Response {
 
   const handle = shopHandleFromDomain(shop);
   const scopes = resolveInstallScopes(env.SHOPIFY_APP_SCOPES);
-  const apiKey = env.SHOPIFY_API_KEY || "ad45451a4c49376bdeae4dae0f3ac26a";
+  const apiKey = env.SHOPIFY_API_KEY || "7d011b70562512bd84b85bd3f9a6e68d";
   const oauthInstall = `${url.origin}/auth/shopify/install?shop=${encodeURIComponent(shop)}`;
   const adminInstall = `https://admin.shopify.com/store/${handle}/oauth/install?client_id=${encodeURIComponent(apiKey)}`;
   const usersUrl = `https://admin.shopify.com/store/${handle}/settings/users`;
@@ -302,21 +302,19 @@ function handleInstallLanding(url: URL, env: CloudflareEnv): Response {
     <p class="sub">Shop: <span class="mono">${shop}</span></p>
 
     <div class="warn">
-      <strong>Dev Dashboard custom app</strong> (client <span class="mono">${apiKey}</span>).
-      Prefer the install link from Shopify Dev Dashboard for this app — that installs on
-      <span class="mono">gcw-dev</span> without a store-owner “Manage and install apps” ping.
-      Configure App URL + redirect URL on the Worker host first (see docs).
+      <strong>Installed Partners app</strong> (client <span class="mono">${apiKey}</span>) —
+      already on gcw-dev. Use <em>Open app</em> below if you need the admin UI.
+      Re-auth only if scopes change.
     </div>
 
     <div class="card">
-      <h2>Install now</h2>
+      <h2>Open / re-authorize</h2>
       <div class="actions">
-        <a class="btn btn-primary" href="${oauthInstall}">Install via Worker OAuth</a>
-        <a class="btn btn-secondary" href="${adminInstall}">Admin install link</a>
-        <a class="btn btn-secondary" href="https://admin.shopify.com/store/${handle}/apps/${apiKey}">Open app (if installed)</a>
+        <a class="btn btn-primary" href="https://admin.shopify.com/store/${handle}/apps/${apiKey}">Open app</a>
+        <a class="btn btn-secondary" href="${oauthInstall}">Re-authorize scopes</a>
+        <a class="btn btn-secondary" href="${embedUrl}">Enable theme App embed</a>
       </div>
       <p class="meta">Scopes: <span class="mono">${scopes}</span></p>
-      <p class="meta">Dev Dashboard → Apps → GCW Synapse → copy <strong>Client secret</strong> into Worker secret <span class="mono">SHOPIFY_API_SECRET</span> if OAuth fails.</p>
     </div>
 
     <div class="card">
@@ -1778,7 +1776,7 @@ async function serveAsset(request: Request, env: CloudflareEnv): Promise<Respons
       return addSecurityHeaders(htmlResponse);
     }
 
-    const apiKey = (env.SHOPIFY_API_KEY || "ad45451a4c49376bdeae4dae0f3ac26a").trim();
+    const apiKey = (env.SHOPIFY_API_KEY || "7d011b70562512bd84b85bd3f9a6e68d").trim();
     let html = await htmlResponse.text();
     if (!html.includes("shopify-api-key")) {
       const bridge = `

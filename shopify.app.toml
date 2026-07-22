@@ -1,8 +1,7 @@
-# Link this file to the Shopify Dev Dashboard app for gcw-dev.
-# Dev Dashboard client ID (custom app) — installable without store-owner "install apps" ping.
+# Link this file to the Partners app already installed on gcw-dev.
 
 name = "GCW Synapse"
-client_id = "ad45451a4c49376bdeae4dae0f3ac26a"
+client_id = "7d011b70562512bd84b85bd3f9a6e68d"
 application_url = "https://gcw-synapse-super.gcwsynapse.workers.dev"
 embedded = true
 

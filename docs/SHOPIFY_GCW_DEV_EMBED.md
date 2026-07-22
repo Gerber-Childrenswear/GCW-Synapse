@@ -1,47 +1,32 @@
 # Enable GCW Synapse on gcw-dev
 
-**Preferred path (no director ping):** Dev Dashboard custom app  
-→ see [`docs/DEV_DASHBOARD_APP_SETUP.md`](./DEV_DASHBOARD_APP_SETUP.md)
+**Active app (already installed):** Partners client `7d011b70562512bd84b85bd3f9a6e68d`  
+Worker secrets restored to match. Ignore Dev Dashboard app `ad45451a…` for now.
 
-**Client ID:** `ad45451a4c49376bdeae4dae0f3ac26a`
+## Open app
 
----
+https://admin.shopify.com/store/gcw-dev/apps/7d011b70562512bd84b85bd3f9a6e68d
 
-## Install
+## App embeds
 
-1. Configure App URL + redirect + scopes in Dev Dashboard (doc above).
-2. Set Worker `SHOPIFY_API_SECRET` to the Dev Dashboard **Client secret**.
-3. Install via the Dev Dashboard **Install** link for this custom app.
-4. Fallback: https://gcw-synapse-super.gcwsynapse.workers.dev/install?shop=gcw-dev.myshopify.com
+1. **Online Store → Themes → Customize → App embeds**
+2. **GCW Synapse** ON → Save  
+3. Script URL: `https://gcw-synapse-super.gcwsynapse.workers.dev/gcw-synapse.js?v=1.1.0`  
+4. Beacon: `https://gcw-synapse-super.gcwsynapse.workers.dev/browser/beacon`
 
----
-
-## Where the toggle lives (not the Apps list)
-
-1. **gcw-dev admin** → **Online Store** → **Themes**
-2. On the **live** theme, click **Customize**
-3. Left sidebar → **App embeds** (puzzle piece)
-4. **GCW Synapse** → ON → Save
-5. Beacon URL: `https://gcw-synapse-super.gcwsynapse.workers.dev/browser/beacon`
-6. Script URL: `https://gcw-synapse-super.gcwsynapse.workers.dev/gcw-synapse.js?v=1.1.0`
-
-Deep link (after extensions are deployed to this app):
+Deep link:
 
 ```
-https://gcw-dev.myshopify.com/admin/themes/current/editor?context=apps&activateAppId=ad45451a4c49376bdeae4dae0f3ac26a/gcw-synapse-app-block
+https://gcw-dev.myshopify.com/admin/themes/current/editor?context=apps&activateAppId=7d011b70562512bd84b85bd3f9a6e68d/gcw-synapse-app-block
 ```
-
-If the embed is missing: `npx shopify app deploy` for the Dev Dashboard app (extensions must be released to **this** client ID).
-
----
 
 ## Verify
 
-Storefront password unlocked → product page → console:
+Password-unlocked storefront → product page → console:
 
 ```js
 window.Synapse?.version
 window.dataLayer?.filter(e => String(e.event||'').startsWith('dl_')).slice(-5)
 ```
 
-Worker: https://gcw-synapse-super.gcwsynapse.workers.dev/compare/browser
+https://gcw-synapse-super.gcwsynapse.workers.dev/compare/browser
