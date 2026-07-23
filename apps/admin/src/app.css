@@ -1181,10 +1181,10 @@ pre {
 
 .platforms-hero-brand {
   display: grid;
-  grid-template-columns: minmax(220px, 38%) 1fr;
+  grid-template-columns: minmax(280px, 42%) 1fr;
   align-items: center;
-  gap: 16px 20px;
-  padding: 10px 18px;
+  gap: 14px 22px;
+  padding: 12px 18px;
   border: 1px solid rgba(61, 214, 255, 0.18);
   border-radius: 14px;
   margin: 0;
@@ -1195,8 +1195,9 @@ pre {
   color: #e8f0fa;
   overflow: hidden;
   position: relative;
+  /* ~33% of the original full-bleed logo hero height */
   min-height: 0;
-  max-height: 112px;
+  max-height: 220px;
 }
 
 .platforms-hero-brand::before {
@@ -1208,7 +1209,7 @@ pre {
   z-index: 1;
   max-width: none;
   width: 100%;
-  height: 88px;
+  height: 180px;
   overflow: hidden;
   display: flex;
   align-items: center;
@@ -1228,7 +1229,6 @@ pre {
 }
 
 .platforms-hero-brand-mark .synapse-fire {
-  /* Keep fire overlays aligned to the cropped banner mark */
   inset: 0;
 }
 
@@ -1237,7 +1237,7 @@ pre {
   z-index: 1;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
 }
 
@@ -1246,8 +1246,8 @@ pre {
   max-width: 42rem;
   padding: 0;
   color: rgba(200, 214, 232, 0.88);
-  font-size: 13px;
-  line-height: 1.35;
+  font-size: 14px;
+  line-height: 1.4;
 }
 
 .platforms-hero-brand .platforms-hero-actions {
@@ -1260,7 +1260,7 @@ pre {
 
 .platforms-hero-brand .platforms-hero-actions .primary,
 .platforms-hero-brand .platforms-hero-actions .secondary {
-  padding: 7px 12px;
+  padding: 8px 14px;
   font-size: 13px;
 }
 
@@ -2258,7 +2258,7 @@ button.secondary:disabled {
   }
 
   .platforms-hero-brand-mark {
-    height: 72px;
+    height: 140px;
   }
 
   .summary-strip,
