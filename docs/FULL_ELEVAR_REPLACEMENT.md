@@ -41,6 +41,7 @@ Hit `GET /ops/alerts` to evaluate and dispatch.
 
 ## Ownership & cutover
 
+- Stolen Elevar IDs / event toggles: [`docs/ELEVAR_STOLEN_CONFIG.md`](./ELEVAR_STOLEN_CONFIG.md)
 - Ownership matrix: [`docs/OWNERSHIP_MATRIX.md`](./OWNERSHIP_MATRIX.md)
 - Dev cutover: [`docs/GCW_DEV_GTM_CUTOVER.md`](./GCW_DEV_GTM_CUTOVER.md)
 - Prod playbook: [`docs/PROD_ELEVAR_CUTOVER_PLAYBOOK.md`](./PROD_ELEVAR_CUTOVER_PLAYBOOK.md)

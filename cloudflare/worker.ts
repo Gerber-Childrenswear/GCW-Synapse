@@ -14,6 +14,14 @@ type CloudflareEnv = {
   GTM_FORWARD_SHARED_SECRET?: string;
   RUNTIME_MODE?: string;
   SHOP_DEFAULT_CURRENCY?: string;
+  FACEBOOK_PIXEL_ID?: string;
+  PINTEREST_ID?: string;
+  GA4_MEASUREMENT_ID?: string;
+  GA4_MEASUREMENT_ID_BY_SHOP?: string;
+  TIKTOK_PIXEL_ID?: string;
+  REDDIT_PIXEL_ID?: string;
+  GOOGLE_ADS_CONVERSION_ID?: string;
+  BLOOMREACH_ACCOUNT_ID?: string;
   BROWSER_PARITY_MISMATCH_ALERT_PCT?: string;
   SLACK_WEBHOOK_URL?: string;
   ALERT_EMAIL_TO?: string;
@@ -65,6 +73,8 @@ import {
 } from "../src/services/browserEvents";
 import { processPurchaseWebhookEdge } from "../src/services/edgeWebhook";
 import { maybeAlertOnParity } from "../src/services/alerts";
+import { resolveGa4MeasurementId } from "../src/services/ga4Measurement";
+import { resolveCurrencyCode } from "../src/services/currencyCode";
 
 const PROXY_PREFIXES = [
   "/auth/",
@@ -1075,6 +1085,14 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
         detail: env.GTM_SERVER_URL
           ? `configured (${env.RUNTIME_MODE || "shadow_compare"})`
           : "optional — set GTM_SERVER_URL when flipping RUNTIME_MODE=forward"
+      },
+      {
+        id: "elevar_ids",
+        label: "Stolen Elevar public IDs (compat)",
+        ok: Boolean(env.FACEBOOK_PIXEL_ID && env.GA4_MEASUREMENT_ID),
+        detail: env.FACEBOOK_PIXEL_ID
+          ? `FB ${env.FACEBOOK_PIXEL_ID} · GA4 ${env.GA4_MEASUREMENT_ID || "unset"} · TT ${env.TIKTOK_PIXEL_ID || "unset"}`
+          : "missing — set FACEBOOK_PIXEL_ID / GA4_MEASUREMENT_ID vars"
       }
     ];
     const incomplete = checks.filter((c) => !c.ok);
@@ -1085,7 +1103,8 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
       incomplete: incomplete.map((c) => c.id),
       checks,
       notes: [
-        "Destination API keys (Meta/TikTok/GA4/etc.) stay in GTM/sGTM — not Worker secrets.",
+        "Destination API secrets (Meta CAPI, TikTok Events API, etc.) stay in GTM/sGTM — not Worker secrets.",
+        "Public pixel/measurement IDs stolen from Elevar GTM constants power /compatibility/* on edge.",
         "Incomplete Shopify keys block OAuth/webhooks; destination tokens are configured in GTM tags."
       ]
     });
@@ -1823,7 +1842,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
     );
   }
 
-  if (url.pathname.startsWith("/auth/") || url.pathname.startsWith("/compatibility/")) {
+  if (url.pathname.startsWith("/auth/")) {
     return jsonResponse(
       {
         ok: false,
@@ -1834,7 +1853,159 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
     );
   }
 
+  if (url.pathname.startsWith("/compatibility/")) {
+    return handleCompatibilityEdge(request, env);
+  }
+
   return null;
+}
+
+/**
+ * Elevar-shaped constant / lookup compatibility endpoints for GTM HTTP variables.
+ * Public pixel IDs were stolen from live Elevar config + GTM-TKW58K8 constants.
+ */
+function handleCompatibilityEdge(request: Request, env: CloudflareEnv): Response {
+  if (request.method !== "GET") {
+    return jsonResponse({ ok: false, error: "Method not allowed" }, 405);
+  }
+
+  const url = new URL(request.url);
+  const path = url.pathname.replace(/\/$/, "") || "/";
+
+  if (path === "/compatibility/ga4-id") {
+    const shop = url.searchParams.get("shop") ?? undefined;
+    const measurementId = resolveGa4MeasurementId(
+      shop,
+      env.GA4_MEASUREMENT_ID,
+      env.GA4_MEASUREMENT_ID_BY_SHOP
+    );
+    if (!measurementId) {
+      return jsonResponse({ ok: false, error: "GA4 measurement ID is not configured", shop }, 404);
+    }
+    return jsonResponse({
+      ok: true,
+      variable: "GA4 ID",
+      shop,
+      measurement_id: measurementId
+    });
+  }
+
+  if (path === "/compatibility/facebook-pixel-id") {
+    if (!env.FACEBOOK_PIXEL_ID) {
+      return jsonResponse({ ok: false, error: "Facebook Pixel ID is not configured" }, 404);
+    }
+    return jsonResponse({
+      ok: true,
+      variable: "Facebook - Pixel ID",
+      pixel_id: env.FACEBOOK_PIXEL_ID
+    });
+  }
+
+  if (path === "/compatibility/pinterest-id") {
+    if (!env.PINTEREST_ID) {
+      return jsonResponse({ ok: false, error: "Pinterest ID is not configured" }, 404);
+    }
+    return jsonResponse({
+      ok: true,
+      variable: "Pinterest ID",
+      pinterest_id: env.PINTEREST_ID
+    });
+  }
+
+  if (path === "/compatibility/tiktok-pixel-id") {
+    if (!env.TIKTOK_PIXEL_ID) {
+      return jsonResponse({ ok: false, error: "TikTok Pixel ID is not configured" }, 404);
+    }
+    return jsonResponse({
+      ok: true,
+      variable: "TikTok - Pixel ID",
+      pixel_id: env.TIKTOK_PIXEL_ID
+    });
+  }
+
+  if (path === "/compatibility/reddit-pixel-id") {
+    if (!env.REDDIT_PIXEL_ID) {
+      return jsonResponse({ ok: false, error: "Reddit Pixel ID is not configured" }, 404);
+    }
+    return jsonResponse({
+      ok: true,
+      variable: "Reddit Pixel ID",
+      pixel_id: env.REDDIT_PIXEL_ID
+    });
+  }
+
+  if (path === "/compatibility/google-ads-conversion-id") {
+    if (!env.GOOGLE_ADS_CONVERSION_ID) {
+      return jsonResponse({ ok: false, error: "Google Ads Conversion ID is not configured" }, 404);
+    }
+    return jsonResponse({
+      ok: true,
+      variable: "Google Ads - Conversion ID",
+      conversion_id: env.GOOGLE_ADS_CONVERSION_ID
+    });
+  }
+
+  if (path === "/compatibility/bloomreach-account-id") {
+    if (!env.BLOOMREACH_ACCOUNT_ID) {
+      return jsonResponse({ ok: false, error: "Bloomreach Account ID is not configured" }, 404);
+    }
+    return jsonResponse({
+      ok: true,
+      variable: "BloomReach Account ID",
+      account_id: env.BLOOMREACH_ACCOUNT_ID
+    });
+  }
+
+  if (path === "/compatibility/currency-code") {
+    const ecommerceCurrency = url.searchParams.get("ecommerce_currency") ?? undefined;
+    const checkoutCurrencyCode = url.searchParams.get("checkout_currency") ?? undefined;
+    const shopCurrency = url.searchParams.get("shop_currency") ?? undefined;
+    const currency = resolveCurrencyCode(
+      { ecommerceCurrency, checkoutCurrencyCode, shopCurrency },
+      env.SHOP_DEFAULT_CURRENCY || "USD"
+    );
+    return jsonResponse({
+      ok: true,
+      variable: "dlv - Global - Currency Code",
+      resolved_currency: currency,
+      sources: {
+        ecommerce_currency: ecommerceCurrency,
+        checkout_currency: checkoutCurrencyCode,
+        shop_currency: shopCurrency,
+        fallback_currency: env.SHOP_DEFAULT_CURRENCY || "USD"
+      }
+    });
+  }
+
+  if (path === "/compatibility/ids" || path === "/compatibility/elevar-ids") {
+    return jsonResponse({
+      ok: true,
+      source: "elevar-gtm-tkw58k8 + gcw-dev elevar config.js",
+      ids: {
+        facebook_pixel_id: env.FACEBOOK_PIXEL_ID ?? null,
+        ga4_measurement_id: env.GA4_MEASUREMENT_ID ?? null,
+        pinterest_id: env.PINTEREST_ID ?? null,
+        tiktok_pixel_id: env.TIKTOK_PIXEL_ID ?? null,
+        reddit_pixel_id: env.REDDIT_PIXEL_ID ?? null,
+        google_ads_conversion_id: env.GOOGLE_ADS_CONVERSION_ID ?? null,
+        bloomreach_account_id: env.BLOOMREACH_ACCOUNT_ID ?? null
+      },
+      notes: [
+        "Public destination IDs only. CAPI / Ads API secrets stay in GTM + sGTM.",
+        "gcw-dev Elevar market_groups.gtm_container = GTM-WH3W368X (dev web)."
+      ]
+    });
+  }
+
+  return jsonResponse(
+    {
+      ok: false,
+      error: "Compatibility endpoint not implemented on edge",
+      mode: "edge",
+      hint: "Constant ID routes: /compatibility/ga4-id, facebook-pixel-id, pinterest-id, tiktok-pixel-id, reddit-pixel-id, google-ads-conversion-id, bloomreach-account-id, currency-code, ids"
+    },
+    501
+  );
 }
 
 async function serveAsset(request: Request, env: CloudflareEnv): Promise<Response> {
