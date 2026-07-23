@@ -180,7 +180,22 @@ register(({ analytics, settings, init }) => {
   }
 
   function checkoutTotal(checkout) {
-    return toPrice(checkout?.totalPrice?.amount ?? checkout?.total_price);
+    const direct = toPrice(checkout?.totalPrice?.amount ?? checkout?.total_price ?? checkout?.totalPrice);
+    if (direct && direct !== "0.0") return direct;
+    const lines = checkout?.lineItems || [];
+    let sum = 0;
+    let any = false;
+    for (const line of lines) {
+      const price = Number.parseFloat(
+        toPrice(line?.variant?.price?.amount ?? line?.price?.amount ?? line?.finalLinePrice?.amount)
+      );
+      const qty = Number.parseFloat(asString(line?.quantity ?? 1)) || 1;
+      if (Number.isFinite(price)) {
+        sum += price * qty;
+        any = true;
+      }
+    }
+    return any ? sum.toFixed(2) : direct || "0.0";
   }
 
   analytics.subscribe("product_viewed", (event) => {
