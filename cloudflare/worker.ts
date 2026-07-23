@@ -2376,10 +2376,11 @@ async function serveAsset(request: Request, env: CloudflareEnv): Promise<Respons
       return withAppBridge(response);
     }
 
-    // Cache the storefront tracking bundle aggressively (URL is versioned via ?v=).
+    // Cache the storefront tracking bundle (URL may be unversioned in theme settings).
+    // Keep max-age short so dual-run fixes roll out without a theme-editor cache-bust.
     if (url.pathname === "/gcw-synapse.js" || url.pathname.endsWith("/gcw-synapse.js")) {
       const headers = new Headers(response.headers);
-      headers.set("Cache-Control", "public, max-age=86400, stale-while-revalidate=604800");
+      headers.set("Cache-Control", "public, max-age=60, stale-while-revalidate=600");
       headers.set("Content-Type", "application/javascript; charset=utf-8");
       return addSecurityHeaders(
         new Response(response.body, {
