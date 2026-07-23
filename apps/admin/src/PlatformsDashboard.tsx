@@ -417,6 +417,8 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
         ? "HOLD"
         : launchStatusRaw.toUpperCase() === "GO"
           ? "GO"
+          : launchStatusRaw.toUpperCase() === "READY"
+            ? "READY"
           : launchStatusRaw.toUpperCase() === "HOLD"
             ? "HOLD"
             : launchStatusRaw;
@@ -522,7 +524,9 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
               ? "Blocked by critical destination causes"
               : browserParityHold
                 ? "HOLD — browser dual-run below 95%"
-                : "GO / HOLD from readiness + browser parity"}
+                : launchStatus === "READY"
+                  ? "Connected — waiting for storefront dual-run traffic"
+                  : "GO / HOLD from readiness + browser parity"}
           </small>
         </div>
       </div>

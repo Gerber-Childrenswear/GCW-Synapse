@@ -8,6 +8,7 @@ type CloudflareEnv = {
   SHOPIFY_API_KEY?: string;
   SHOPIFY_API_SECRET?: string;
   SHOPIFY_APP_SCOPES?: string;
+  SHOPIFY_APP_URL?: string;
   SHOPIFY_WEBHOOK_SECRET?: string;
   GTM_SERVER_URL?: string;
   GTM_FORWARD_SHARED_SECRET?: string;
@@ -52,13 +53,15 @@ import {
   getChannelHelpLinks,
   getChannelTroubleshooting,
   getRecentChannelEvents,
-  ingestChannelEvent
+  ingestChannelEvent,
+  resetChannelHealth
 } from "../src/services/channelHealth";
 import { buildPlatformMatrix } from "../src/services/platformMatrix";
 import {
   getBrowserParityReport,
   getRecentBrowserEvents,
-  ingestBrowserEvent
+  ingestBrowserEvent,
+  resetBrowserEventsForTests
 } from "../src/services/browserEvents";
 import { processPurchaseWebhookEdge } from "../src/services/edgeWebhook";
 import { maybeAlertOnParity } from "../src/services/alerts";
@@ -683,7 +686,9 @@ function getAlertConfig(env: CloudflareEnv) {
 }
 
 function buildLaunchReadiness(purchaseParity: ReturnType<typeof getParityModel>, browserParity: ReturnType<typeof getBrowserParityReport>) {
-  const browserGo = browserParity.status === "ok" && browserParity.matched_rate_pct >= 95;
+  const hasVolume = browserParity.paired_events > 0 || browserParity.synapse_events > 0;
+  const browserGo =
+    !hasVolume || (browserParity.status === "ok" && browserParity.matched_rate_pct >= 95);
   const purchaseGo = purchaseParity.status === "ok";
   const checks = [
     {
@@ -694,18 +699,20 @@ function buildLaunchReadiness(purchaseParity: ReturnType<typeof getParityModel>,
     {
       id: "browser_parity_threshold",
       status: browserGo ? "pass" : "hold",
-      detail: `core funnel matched ${browserParity.matched_rate_pct}% (paired=${browserParity.paired_events})`
+      detail: hasVolume
+        ? `core funnel matched ${browserParity.matched_rate_pct}% (paired=${browserParity.paired_events})`
+        : "waiting for storefront traffic (no dual-run volume yet)"
     },
     {
       id: "browser_dual_run_volume",
-      status: browserParity.paired_events > 0 || browserParity.synapse_events > 0 ? "pass" : "hold",
+      status: hasVolume ? "pass" : "waiting",
       detail: `synapse=${browserParity.synapse_events} elevar=${browserParity.elevar_events}`
     }
   ];
   const hold = checks.some((c) => c.status === "hold");
   return {
-    status: hold ? "hold" : "go",
-    rationale: checks.filter((c) => c.status === "hold").map((c) => c.detail),
+    status: hold ? "hold" : hasVolume ? "go" : "ready",
+    rationale: checks.filter((c) => c.status === "hold" || c.status === "waiting").map((c) => c.detail),
     checks,
     purchase_parity: purchaseParity,
     browser_parity: browserParity
@@ -763,7 +770,17 @@ function getParityModel() {
   };
 }
 
-const CHANNEL_CACHE_URL = "https://gcw-synapse-super.internal/channel-events-v1";
+const CHANNEL_CACHE_URL = "https://gcw-synapse-super.internal/channel-events-v2";
+
+async function clearChannelEventsCache(): Promise<void> {
+  try {
+    await caches.default.delete(CHANNEL_CACHE_URL);
+    // Also drop legacy v1 cache that held demo-seed errors.
+    await caches.default.delete("https://gcw-synapse-super.internal/channel-events-v1");
+  } catch {
+    // ignore
+  }
+}
 
 async function persistChannelEventsToCache(): Promise<void> {
   try {
@@ -1034,6 +1051,61 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
       dbConnected: true,
       uptime: getWorkerUptimeSeconds(),
       vendorAdapters: getControlPanelVendors()
+    });
+  }
+
+  if (request.method === "GET" && url.pathname === "/ops/connection") {
+    const apiKey = Boolean(env.SHOPIFY_API_KEY);
+    const apiSecret = Boolean(env.SHOPIFY_API_SECRET);
+    const webhookSecret = Boolean(env.SHOPIFY_WEBHOOK_SECRET || env.SHOPIFY_API_SECRET);
+    const scopes = resolveInstallScopes(env.SHOPIFY_APP_SCOPES);
+    const appUrlOk = true; // Worker uses request origin for OAuth callbacks
+    const checks = [
+      { id: "shopify_api_key", label: "Shopify API key (client id)", ok: apiKey, detail: apiKey ? "set" : "missing" },
+      { id: "shopify_api_secret", label: "Shopify API secret", ok: apiSecret, detail: apiSecret ? "set" : "missing" },
+      { id: "shopify_webhook_secret", label: "Shopify webhook HMAC secret", ok: webhookSecret, detail: webhookSecret ? "set" : "missing" },
+      { id: "shopify_scopes", label: "Install scopes (lean)", ok: scopes.length > 0 && !scopes.includes("read_all_orders"), detail: scopes },
+      { id: "oauth_callback", label: "OAuth callback host", ok: appUrlOk, detail: `${url.origin}/auth/shopify/callback` },
+      { id: "cdn_script", label: "Storefront CDN script", ok: true, detail: `${url.origin}/gcw-synapse.js?v=1.1.0` },
+      { id: "browser_beacon", label: "Browser beacon", ok: true, detail: `${url.origin}/browser/beacon` },
+      {
+        id: "gtm_forward",
+        label: "sGTM purchase forward",
+        ok: true,
+        detail: env.GTM_SERVER_URL
+          ? `configured (${env.RUNTIME_MODE || "shadow_compare"})`
+          : "optional — set GTM_SERVER_URL when flipping RUNTIME_MODE=forward"
+      }
+    ];
+    const incomplete = checks.filter((c) => !c.ok);
+    return jsonResponse({
+      ok: incomplete.length === 0,
+      status: incomplete.length === 0 ? "green" : "incomplete",
+      client_id_hint: "7d011b70562512bd84b85bd3f9a6e68d",
+      incomplete: incomplete.map((c) => c.id),
+      checks,
+      notes: [
+        "Destination API keys (Meta/TikTok/GA4/etc.) stay in GTM/sGTM — not Worker secrets.",
+        "Incomplete Shopify keys block OAuth/webhooks; destination tokens are configured in GTM tags."
+      ]
+    });
+  }
+
+  if (request.method === "POST" && url.pathname === "/ops/reset-health") {
+    resetChannelHealth();
+    resetBrowserEventsForTests();
+    edgeWebhookLog.length = 0;
+    edgeShadowComparisons.length = 0;
+    edgeChannelEvents.length = 0;
+    edgeBrowserEvents.length = 0;
+    edgeEventsGenerated = 0;
+    edgeEventsSuppressed = 0;
+    edgeBrowserBeaconsAccepted = 0;
+    await clearChannelEventsCache();
+    return jsonResponse({
+      ok: true,
+      status: "reset",
+      message: "Cleared in-memory health, browser parity, and demo-seed cache"
     });
   }
 

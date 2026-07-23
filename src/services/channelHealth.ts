@@ -401,3 +401,8 @@ export function resetChannelHealthForTests(): void {
   channelState.clear();
   recentChannelEvents.length = 0;
 }
+
+/** Clears in-memory channel health (also used by edge ops reset). */
+export function resetChannelHealth(): void {
+  resetChannelHealthForTests();
+}
