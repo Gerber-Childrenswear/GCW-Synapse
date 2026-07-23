@@ -135,6 +135,7 @@ export function sendBeacon(
     marketing: {
       session_id: session.session_id,
       landing_site: session.landing_site,
+      user_id: typeof event.marketing?.user_id === "string" ? event.marketing.user_id : session.session_id,
       utm_source: session.utm_source,
       utm_medium: session.utm_medium,
       utm_campaign: session.utm_campaign

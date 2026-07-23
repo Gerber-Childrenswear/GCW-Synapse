@@ -5,6 +5,14 @@ function asString(value) {
   return String(value);
 }
 
+/** Strip Shopify GID → numeric id for Elevar GTM content_ids / order id DLVs. */
+function stripGid(value) {
+  const raw = asString(value);
+  if (!raw) return "";
+  const match = raw.match(/\/(\d+)\s*$/);
+  return match ? match[1] : raw;
+}
+
 function toPrice(amount) {
   if (amount == null) return "0.0";
   const n = typeof amount === "number" ? amount : Number.parseFloat(String(amount));
@@ -12,12 +20,16 @@ function toPrice(amount) {
   return n.toFixed(2);
 }
 
+function withCurrency(code, ecommerce) {
+  return { currencyCode: code, currency: code, ...ecommerce };
+}
+
 function mapLineItem(item, index) {
   const variant = item?.variant || {};
   const product = variant.product || item?.product || {};
   const sku = variant.sku || "";
-  const variantId = asString(variant.id || item?.variantId || "");
-  const productId = asString(product.id || item?.productId || "");
+  const variantId = stripGid(variant.id || item?.variantId || "");
+  const productId = stripGid(product.id || item?.productId || "");
   return {
     id: sku || variantId || productId,
     name: asString(product.title || item?.title || ""),
@@ -38,8 +50,8 @@ function mapLineItem(item, index) {
 function mapVariantProduct(variant, index = 0) {
   const product = variant?.product || {};
   const sku = variant?.sku || "";
-  const variantId = asString(variant?.id || "");
-  const productId = asString(product.id || "");
+  const variantId = stripGid(variant?.id || "");
+  const productId = stripGid(product.id || "");
   return {
     id: sku || variantId || productId,
     name: asString(product.title || ""),
@@ -69,8 +81,10 @@ function addressProps(address) {
     customer_phone: address.phone || undefined,
     customer_address_1: address.address1 || undefined,
     customer_city: address.city || undefined,
+    customer_province: address.province || undefined,
     customer_province_code: address.provinceCode || address.province_code || undefined,
     customer_zip: address.zip || undefined,
+    customer_country: address.country || undefined,
     customer_country_code: address.countryCode || address.country_code || undefined
   };
 }
@@ -103,6 +117,17 @@ async function sendBeacon(url, payload) {
   }
 }
 
+/** Bridge checkout events into parent dataLayer when sandbox allows (Elevar parity). */
+function bridgeToParent(payload) {
+  try {
+    if (typeof self !== "undefined" && self.parent && self.parent !== self) {
+      self.parent.postMessage({ source: "gcw-synapse-pixel", ...payload }, "*");
+    }
+  } catch (_err) {
+    // Parent bridge unavailable in some Shopify sandboxes.
+  }
+}
+
 register(({ analytics, settings, init }) => {
   const beaconUrl =
     settings?.beaconUrl || "https://gcw-synapse-super.gcwsynapse.workers.dev/browser/beacon";
@@ -112,9 +137,10 @@ register(({ analytics, settings, init }) => {
     init?.data?.cart?.cost?.totalAmount?.currencyCode ||
     "USD";
 
+  const customerId = init?.data?.customer?.id ? stripGid(init.data.customer.id) : undefined;
   const baseUser = {
-    visitor_type: init?.data?.customer?.id || init?.data?.customer?.email ? "Logged In" : "Guest",
-    customer_id: init?.data?.customer?.id ? asString(init.data.customer.id) : undefined,
+    visitor_type: customerId || init?.data?.customer?.email ? "Logged In" : "Guest",
+    customer_id: customerId,
     customer_email: init?.data?.customer?.email || undefined,
     customer_first_name: init?.data?.customer?.firstName || undefined,
     customer_last_name: init?.data?.customer?.lastName || undefined,
@@ -125,6 +151,11 @@ register(({ analytics, settings, init }) => {
 
   function emit(eventName, ecommerce, extras = {}) {
     const event_id = buildEventId([shop, eventName, Date.now().toString(36)]);
+    const marketing = {
+      landing_site: typeof location !== "undefined" ? location.href : undefined,
+      user_id: customerId || undefined,
+      ...(extras.marketing || {})
+    };
     const payload = {
       source: "synapse-web-pixel",
       shop,
@@ -132,24 +163,31 @@ register(({ analytics, settings, init }) => {
       event_id,
       currency,
       user_properties: extras.user_properties || baseUser,
-      ecommerce,
-      ...extras,
+      marketing,
+      ecommerce: withCurrency(currency, ecommerce || {}),
+      cart_total: extras.cart_total,
       observed_at: new Date().toISOString()
     };
     sendBeacon(beaconUrl, payload);
+    bridgeToParent({
+      event: eventName,
+      event_id,
+      cart_total: extras.cart_total,
+      user_properties: payload.user_properties,
+      marketing,
+      ecommerce: payload.ecommerce
+    });
   }
 
   function checkoutTotal(checkout) {
     return toPrice(checkout?.totalPrice?.amount ?? checkout?.total_price);
   }
 
-  // Storefront mirrors (checkout sandbox / pages without theme JS).
   analytics.subscribe("product_viewed", (event) => {
     const variant = event.data?.productVariant;
     if (!variant) return;
     const product = mapVariantProduct(variant);
     emit("dl_view_item", {
-      currencyCode: currency,
       detail: {
         actionField: { list: "web_pixel", action: "detail" },
         products: [product]
@@ -164,7 +202,6 @@ register(({ analytics, settings, init }) => {
     emit(
       "dl_add_to_cart",
       {
-        currencyCode: currency,
         add: {
           actionField: { list: "web_pixel" },
           products: [product]
@@ -180,7 +217,6 @@ register(({ analytics, settings, init }) => {
     emit(
       "dl_remove_from_cart",
       {
-        currencyCode: currency,
         remove: {
           actionField: { list: "web_pixel" },
           products: [mapLineItem(line, 0)]
@@ -196,7 +232,6 @@ register(({ analytics, settings, init }) => {
     emit(
       "dl_view_cart",
       {
-        currencyCode: currency,
         actionField: {},
         cart_contents: { products: impressions },
         impressions
@@ -212,7 +247,6 @@ register(({ analytics, settings, init }) => {
     emit(
       "dl_begin_checkout",
       {
-        currencyCode: currency,
         checkout: {
           actionField: { step: "1" },
           products
@@ -233,7 +267,6 @@ register(({ analytics, settings, init }) => {
     emit(
       "dl_user_data",
       {
-        currencyCode: currency,
         cart_contents: { products }
       },
       { cart_total: checkoutTotal(checkout), user_properties }
@@ -241,7 +274,6 @@ register(({ analytics, settings, init }) => {
     emit(
       "dl_add_shipping_info",
       {
-        currencyCode: currency,
         checkout: {
           actionField: { step: "2" },
           products
@@ -258,7 +290,6 @@ register(({ analytics, settings, init }) => {
     emit(
       "dl_add_payment_info",
       {
-        currencyCode: currency,
         checkout: {
           actionField: { step: "3" },
           products
@@ -278,12 +309,11 @@ register(({ analytics, settings, init }) => {
     const products = lines.map((line, i) => mapLineItem(line, i));
     const user_properties = checkoutUserProperties(checkout, baseUser);
     const cart_total = checkoutTotal(checkout);
+    const orderId = stripGid(checkout.order?.id || checkout.token || "");
 
-    // Thank-you user_data first — GTM thank-you triggers expect this Elevar shape.
     emit(
       "dl_user_data",
       {
-        currencyCode: currency,
         cart_contents: { products }
       },
       { cart_total, user_properties }
@@ -292,10 +322,9 @@ register(({ analytics, settings, init }) => {
     emit(
       "dl_purchase",
       {
-        currencyCode: currency,
         purchase: {
           actionField: {
-            id: asString(checkout.order?.id || checkout.token || ""),
+            id: orderId,
             order_name: asString(checkout.order?.name || ""),
             revenue: cart_total,
             tax: toPrice(checkout.totalTax?.amount),
@@ -303,6 +332,7 @@ register(({ analytics, settings, init }) => {
             sub_total: toPrice(checkout.subtotalPrice?.amount),
             product_sub_total: toPrice(checkout.subtotalPrice?.amount),
             discount_amount: toPrice(checkout.discountsAmount?.amount || 0),
+            affiliation: shop,
             sales_channel: "website"
           },
           products

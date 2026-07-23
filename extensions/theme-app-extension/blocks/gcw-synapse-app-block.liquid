@@ -19,6 +19,15 @@
       phone: {% if customer %}{{ customer.phone | json }}{% else %}null{% endif %},
       orderCount: {% if customer %}{{ customer.orders_count | json }}{% else %}0{% endif %},
       totalSpent: {% if customer %}{{ customer.total_spent | money_without_currency | json }}{% else %}"0.0"{% endif %}
+      {%- if customer and customer.default_address -%}
+      ,address1: {{ customer.default_address.address1 | json }}
+      ,city: {{ customer.default_address.city | json }}
+      ,province: {{ customer.default_address.province | json }}
+      ,provinceCode: {{ customer.default_address.province_code | json }}
+      ,zip: {{ customer.default_address.zip | json }}
+      ,country: {{ customer.default_address.country | json }}
+      ,countryCode: {{ customer.default_address.country_code | json }}
+      {%- endif -%}
     },
     page: {
       type: {{ request.page_type | json }},
@@ -94,8 +103,10 @@
     ,search: {
       terms: {{ search.terms | json }},
       products: [
-        {%- for p in search.results limit: 12 -%}
+        {%- assign synapse_search_sep = "" -%}
+        {%- for p in search.results limit: 24 -%}
           {%- if p.object_type == "product" -%}
+          {{ synapse_search_sep }}
           {
             id: {{ p.selected_or_first_available_variant.sku | default: p.selected_or_first_available_variant.id | json }},
             name: {{ p.title | json }},
@@ -106,13 +117,33 @@
             product_id: {{ p.id | json }},
             variant_id: {{ p.selected_or_first_available_variant.id | json }},
             position: {{ forloop.index | json }},
-            list: "search results"
-          }{%- unless forloop.last -%},{%- endunless -%}
+            list: "search results",
+            url: {{ p.url | json }}
+          }
+          {%- assign synapse_search_sep = "," -%}
           {%- endif -%}
         {%- endfor -%}
       ]
     }
     {%- endif -%}
+  });
+</script>
+<script>
+  // Checkout web-pixel → storefront dataLayer bridge (Elevar apples-to-apples for GTM).
+  window.addEventListener("message", function (event) {
+    var data = event && event.data;
+    if (!data || data.source !== "gcw-synapse-pixel" || !data.event) return;
+    window.dataLayer = window.dataLayer || [];
+    window.dataLayer.push({ ecommerce: null });
+    window.dataLayer.push({
+      event: data.event,
+      event_id: data.event_id,
+      cart_total: data.cart_total,
+      user_properties: data.user_properties,
+      marketing: data.marketing,
+      ecommerce: data.ecommerce,
+      _synapse: true
+    });
   });
 </script>
 <script src="{{ block.settings.script_url }}" defer fetchpriority="low"></script>
@@ -155,7 +186,7 @@
       "type": "text",
       "id": "script_url",
       "label": "Data layer script URL",
-      "default": "https://gcw-synapse-super.gcwsynapse.workers.dev/gcw-synapse.js?v=1.4.0"
+      "default": "https://gcw-synapse-super.gcwsynapse.workers.dev/gcw-synapse.js?v=1.4.1"
     }
   ]
 }

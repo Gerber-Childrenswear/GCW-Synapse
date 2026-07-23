@@ -51,11 +51,18 @@ function emit(config: SynapseConfig, event: SynapseDataLayerEvent): SynapseDataL
   }
 
   const session = getOrCreateSession();
+  const userProps = event.user_properties ?? buildUserProperties(config);
+  // Elevar GTM: dlv - user_id → marketing.user_id (FB external_id). Prefer customer id, else session.
+  const marketingUserId =
+    userProps.customer_id ||
+    (typeof event.marketing?.user_id === "string" ? event.marketing.user_id : undefined) ||
+    session.session_id;
   const withMarketing: SynapseDataLayerEvent = {
     ...event,
-    user_properties: event.user_properties ?? buildUserProperties(config),
+    user_properties: userProps,
     marketing: {
       landing_site: session.landing_site,
+      user_id: marketingUserId,
       ...(session.utm_source ? { utm_source: session.utm_source } : {}),
       ...(session.utm_medium ? { utm_medium: session.utm_medium } : {}),
       ...(session.utm_campaign ? { utm_campaign: session.utm_campaign } : {}),

@@ -236,16 +236,17 @@ export function getBrowserEventCounts(): {
 
 export function getBrowserParityReport(thresholdPct = 5): BrowserParityReport {
   const counts = getBrowserEventCounts();
-  let volumePaired = 0;
-  let volumeMismatch = 0;
+
+  // Beat-Elevar volume score: how much of Elevar's core funnel Synapse covers.
+  // Synapse-only extras (ahead of Elevar) do not count as mismatch.
+  let elevarVolume = 0;
+  let coveredVolume = 0;
 
   for (const row of counts.by_event) {
     if (!CORE_FUNNEL.has(row.event)) continue;
-    const min = Math.min(row.synapse, row.elevar);
-    const max = Math.max(row.synapse, row.elevar);
-    if (max === 0) continue;
-    volumePaired += max;
-    volumeMismatch += max - min;
+    if (row.elevar === 0) continue;
+    elevarVolume += row.elevar;
+    coveredVolume += Math.min(row.synapse, row.elevar);
   }
 
   // Fuzzy pair Synapse↔Elevar when event_ids differ (normal during dual-run):
@@ -275,12 +276,11 @@ export function getBrowserParityReport(thresholdPct = 5): BrowserParityReport {
     }
   }
 
-  // Prefer volume match for dual-run GO/HOLD — Synapse and Elevar mint different event_ids.
   const volumeMatchPct =
-    volumePaired > 0 ? Number((100 - (volumeMismatch / volumePaired) * 100).toFixed(2)) : 100;
-  const mismatchRate = volumePaired > 0 ? (volumeMismatch / volumePaired) * 100 : 0;
+    elevarVolume > 0 ? Number(((coveredVolume / elevarVolume) * 100).toFixed(2)) : 100;
+  const mismatchRate = elevarVolume > 0 ? Number((((elevarVolume - coveredVolume) / elevarVolume) * 100).toFixed(2)) : 0;
   const matchedRate = volumeMatchPct;
-  const alert = volumePaired > 0 && mismatchRate > thresholdPct;
+  const alert = elevarVolume > 0 && mismatchRate > thresholdPct;
 
   let cartTotalEligible = 0;
   let cartTotalPresent = 0;
@@ -309,13 +309,13 @@ export function getBrowserParityReport(thresholdPct = 5): BrowserParityReport {
 
   return {
     threshold_pct: thresholdPct,
-    mismatch_rate_pct: Number(mismatchRate.toFixed(2)),
+    mismatch_rate_pct: mismatchRate,
     matched_rate_pct: matchedRate,
     volume_match_pct: volumeMatchPct,
     fuzzy_paired: fuzzyPaired,
     cart_total_coverage_pct: cartTotalCoveragePct,
     product_id_coverage_pct: productIdCoveragePct,
-    paired_events: volumePaired,
+    paired_events: elevarVolume,
     synapse_events: counts.synapse_events,
     elevar_events: counts.elevar_events,
     alert_triggered: alert,

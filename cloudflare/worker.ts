@@ -104,6 +104,43 @@ let edgeEventsGenerated = 0;
 let edgeEventsSuppressed = 0;
 let edgeBrowserBeaconsAccepted = 0;
 
+const DUAL_RUN_KV_KEY = "dual-run:v1";
+
+type DualRunFlags = {
+  synapse_enabled: boolean;
+  updated_at?: string;
+};
+
+async function getDualRunFlags(env: CloudflareEnv): Promise<DualRunFlags> {
+  try {
+    const fromKv = await env.SYNAPSE_STATE?.get(DUAL_RUN_KV_KEY, "json");
+    if (fromKv && typeof fromKv === "object") {
+      const row = fromKv as DualRunFlags;
+      return {
+        synapse_enabled: row.synapse_enabled !== false,
+        updated_at: typeof row.updated_at === "string" ? row.updated_at : undefined
+      };
+    }
+  } catch {
+    // default on
+  }
+  return { synapse_enabled: true };
+}
+
+async function setDualRunFlags(
+  env: CloudflareEnv,
+  next: { synapse_enabled: boolean }
+): Promise<DualRunFlags> {
+  const flags: DualRunFlags = {
+    synapse_enabled: next.synapse_enabled,
+    updated_at: new Date().toISOString()
+  };
+  await env.SYNAPSE_STATE?.put(DUAL_RUN_KV_KEY, JSON.stringify(flags), { expirationTtl: 86400 * 30 });
+  return flags;
+}
+
+const SYNAPSE_DISABLED_STUB = `"use strict";(()=>{try{window.Synapse={version:"disabled",getSession:()=>({}),push:()=>{}};console.info("[Synapse] soft-disabled via /ops/dual-run");}catch(e){}})();`;
+
 const ALLOWED_BROWSER_EVENTS = new Set([
   "dl_user_data",
   "dl_view_item",
@@ -705,7 +742,7 @@ async function wireShopToSynapse(
     expires_in: token.expires_in,
     pixel,
     webhooks,
-    cdn: `${appOrigin}/gcw-synapse.js?v=1.4.0`,
+    cdn: `${appOrigin}/gcw-synapse.js?v=1.4.1`,
     beacon: `${appOrigin}/browser/beacon`,
     compatibility_ids: `${appOrigin}/compatibility/ids`
   };
@@ -879,7 +916,7 @@ function buildLaunchReadiness(purchaseParity: ReturnType<typeof getParityModel>,
       id: "browser_parity_threshold",
       status: browserGo ? "pass" : "hold",
       detail: hasVolume
-        ? `dual-run volume match ${volumePct}% (fuzzy=${browserParity.fuzzy_paired ?? 0}, paired=${browserParity.paired_events})`
+        ? `Synapse covers ${volumePct}% of Elevar core funnel (fuzzy=${browserParity.fuzzy_paired ?? 0}, elevar_events=${browserParity.paired_events})`
         : "waiting for storefront traffic (no dual-run volume yet)"
     },
     {
@@ -1370,7 +1407,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
       { id: "shopify_webhook_secret", label: "Shopify webhook HMAC secret", ok: webhookSecret, detail: webhookSecret ? "set" : "missing" },
       { id: "shopify_scopes", label: "Install scopes (lean)", ok: scopes.length > 0 && !scopes.includes("read_all_orders"), detail: scopes },
       { id: "oauth_callback", label: "OAuth callback host", ok: appUrlOk, detail: `${url.origin}/auth/shopify/callback` },
-      { id: "cdn_script", label: "Storefront CDN script", ok: true, detail: `${url.origin}/gcw-synapse.js?v=1.4.0` },
+      { id: "cdn_script", label: "Storefront CDN script", ok: true, detail: `${url.origin}/gcw-synapse.js?v=1.4.1` },
       { id: "browser_beacon", label: "Browser beacon", ok: true, detail: `${url.origin}/browser/beacon` },
       {
         id: "gtm_forward",
@@ -1452,6 +1489,46 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
         500
       );
     }
+  }
+
+  if (request.method === "GET" && url.pathname === "/ops/dual-run") {
+    const flags = await getDualRunFlags(env);
+    return jsonResponse({
+      ok: true,
+      synapse_enabled: flags.synapse_enabled,
+      elevar_note: "Elevar theme embed is controlled in Shopify Theme → App embeds (not via Worker).",
+      updated_at: flags.updated_at ?? null,
+      how_to: {
+        disable_synapse: "POST /ops/dual-run {\"synapse_enabled\":false}",
+        enable_synapse: "POST /ops/dual-run {\"synapse_enabled\":true}"
+      }
+    });
+  }
+
+  if (request.method === "POST" && url.pathname === "/ops/dual-run") {
+    let body: Record<string, unknown> = {};
+    try {
+      body = (await request.json()) as Record<string, unknown>;
+    } catch {
+      body = {};
+    }
+    const enabled =
+      typeof body.synapse_enabled === "boolean"
+        ? body.synapse_enabled
+        : body.synapse === false
+          ? false
+          : body.synapse === true
+            ? true
+            : true;
+    const flags = await setDualRunFlags(env, { synapse_enabled: enabled });
+    return jsonResponse({
+      ok: true,
+      synapse_enabled: flags.synapse_enabled,
+      updated_at: flags.updated_at,
+      note: flags.synapse_enabled
+        ? "Synapse CDN + beacons active"
+        : "Synapse CDN serves noop stub; Elevar unchanged"
+    });
   }
 
   if (request.method === "GET" && url.pathname === "/runtime/summary") {
@@ -2384,6 +2461,18 @@ async function serveAsset(request: Request, env: CloudflareEnv): Promise<Respons
     // Cache the storefront tracking bundle (URL may be unversioned in theme settings).
     // Keep max-age short so dual-run fixes roll out without a theme-editor cache-bust.
     if (url.pathname === "/gcw-synapse.js" || url.pathname.endsWith("/gcw-synapse.js")) {
+      const flags = await getDualRunFlags(env);
+      if (!flags.synapse_enabled) {
+        return addSecurityHeaders(
+          new Response(SYNAPSE_DISABLED_STUB, {
+            status: 200,
+            headers: {
+              "Content-Type": "application/javascript; charset=utf-8",
+              "Cache-Control": "no-store"
+            }
+          })
+        );
+      }
       const headers = new Headers(response.headers);
       headers.set("Cache-Control", "public, max-age=60, stale-while-revalidate=600");
       headers.set("Content-Type", "application/javascript; charset=utf-8");
@@ -2487,6 +2576,22 @@ export default {
       const sourceRaw = typeof payload.source === "string" ? payload.source.toLowerCase() : "";
       const browserSource: "synapse" | "elevar" =
         sourceRaw.includes("elevar") ? "elevar" : "synapse";
+
+      if (browserSource === "synapse") {
+        const flags = await getDualRunFlags(env);
+        if (!flags.synapse_enabled) {
+          return addSecurityHeaders(
+            addCorsHeaders(
+              jsonResponse(
+                { ok: true, accepted: false, disabled: true, source: "synapse" },
+                202
+              ),
+              request,
+              origin ?? undefined
+            )
+          );
+        }
+      }
 
       await hydrateBrowserEventsFromCache(env);
 

@@ -7,7 +7,8 @@ import {
   emitSignUp,
   emitSubscribe,
   emitUserData,
-  emitViewCart
+  emitViewCart,
+  emitViewItem
 } from "./events";
 import { toSynapseProduct } from "./product";
 import type { SynapseConfig, SynapseProduct } from "./types";
@@ -142,7 +143,19 @@ export function attachObservers(config: SynapseConfig): void {
       const url = xhr.__synapseCartUrl || "";
       if (isCartMutateUrl(url)) {
         xhr.addEventListener("load", () => {
-          if (xhr.status >= 200 && xhr.status < 300) void reconcileCart(config);
+          if (xhr.status < 200 || xhr.status >= 300) return;
+          try {
+            if (/\/cart\/add(\.js)?/i.test(url)) {
+              const body = JSON.parse(xhr.responseText) as Record<string, unknown>;
+              const items = Array.isArray(body.items)
+                ? (body.items as Array<Record<string, unknown>>).map(parseCartLine)
+                : [parseCartLine(body)];
+              emitAddToCart(config, items);
+            }
+          } catch {
+            // ignore parse errors
+          }
+          void reconcileCart(config);
         });
       }
       return send.apply(this, args as Parameters<typeof send>);
@@ -157,6 +170,10 @@ export function attachObservers(config: SynapseConfig): void {
       const action = (form.getAttribute("action") || "").toLowerCase();
       if (action.includes("/cart/add") && config.product) {
         const v = config.product.selectedVariant;
+        const qtyInput = form.querySelector<HTMLInputElement>(
+          'input[name="quantity"], input[name="qty"], [name="quantity"]'
+        );
+        const qty = Math.max(1, Number.parseInt(qtyInput?.value || "1", 10) || 1);
         emitAddToCart(config, [
           toSynapseProduct({
             sku: v.sku,
@@ -165,7 +182,7 @@ export function attachObservers(config: SynapseConfig): void {
             category: config.product.type,
             variant: v.title,
             price: v.price,
-            quantity: 1,
+            quantity: qty,
             productId: config.product.id,
             variantId: v.id,
             compareAtPrice: v.compareAtPrice,
@@ -259,4 +276,44 @@ export function attachObservers(config: SynapseConfig): void {
     if (detail.email) emitSubscribe(config, "email", { email: detail.email });
     if (detail.phone) emitSubscribe(config, "phone", { phone: detail.phone });
   }) as EventListener);
+
+  // Elevar: re-fire dl_view_item when shopper changes variant on PDP.
+  if (config.product) {
+    const syncVariantFromDom = (): void => {
+      if (!config.product) return;
+      const idInput = document.querySelector<HTMLInputElement>(
+        'form[action*="/cart/add"] [name="id"], form[action*="/cart/add"] [name="variant_id"]'
+      );
+      const variantId = idInput?.value ? Number.parseInt(idInput.value, 10) : NaN;
+      if (!Number.isFinite(variantId) || variantId === config.product.selectedVariant.id) return;
+
+      const priceEl = document.querySelector(
+        "[data-product-price], .price__regular .price-item--regular, .product__price .price"
+      );
+      const priceText = (priceEl?.textContent || "").replace(/[^0-9.]/g, "");
+      config.product.selectedVariant = {
+        ...config.product.selectedVariant,
+        id: variantId,
+        price: priceText || config.product.selectedVariant.price
+      };
+      emitViewItem(config);
+    };
+
+    document.addEventListener("change", (event) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (
+        target.matches(
+          'form[action*="/cart/add"] [name="id"], form[action*="/cart/add"] input[type="radio"], form[action*="/cart/add"] select'
+        )
+      ) {
+        syncVariantFromDom();
+      }
+    });
+
+    // Theme / section re-renders often update history or fire custom events.
+    window.addEventListener("popstate", syncVariantFromDom);
+    document.addEventListener("variant:change", syncVariantFromDom as EventListener);
+    document.addEventListener("product:change", syncVariantFromDom as EventListener);
+  }
 }

@@ -529,7 +529,7 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
             {(data?.totals.critical_causes ?? 0) > 0
               ? "Blocked by critical destination causes"
               : browserParityHold
-                ? "HOLD — browser dual-run volume below 80%"
+                ? "HOLD — Synapse behind Elevar on core funnel volume"
                 : launchStatus === "READY"
                   ? "Connected — waiting for storefront dual-run traffic"
                   : "GO / HOLD from readiness + browser parity"}
@@ -541,7 +541,9 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
         <div className="dual-run-panel">
           <div className="dual-run-block">
             <h3>Synapse vs Elevar (browser)</h3>
-            <p className="muted">Live dual-run volume — Synapse should match or exceed Elevar per event.</p>
+            <p className="muted">
+              Synapse coverage of Elevar core funnel — ahead of Elevar is GO; lagging Elevar is HOLD.
+            </p>
             {browserParity ? (
               <p className="field-coverage muted">
                 Field coverage: cart_total {formatPct(browserParity.cart_total_coverage_pct)} · product ids{" "}

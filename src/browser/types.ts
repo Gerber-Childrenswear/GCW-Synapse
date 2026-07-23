@@ -27,8 +27,10 @@ export type SynapseUserProperties = {
   customer_total_spent?: string;
   customer_address_1?: string;
   customer_city?: string;
+  customer_province?: string;
   customer_province_code?: string;
   customer_zip?: string;
+  customer_country?: string;
   customer_country_code?: string;
 };
 
@@ -48,6 +50,13 @@ export type SynapseConfig = {
     phone?: string | null;
     orderCount?: number;
     totalSpent?: string;
+    address1?: string | null;
+    city?: string | null;
+    province?: string | null;
+    provinceCode?: string | null;
+    zip?: string | null;
+    country?: string | null;
+    countryCode?: string | null;
   };
   page?: {
     type?: string;
@@ -95,6 +104,7 @@ export type SynapseDataLayerEvent = {
   user_properties?: SynapseUserProperties;
   marketing?: {
     landing_site?: string;
+    user_id?: string;
     utm_source?: string;
     utm_medium?: string;
     utm_campaign?: string;

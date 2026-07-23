@@ -84,7 +84,7 @@ test("browser parity reports cart_total coverage for Synapse funnel events", () 
   assert.equal(report.product_id_coverage_pct, 100);
 });
 
-test("browser parity alerts when volumes diverge", () => {
+test("browser parity alerts when Synapse lags Elevar volume", () => {
   resetBrowserEventsForTests();
 
   for (let i = 0; i < 10; i += 1) {
@@ -108,4 +108,36 @@ test("browser parity alerts when volumes diverge", () => {
   const report = getBrowserParityReport(5);
   assert.equal(report.alert_triggered, true);
   assert.equal(report.status, "alert");
+  assert.equal(report.volume_match_pct, 10);
+});
+
+test("browser parity does not alert when Synapse exceeds Elevar", () => {
+  resetBrowserEventsForTests();
+  const now = new Date().toISOString();
+
+  for (let i = 0; i < 3; i += 1) {
+    ingestBrowserEvent({
+      source: "elevar",
+      shop: "gcw-dev.myshopify.com",
+      event: "dl_view_item",
+      event_id: `el-${i}`,
+      observed_at: now,
+      ecommerce: { detail: { products: [{ id: `S-${i}` }] } }
+    });
+  }
+  for (let i = 0; i < 8; i += 1) {
+    ingestBrowserEvent({
+      source: "synapse",
+      shop: "gcw-dev.myshopify.com",
+      event: "dl_view_item",
+      event_id: `syn-${i}`,
+      observed_at: now,
+      ecommerce: { detail: { products: [{ id: `S-${i}` }] } }
+    });
+  }
+
+  const report = getBrowserParityReport(5);
+  assert.equal(report.alert_triggered, false);
+  assert.equal(report.status, "ok");
+  assert.equal(report.volume_match_pct, 100);
 });

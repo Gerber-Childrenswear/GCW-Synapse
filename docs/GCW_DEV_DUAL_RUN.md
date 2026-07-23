@@ -7,7 +7,7 @@ Dev store only — both stacks stay **on** so we can compare.
 | Piece | State |
 |---|---|
 | Elevar app embed | **ON** (do not disable yet) |
-| Synapse theme embed | **ON** — script `gcw-synapse.js?v=1.4.0`, beacon 100% |
+| Synapse theme embed | **ON** — script `gcw-synapse.js?v=1.4.1`, beacon 100% |
 | Synapse web pixel | **ON** — checkout → `/browser/beacon` |
 | Purchase webhooks | **ON** → Worker |
 | Worker `RUNTIME_MODE` | **`forward`** — purchases post to sGTM (`GTM_SERVER_URL`) |
@@ -26,11 +26,11 @@ Web GTM stays `GTM-TKW58K8` on this storefront; sGTM is `GTM-N45F3JCC` via the l
 
 In **Theme → App embeds → GCW Synapse**, set script URL to:
 
-`https://gcw-synapse-super.gcwsynapse.workers.dev/gcw-synapse.js?v=1.4.0`
+`https://gcw-synapse-super.gcwsynapse.workers.dev/gcw-synapse.js?v=1.4.1`
 
 Beacon sample rate: **100%**. Keep Elevar enabled.
 
-## v1.4.0 beat-Elevar field parity
+## v1.4.1 beat-Elevar field parity
 
 - `cart_total` on ATC / remove / view_cart / checkout steps / purchase
 - `ecommerce.currency` + `currencyCode` (GTM vars that read either)
@@ -49,3 +49,18 @@ Launch GO uses **volume match** (and fuzzy product pairing), not identical `even
 Hardening (v1.3.1+): ATC form+fetch dedupe, Elevarmirror once-only + event_id dedupe, beacon 429/5xx retry, skip password-page boot, Worker beacon retry dedupe.
 
 When paired volume ≥ ~80% and purchase forward looks good, disable Elevar embed on gcw-dev only (see `GCW_DEV_GTM_WIRING.md`).
+
+
+## Soft kill switch (Synapse only)
+
+- Status: `GET /ops/dual-run`
+- Disable Synapse CDN+beacons (Elevar untouched): `POST /ops/dual-run {"synapse_enabled":false}`
+- Re-enable: `POST /ops/dual-run {"synapse_enabled":true}`
+
+## v1.4.1 parity
+
+- Volume score = Synapse coverage of Elevar (ahead is GO)
+- `marketing.user_id` on every dl_*
+- Web pixel: strip Shopify GIDs, richer purchase actionField, currency alias, parent postMessage bridge
+- Variant change re-fires `dl_view_item`; ATC qty + XHR ATC
+- Logged-in address fields in theme config

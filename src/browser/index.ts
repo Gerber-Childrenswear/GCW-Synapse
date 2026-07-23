@@ -12,7 +12,7 @@ import {
 } from "./events";
 import type { SynapseConfig, SynapseDataLayerEvent } from "./types";
 
-const VERSION = "1.4.0";
+const VERSION = "1.4.1";
 
 function isPasswordGatePage(config: SynapseConfig): boolean {
   const type = (config.page?.type || "").toLowerCase();
