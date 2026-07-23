@@ -54,6 +54,13 @@ body {
 }
 
 .sidebar {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
+  max-height: 100vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background:
     radial-gradient(ellipse 80% 50% at 10% 0%, rgba(61, 214, 255, 0.18), transparent 55%),
     radial-gradient(ellipse 70% 45% at 90% 20%, rgba(177, 75, 255, 0.22), transparent 50%),
@@ -63,6 +70,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 20px;
+  z-index: 20;
 }
 
 .brand {
@@ -1090,6 +1098,9 @@ pre {
   }
 
   .sidebar {
+    position: static;
+    height: auto;
+    max-height: none;
     border-bottom: 1px solid rgba(148, 163, 184, 0.35);
   }
 
@@ -1169,19 +1180,23 @@ pre {
 }
 
 .platforms-hero-brand {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 12px;
-  padding: 0 0 18px;
+  display: grid;
+  grid-template-columns: minmax(220px, 38%) 1fr;
+  align-items: center;
+  gap: 16px 20px;
+  padding: 10px 18px;
   border: 1px solid rgba(61, 214, 255, 0.18);
-  border-radius: 0;
-  margin: -8px -8px 0;
-  background: var(--synapse-navy);
+  border-radius: 14px;
+  margin: 0;
+  background:
+    radial-gradient(ellipse 50% 120% at 12% 50%, rgba(61, 214, 255, 0.16), transparent 55%),
+    radial-gradient(ellipse 40% 100% at 36% 50%, rgba(177, 75, 255, 0.2), transparent 50%),
+    var(--synapse-navy);
   color: #e8f0fa;
   overflow: hidden;
   position: relative;
   min-height: 0;
-  justify-content: flex-end;
+  max-height: 112px;
 }
 
 .platforms-hero-brand::before {
@@ -1193,30 +1208,60 @@ pre {
   z-index: 1;
   max-width: none;
   width: 100%;
+  height: 88px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
 }
 
-.platforms-hero-logo {
+.platforms-hero-logo.synapse-logo-hero,
+.platforms-hero-brand-mark .synapse-logo-hero {
+  height: 100%;
   width: 100%;
-  height: auto;
-  display: block;
+}
+
+.platforms-hero-brand-mark .synapse-logo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: left center;
+}
+
+.platforms-hero-brand-mark .synapse-fire {
+  /* Keep fire overlays aligned to the cropped banner mark */
+  inset: 0;
+}
+
+.platforms-hero-copy {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
 }
 
 .platforms-hero-tagline {
-  position: relative;
-  z-index: 1;
   margin: 0;
   max-width: 42rem;
-  padding: 0 24px;
+  padding: 0;
   color: rgba(200, 214, 232, 0.88);
-  font-size: 15px;
-  line-height: 1.45;
+  font-size: 13px;
+  line-height: 1.35;
 }
 
 .platforms-hero-brand .platforms-hero-actions {
   position: relative;
   z-index: 1;
   justify-content: flex-start;
-  padding: 0 24px;
+  padding: 0;
+  gap: 8px;
+}
+
+.platforms-hero-brand .platforms-hero-actions .primary,
+.platforms-hero-brand .platforms-hero-actions .secondary {
+  padding: 7px 12px;
+  font-size: 13px;
 }
 
 .platforms-hero-brand .primary {
@@ -2199,11 +2244,21 @@ button.secondary:disabled {
 
 @media (max-width: 800px) {
   .platforms-hero,
+  .platforms-hero-brand,
   .setup-banner,
   .platform-card-head,
   .platform-grid {
     flex-direction: column;
     grid-template-columns: 1fr;
+  }
+
+  .platforms-hero-brand {
+    max-height: none;
+    padding: 12px 14px;
+  }
+
+  .platforms-hero-brand-mark {
+    height: 72px;
   }
 
   .summary-strip,

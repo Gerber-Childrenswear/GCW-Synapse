@@ -443,31 +443,33 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
   return (
     <section className="platforms-dashboard">
       <div className="platforms-hero platforms-hero-brand">
-        <div className="platforms-hero-brand-mark" aria-hidden={false}>
+        <div className="platforms-hero-brand-mark">
           <SynapseLogo variant="full" className="platforms-hero-logo" />
         </div>
-        <p className="platforms-hero-tagline">
-          Browser ↔ server health, confirmed dedupe, and exact destination causes — replacing Elevar.
-        </p>
-        <div className="platforms-hero-actions">
-          <button type="button" className="primary" onClick={onRefresh} disabled={loading}>
-            {loading ? "Refreshing…" : "Refresh"}
-          </button>
-          <button type="button" className="secondary" onClick={() => void handleSeedDemo()} disabled={seeding}>
-            {seeding ? "Seeding…" : "Load healthy sample"}
-          </button>
-          <label className="toggle">
-            <input type="checkbox" checked={showIdle} onChange={(e) => setShowIdle(e.target.checked)} />
-            <span>Show idle</span>
-          </label>
-          <label className="toggle">
-            <input
-              type="checkbox"
-              checked={onlyMonitored}
-              onChange={(e) => setOnlyMonitored(e.target.checked)}
-            />
-            <span>Monitored only</span>
-          </label>
+        <div className="platforms-hero-copy">
+          <p className="platforms-hero-tagline">
+            Browser ↔ server health, confirmed dedupe, and exact destination causes — replacing Elevar.
+          </p>
+          <div className="platforms-hero-actions">
+            <button type="button" className="primary" onClick={onRefresh} disabled={loading}>
+              {loading ? "Refreshing…" : "Refresh"}
+            </button>
+            <button type="button" className="secondary" onClick={() => void handleSeedDemo()} disabled={seeding}>
+              {seeding ? "Seeding…" : "Load healthy sample"}
+            </button>
+            <label className="toggle">
+              <input type="checkbox" checked={showIdle} onChange={(e) => setShowIdle(e.target.checked)} />
+              <span>Show idle</span>
+            </label>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={onlyMonitored}
+                onChange={(e) => setOnlyMonitored(e.target.checked)}
+              />
+              <span>Monitored only</span>
+            </label>
+          </div>
         </div>
       </div>
 
