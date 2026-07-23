@@ -2,6 +2,7 @@ import "./types";
 import { getOrCreateSession, syncCartAttributes } from "./session";
 import { pushDataLayerEvent } from "./push";
 import { attachObservers } from "./observers";
+import { attachElevarMirror } from "./elevarMirror";
 import {
   emitUserData,
   emitViewItem,
@@ -11,7 +12,7 @@ import {
 } from "./events";
 import type { SynapseConfig, SynapseDataLayerEvent } from "./types";
 
-const VERSION = "1.1.0";
+const VERSION = "1.3.0";
 
 function boot(): void {
   const config = window.SynapseConfig;
@@ -33,6 +34,9 @@ function boot(): void {
       pushDataLayerEvent(event, { shop: config.shop, debug: Boolean(config.debug) });
     }
   };
+
+  // Dual-run: mirror Elevar (non-Synapse) dl_* into Worker before we emit.
+  attachElevarMirror(config);
 
   // Base page event first (Elevar contract).
   emitUserData(config);

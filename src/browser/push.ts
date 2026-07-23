@@ -25,8 +25,9 @@ export function pushDataLayerEvent(
   };
 
   // Elevar-compatible shape on the GTM dataLayer.
+  // `_synapse` lets the dual-run mirror ignore our own pushes when scoring Elevar.
   window.dataLayer.push({ ecommerce: null });
-  window.dataLayer.push({ ...withId });
+  window.dataLayer.push({ ...withId, _synapse: true });
   window.SynapseDataLayer.push({ ...withId });
 
   if (options?.debug) {

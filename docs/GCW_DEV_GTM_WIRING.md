@@ -10,7 +10,7 @@ sGTM collect host observed from page traffic:
 
 `https://server-side-tagging-he5lc7bj4a-uc.a.run.app/g/collect`
 
-Worker secret `GTM_SERVER_URL` is set to that URL (shadow mode still default until purchase parity is green).
+Worker secret `GTM_SERVER_URL` is set to that URL. Worker `RUNTIME_MODE` is **`forward`** on gcw-dev so Synapse purchases also hit sGTM while Elevar stays on for side-by-side (`docs/GCW_DEV_DUAL_RUN.md`).
 
 ## Companion import
 

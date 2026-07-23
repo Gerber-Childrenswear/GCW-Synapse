@@ -79,7 +79,7 @@ export function sendBeacon(
   shop: string,
   event: SynapseDataLayerEvent,
   session: SynapseSession,
-  sampleRate = 0.2
+  sampleRate = 1
 ): void {
   if (!beaconUrl) return;
   if (typeof fetch === "undefined" && typeof navigator === "undefined") return;

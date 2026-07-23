@@ -8,7 +8,7 @@
     shop: {{ shop.permanent_domain | json }},
     currency: {{ cart.currency.iso_code | default: shop.currency | json }},
     beaconUrl: {{ block.settings.beacon_url | default: "https://gcw-synapse-super.gcwsynapse.workers.dev/browser/beacon" | json }},
-    beaconSampleRate: ({{ block.settings.beacon_sample_rate_pct | default: 20 }} / 100),
+    beaconSampleRate: ({{ block.settings.beacon_sample_rate_pct | default: 100 }} / 100),
     debug: {{ block.settings.debug | json }},
     enabled: {{ block.settings.enabled | json }},
     customer: {
@@ -149,7 +149,7 @@
       "type": "text",
       "id": "script_url",
       "label": "Data layer script URL",
-      "default": "https://gcw-synapse-super.gcwsynapse.workers.dev/gcw-synapse.js?v=1.2.0"
+      "default": "https://gcw-synapse-super.gcwsynapse.workers.dev/gcw-synapse.js?v=1.3.0"
     }
   ]
 }

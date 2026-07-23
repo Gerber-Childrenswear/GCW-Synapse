@@ -705,7 +705,7 @@ async function wireShopToSynapse(
     expires_in: token.expires_in,
     pixel,
     webhooks,
-    cdn: `${appOrigin}/gcw-synapse.js?v=1.2.0`,
+    cdn: `${appOrigin}/gcw-synapse.js?v=1.3.0`,
     beacon: `${appOrigin}/browser/beacon`,
     compatibility_ids: `${appOrigin}/compatibility/ids`
   };
@@ -1366,7 +1366,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
       { id: "shopify_webhook_secret", label: "Shopify webhook HMAC secret", ok: webhookSecret, detail: webhookSecret ? "set" : "missing" },
       { id: "shopify_scopes", label: "Install scopes (lean)", ok: scopes.length > 0 && !scopes.includes("read_all_orders"), detail: scopes },
       { id: "oauth_callback", label: "OAuth callback host", ok: appUrlOk, detail: `${url.origin}/auth/shopify/callback` },
-      { id: "cdn_script", label: "Storefront CDN script", ok: true, detail: `${url.origin}/gcw-synapse.js?v=1.2.0` },
+      { id: "cdn_script", label: "Storefront CDN script", ok: true, detail: `${url.origin}/gcw-synapse.js?v=1.3.0` },
       { id: "browser_beacon", label: "Browser beacon", ok: true, detail: `${url.origin}/browser/beacon` },
       {
         id: "gtm_forward",
@@ -2474,9 +2474,13 @@ export default {
           ? (payload.marketing as { session_id?: string; landing_site?: string })
           : undefined;
 
+      const sourceRaw = typeof payload.source === "string" ? payload.source.toLowerCase() : "";
+      const browserSource: "synapse" | "elevar" =
+        sourceRaw.includes("elevar") ? "elevar" : "synapse";
+
       await hydrateBrowserEventsFromCache(env);
       const ingested = ingestBrowserEvent({
-        source: "synapse",
+        source: browserSource,
         shop,
         event: eventName,
         event_id: eventId,
@@ -2488,7 +2492,7 @@ export default {
 
       const record = {
         receivedAt: ingested.observed_at,
-        source: "edge-browser-beacon",
+        source: browserSource === "elevar" ? "edge-elevar-mirror" : "edge-browser-beacon",
         shop,
         event: eventName,
         event_id: eventId,
@@ -2508,9 +2512,11 @@ export default {
       edgeBrowserBeaconsAccepted += 1;
       edgeEventsGenerated += 1;
       await persistBrowserEventsToCache(env);
-      await hydrateChannelEventsFromCache(env);
-      recordSynapseBrowserChannel(eventName, eventId, shop);
-      await persistChannelEventsToCache(env);
+      if (browserSource === "synapse") {
+        await hydrateChannelEventsFromCache(env);
+        recordSynapseBrowserChannel(eventName, eventId, shop);
+        await persistChannelEventsToCache(env);
+      }
 
       return addSecurityHeaders(
         addCorsHeaders(
@@ -2520,6 +2526,7 @@ export default {
               accepted: true,
               key: ingested.key,
               event: eventName,
+              source: browserSource,
               ingested: true
             },
             202
