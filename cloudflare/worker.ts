@@ -945,19 +945,71 @@ function getParityModel() {
   };
 }
 
-const CHANNEL_CACHE_URL = "https://gcw-synapse-super.internal/channel-events-v2";
+const CHANNEL_CACHE_URL = "https://gcw-synapse-super.internal/channel-events-v3";
 const BROWSER_CACHE_URL = "https://gcw-synapse-super.internal/browser-events-v1";
 const BROWSER_KV_KEY = "browser-events-v1";
-const CHANNEL_KV_KEY = "channel-events-v2";
+const CHANNEL_KV_KEY = "channel-events-v3";
+/** Once-per-isolate: avoid re-ingesting KV/Cache into channel health on every request. */
+let channelEventsHydrated = false;
+
+function channelEventFingerprint(event: Record<string, unknown>): string {
+  return [
+    String(event.channel ?? ""),
+    String(event.surface ?? ""),
+    String(event.event_name ?? ""),
+    String(event.event_id ?? ""),
+    String(event.transaction_id ?? ""),
+    String(event.observed_at ?? ""),
+    String(event.status ?? ""),
+    String(event.destination ?? "")
+  ].join("|");
+}
+
+async function readChannelEventsFromStore(env?: CloudflareEnv): Promise<Array<Record<string, unknown>>> {
+  try {
+    const fromKv = await env?.SYNAPSE_STATE?.get(CHANNEL_KV_KEY, "json");
+    if (Array.isArray(fromKv)) {
+      return fromKv as Array<Record<string, unknown>>;
+    }
+    const cached = await caches.default.match(CHANNEL_CACHE_URL);
+    if (cached) {
+      const parsed = (await cached.json()) as Array<Record<string, unknown>>;
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
+async function writeChannelEventsToStore(
+  env: CloudflareEnv | undefined,
+  events: Array<Record<string, unknown>>
+): Promise<void> {
+  const body = JSON.stringify(events);
+  await caches.default.put(
+    CHANNEL_CACHE_URL,
+    new Response(body, {
+      headers: {
+        "content-type": "application/json",
+        "cache-control": "max-age=86400"
+      }
+    })
+  );
+  await env?.SYNAPSE_STATE?.put(CHANNEL_KV_KEY, body, { expirationTtl: 86400 });
+}
 
 async function clearChannelEventsCache(env?: CloudflareEnv): Promise<void> {
   try {
-    await caches.default.delete(CHANNEL_CACHE_URL);
-    // Also drop legacy v1 cache that held demo-seed errors.
+    // Overwrite with empty so hydrate cannot revive orphans via a Cache delete race.
+    await writeChannelEventsToStore(env, []);
+    channelEventsHydrated = true;
     await caches.default.delete("https://gcw-synapse-super.internal/channel-events-v1");
+    await caches.default.delete("https://gcw-synapse-super.internal/channel-events-v2");
     await caches.default.delete(BROWSER_CACHE_URL);
     await env?.SYNAPSE_STATE?.delete(BROWSER_KV_KEY);
-    await env?.SYNAPSE_STATE?.delete(CHANNEL_KV_KEY);
+    await env?.SYNAPSE_STATE?.delete("channel-events-v1");
+    await env?.SYNAPSE_STATE?.delete("channel-events-v2");
   } catch {
     // ignore
   }
@@ -1005,55 +1057,53 @@ async function hydrateBrowserEventsFromCache(env?: CloudflareEnv): Promise<void>
   }
 }
 
+function ingestStoredChannelEvent(event: Record<string, unknown>): void {
+  if (typeof event.channel !== "string" || typeof event.event_name !== "string") return;
+  ingestChannelEvent({
+    channel: event.channel,
+    surface: (event.surface as "pixel" | "server" | "runtime" | "webhook") || "pixel",
+    destination: typeof event.destination === "string" ? event.destination : "unknown",
+    pixel_id: typeof event.pixel_id === "string" ? event.pixel_id : undefined,
+    event_name: event.event_name,
+    event_id: typeof event.event_id === "string" ? event.event_id : undefined,
+    transaction_id: typeof event.transaction_id === "string" ? event.transaction_id : undefined,
+    status: event.status === "error" ? "error" : "ok",
+    error_message: typeof event.error_message === "string" ? event.error_message : undefined,
+    observed_at: typeof event.observed_at === "string" ? event.observed_at : new Date().toISOString()
+  });
+}
+
 async function persistChannelEventsToCache(env?: CloudflareEnv): Promise<void> {
   try {
-    await hydrateChannelEventsFromCache(env);
-    const events = getRecentChannelEvents(500);
-    const body = JSON.stringify(events);
-    await caches.default.put(
-      CHANNEL_CACHE_URL,
-      new Response(body, {
-        headers: {
-          "content-type": "application/json",
-          "cache-control": "max-age=86400"
-        }
-      })
+    // Merge remote-only rows (other isolates) without full re-ingest of local copies.
+    const remote = await readChannelEventsFromStore(env);
+    const localFp = new Set(
+      getRecentChannelEvents(500).map((event) => channelEventFingerprint(event as unknown as Record<string, unknown>))
     );
-    await env?.SYNAPSE_STATE?.put(CHANNEL_KV_KEY, body, { expirationTtl: 86400 });
+    for (const event of remote.slice().reverse()) {
+      const fp = channelEventFingerprint(event);
+      if (localFp.has(fp)) continue;
+      ingestStoredChannelEvent(event);
+      localFp.add(fp);
+    }
+    channelEventsHydrated = true;
+    await writeChannelEventsToStore(
+      env,
+      getRecentChannelEvents(500) as unknown as Array<Record<string, unknown>>
+    );
   } catch {
     // Cache API may be unavailable in some runtimes; ignore.
   }
 }
 
 async function hydrateChannelEventsFromCache(env?: CloudflareEnv): Promise<void> {
+  if (channelEventsHydrated) return;
   try {
-    let events: Array<Record<string, unknown>> | null = null;
-    const fromKv = await env?.SYNAPSE_STATE?.get(CHANNEL_KV_KEY, "json");
-    if (Array.isArray(fromKv)) {
-      events = fromKv as Array<Record<string, unknown>>;
-    } else {
-      const cached = await caches.default.match(CHANNEL_CACHE_URL);
-      if (cached) {
-        const parsed = (await cached.json()) as Array<Record<string, unknown>>;
-        if (Array.isArray(parsed)) events = parsed;
-      }
-    }
-    if (!events?.length) return;
+    const events = await readChannelEventsFromStore(env);
     for (const event of events.slice().reverse()) {
-      if (typeof event.channel !== "string" || typeof event.event_name !== "string") continue;
-      ingestChannelEvent({
-        channel: event.channel,
-        surface: (event.surface as "pixel" | "server" | "runtime" | "webhook") || "pixel",
-        destination: typeof event.destination === "string" ? event.destination : "unknown",
-        pixel_id: typeof event.pixel_id === "string" ? event.pixel_id : undefined,
-        event_name: event.event_name,
-        event_id: typeof event.event_id === "string" ? event.event_id : undefined,
-        transaction_id: typeof event.transaction_id === "string" ? event.transaction_id : undefined,
-        status: event.status === "error" ? "error" : "ok",
-        error_message: typeof event.error_message === "string" ? event.error_message : undefined,
-        observed_at: typeof event.observed_at === "string" ? event.observed_at : new Date().toISOString()
-      });
+      ingestStoredChannelEvent(event);
     }
+    channelEventsHydrated = true;
   } catch {
     // ignore hydrate failures
   }
@@ -1336,6 +1386,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
   if (request.method === "POST" && url.pathname === "/ops/reset-health") {
     resetChannelHealth();
     resetBrowserEventsForTests();
+    channelEventsHydrated = false;
     edgeWebhookLog.length = 0;
     edgeShadowComparisons.length = 0;
     edgeChannelEvents.length = 0;
@@ -1347,7 +1398,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
     return jsonResponse({
       ok: true,
       status: "reset",
-      message: "Cleared in-memory health, browser parity, and demo-seed cache"
+      message: "Cleared in-memory health, browser parity, and channel-events KV/cache (v3)"
     });
   }
 
