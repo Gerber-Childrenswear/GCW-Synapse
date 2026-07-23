@@ -455,7 +455,7 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
             {loading ? "Refreshing…" : "Refresh"}
           </button>
           <button type="button" className="secondary" onClick={() => void handleSeedDemo()} disabled={seeding}>
-            {seeding ? "Loading sample…" : "Load sample traffic"}
+            {seeding ? "Seeding…" : "Load healthy sample"}
           </button>
           <label className="toggle">
             <input type="checkbox" checked={showIdle} onChange={(e) => setShowIdle(e.target.checked)} />

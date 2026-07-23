@@ -407,7 +407,7 @@ export async function wireShop(shop = "gcw-dev.myshopify.com"): Promise<Record<s
 }
 
 export async function seedDemoPlatformTraffic(): Promise<{ ok: boolean; seeded: number }> {
-  return requestJson<{ ok: boolean; seeded: number }>("/compare/demo-seed", "POST");
+  return requestJson<{ ok: boolean; seeded: number }>("/compare/demo-seed?scenario=healthy", "POST");
 }
 
 export async function getPlatformMatrix(): Promise<PlatformMatrix> {
