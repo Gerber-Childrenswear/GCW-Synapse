@@ -30,7 +30,7 @@ export type SynapseConfig = {
   shop: string;
   currency: string;
   beaconUrl?: string;
-  /** Fraction of non-funnel events mirrored to Worker (0–1). Default 0.2. GTM uses dataLayer either way. */
+  /** Fraction of non-funnel events mirrored to Worker (0–1). Default 1 during dual-run. GTM uses dataLayer either way. */
   beaconSampleRate?: number;
   debug?: boolean;
   enabled?: boolean;
