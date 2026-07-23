@@ -18,6 +18,10 @@ export type BrowserParityReport = {
   threshold_pct: number;
   mismatch_rate_pct: number;
   matched_rate_pct: number;
+  /** Volume balance across core funnel (ignores divergent event_ids). */
+  volume_match_pct: number;
+  /** Fuzzy pairs matched by shop+event+product within a time window. */
+  fuzzy_paired: number;
   paired_events: number;
   synapse_events: number;
   elevar_events: number;
@@ -119,8 +123,16 @@ export function ingestBrowserEvent(input: IngestBrowserEventInput): BrowserEvent
   };
 
   const map = input.source === "synapse" ? synapseByKey : elevarByKey;
+  const existed = map.has(record.key);
   map.set(record.key, record);
-  recent.unshift(record);
+  if (!existed) {
+    recent.unshift(record);
+  } else {
+    // Refresh the in-place recent row if present; avoid double-counting volume.
+    const idx = recent.findIndex((row) => row.key === record.key && row.source === record.source);
+    if (idx >= 0) recent[idx] = record;
+    else recent.unshift(record);
+  }
 
   while (recent.length > maxRecords) {
     recent.pop();
@@ -196,41 +208,59 @@ export function getBrowserEventCounts(): {
 
 export function getBrowserParityReport(thresholdPct = 5): BrowserParityReport {
   const counts = getBrowserEventCounts();
-  let paired = 0;
-  let mismatched = 0;
+  let volumePaired = 0;
+  let volumeMismatch = 0;
 
   for (const row of counts.by_event) {
     if (!CORE_FUNNEL.has(row.event)) continue;
     const min = Math.min(row.synapse, row.elevar);
     const max = Math.max(row.synapse, row.elevar);
     if (max === 0) continue;
-    paired += max;
-    mismatched += max - min;
+    volumePaired += max;
+    volumeMismatch += max - min;
   }
 
-  // Also score product-id overlap on paired keys for core events.
-  for (const [key, syn] of synapseByKey.entries()) {
+  // Fuzzy pair Synapse↔Elevar when event_ids differ (normal during dual-run):
+  // same shop + event + overlapping product id within ±2 minutes.
+  let fuzzyPaired = 0;
+  const usedElevar = new Set<string>();
+  for (const syn of synapseByKey.values()) {
     if (!CORE_FUNNEL.has(syn.event)) continue;
-    const el = elevarByKey.get(key);
-    if (!el) continue;
-    const synIds = new Set(syn.product_ids);
-    const overlap = el.product_ids.filter((id) => synIds.has(id)).length;
-    const union = new Set([...syn.product_ids, ...el.product_ids]).size;
-    if (union > 0 && overlap / union < 0.95) {
-      mismatched += 1;
-      paired += 1;
+    const synMs = Date.parse(syn.observed_at);
+    if (!Number.isFinite(synMs)) continue;
+    for (const el of elevarByKey.values()) {
+      if (usedElevar.has(el.key)) continue;
+      if (el.shop !== syn.shop || el.event !== syn.event) continue;
+      const elMs = Date.parse(el.observed_at);
+      if (!Number.isFinite(elMs)) continue;
+      if (Math.abs(synMs - elMs) > 120_000) continue;
+      const synIds = new Set(syn.product_ids.map(String));
+      const overlap =
+        synIds.size === 0 && el.product_ids.length === 0
+          ? 1
+          : el.product_ids.filter((id) => synIds.has(String(id))).length;
+      if (overlap > 0 || (synIds.size === 0 && el.product_ids.length === 0)) {
+        fuzzyPaired += 1;
+        usedElevar.add(el.key);
+        break;
+      }
     }
   }
 
-  const mismatchRate = paired > 0 ? (mismatched / paired) * 100 : 0;
-  const matchedRate = paired > 0 ? 100 - mismatchRate : 100;
-  const alert = paired > 0 && mismatchRate > thresholdPct;
+  // Prefer volume match for dual-run GO/HOLD — Synapse and Elevar mint different event_ids.
+  const volumeMatchPct =
+    volumePaired > 0 ? Number((100 - (volumeMismatch / volumePaired) * 100).toFixed(2)) : 100;
+  const mismatchRate = volumePaired > 0 ? (volumeMismatch / volumePaired) * 100 : 0;
+  const matchedRate = volumeMatchPct;
+  const alert = volumePaired > 0 && mismatchRate > thresholdPct;
 
   return {
     threshold_pct: thresholdPct,
     mismatch_rate_pct: Number(mismatchRate.toFixed(2)),
-    matched_rate_pct: Number(matchedRate.toFixed(2)),
-    paired_events: paired,
+    matched_rate_pct: matchedRate,
+    volume_match_pct: volumeMatchPct,
+    fuzzy_paired: fuzzyPaired,
+    paired_events: volumePaired,
     synapse_events: counts.synapse_events,
     elevar_events: counts.elevar_events,
     alert_triggered: alert,

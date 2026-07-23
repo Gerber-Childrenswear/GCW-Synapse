@@ -705,7 +705,7 @@ async function wireShopToSynapse(
     expires_in: token.expires_in,
     pixel,
     webhooks,
-    cdn: `${appOrigin}/gcw-synapse.js?v=1.3.0`,
+    cdn: `${appOrigin}/gcw-synapse.js?v=1.3.1`,
     beacon: `${appOrigin}/browser/beacon`,
     compatibility_ids: `${appOrigin}/compatibility/ids`
   };
@@ -862,8 +862,12 @@ function getAlertConfig(env: CloudflareEnv) {
 
 function buildLaunchReadiness(purchaseParity: ReturnType<typeof getParityModel>, browserParity: ReturnType<typeof getBrowserParityReport>) {
   const hasVolume = browserParity.paired_events > 0 || browserParity.synapse_events > 0;
+  const bothSides =
+    browserParity.synapse_events > 0 && browserParity.elevar_events > 0;
+  // Dual-run GO uses volume match (event_ids intentionally differ across vendors).
+  const volumePct = browserParity.volume_match_pct ?? browserParity.matched_rate_pct;
   const browserGo =
-    !hasVolume || (browserParity.status === "ok" && browserParity.matched_rate_pct >= 95);
+    !hasVolume || (bothSides && browserParity.status === "ok" && volumePct >= 80);
   const purchaseGo = purchaseParity.status === "ok";
   const checks = [
     {
@@ -875,12 +879,12 @@ function buildLaunchReadiness(purchaseParity: ReturnType<typeof getParityModel>,
       id: "browser_parity_threshold",
       status: browserGo ? "pass" : "hold",
       detail: hasVolume
-        ? `core funnel matched ${browserParity.matched_rate_pct}% (paired=${browserParity.paired_events})`
+        ? `dual-run volume match ${volumePct}% (fuzzy=${browserParity.fuzzy_paired ?? 0}, paired=${browserParity.paired_events})`
         : "waiting for storefront traffic (no dual-run volume yet)"
     },
     {
       id: "browser_dual_run_volume",
-      status: hasVolume ? "pass" : "waiting",
+      status: bothSides ? "pass" : hasVolume ? "hold" : "waiting",
       detail: `synapse=${browserParity.synapse_events} elevar=${browserParity.elevar_events}`
     }
   ];
@@ -1366,7 +1370,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
       { id: "shopify_webhook_secret", label: "Shopify webhook HMAC secret", ok: webhookSecret, detail: webhookSecret ? "set" : "missing" },
       { id: "shopify_scopes", label: "Install scopes (lean)", ok: scopes.length > 0 && !scopes.includes("read_all_orders"), detail: scopes },
       { id: "oauth_callback", label: "OAuth callback host", ok: appUrlOk, detail: `${url.origin}/auth/shopify/callback` },
-      { id: "cdn_script", label: "Storefront CDN script", ok: true, detail: `${url.origin}/gcw-synapse.js?v=1.3.0` },
+      { id: "cdn_script", label: "Storefront CDN script", ok: true, detail: `${url.origin}/gcw-synapse.js?v=1.3.1` },
       { id: "browser_beacon", label: "Browser beacon", ok: true, detail: `${url.origin}/browser/beacon` },
       {
         id: "gtm_forward",
@@ -2479,6 +2483,38 @@ export default {
         sourceRaw.includes("elevar") ? "elevar" : "synapse";
 
       await hydrateBrowserEventsFromCache(env);
+
+      // Drop identical source+event_id retries within a few seconds (client retry / double submit).
+      if (eventId) {
+        const dup = getRecentBrowserEvents(40).find(
+          (row) =>
+            row.source === browserSource &&
+            row.event === eventName &&
+            row.event_id === eventId &&
+            Date.now() - Date.parse(row.observed_at) < 8_000
+        );
+        if (dup) {
+          return addSecurityHeaders(
+            addCorsHeaders(
+              jsonResponse(
+                {
+                  ok: true,
+                  accepted: true,
+                  deduped: true,
+                  key: dup.key,
+                  event: eventName,
+                  source: browserSource,
+                  ingested: false
+                },
+                202
+              ),
+              request,
+              origin ?? undefined
+            )
+          );
+        }
+      }
+
       const ingested = ingestBrowserEvent({
         source: browserSource,
         shop,

@@ -12,11 +12,26 @@ import {
 } from "./events";
 import type { SynapseConfig, SynapseDataLayerEvent } from "./types";
 
-const VERSION = "1.3.0";
+const VERSION = "1.3.1";
+
+function isPasswordGatePage(config: SynapseConfig): boolean {
+  const type = (config.page?.type || "").toLowerCase();
+  const path = (config.page?.path || (typeof location !== "undefined" ? location.pathname : "")).toLowerCase();
+  return type === "password" || path === "/password" || path.endsWith("/password");
+}
 
 function boot(): void {
   const config = window.SynapseConfig;
   if (!config || config.enabled === false) {
+    return;
+  }
+
+  // Storefront password wall — avoid noisy dual-run beacons until unlocked.
+  if (isPasswordGatePage(config)) {
+    if (config.debug) {
+      // eslint-disable-next-line no-console
+      console.info("[Synapse] skip boot on password page");
+    }
     return;
   }
 

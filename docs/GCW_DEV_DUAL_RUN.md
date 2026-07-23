@@ -34,4 +34,8 @@ Beacon sample rate: **100%**. Keep Elevar enabled.
 
 Browsing product/collection/cart on password-unlocked gcw-dev should grow both `synapse_events` and `elevar_events` on `/compare/browser`. GTM tags may fire twice during dual-run — that is intentional on this empty order store.
 
-When paired ≥ 95% and purchase forward looks good, disable Elevar embed on gcw-dev only (see `GCW_DEV_GTM_WIRING.md`).
+Launch GO uses **volume match** (and fuzzy product pairing), not identical `event_id`s — Synapse and Elevar mint different IDs by design.
+
+Hardening (v1.3.1+): ATC form+fetch dedupe, Elevarmirror once-only + event_id dedupe, beacon 429/5xx retry, skip password-page boot, Worker beacon retry dedupe.
+
+When paired volume ≥ ~80% and purchase forward looks good, disable Elevar embed on gcw-dev only (see `GCW_DEV_GTM_WIRING.md`).

@@ -3,9 +3,44 @@ import { sendBeacon } from "./beacon";
 import { getOrCreateSession } from "./session";
 import { toSynapseProduct } from "./product";
 import { buildUserProperties } from "./userProperties";
+import { shouldEmitOnce } from "./emitDedupe";
 import type { SynapseConfig, SynapseDataLayerEvent, SynapseProduct } from "./types";
 
-function emit(config: SynapseConfig, event: SynapseDataLayerEvent): SynapseDataLayerEvent {
+function productKey(event: SynapseDataLayerEvent): string {
+  const ecommerce = event.ecommerce;
+  if (!ecommerce || typeof ecommerce !== "object") return "";
+  const root = ecommerce as Record<string, unknown>;
+  const ids: string[] = [];
+  for (const bucket of ["detail", "add", "remove", "click", "checkout", "purchase", "cart_contents"]) {
+    const nested = root[bucket];
+    if (nested && typeof nested === "object") {
+      const products = (nested as { products?: unknown }).products;
+      if (Array.isArray(products)) {
+        for (const item of products) {
+          if (!item || typeof item !== "object") continue;
+          const row = item as Record<string, unknown>;
+          const id = row.variant_id ?? row.product_id ?? row.id;
+          if (id != null) ids.push(String(id));
+        }
+      }
+    }
+  }
+  return ids.slice(0, 6).join(",");
+}
+
+function emit(config: SynapseConfig, event: SynapseDataLayerEvent): SynapseDataLayerEvent | null {
+  const path = typeof location !== "undefined" ? location.pathname : "";
+  const dedupeKey = `${config.shop}|${event.event}|${path}|${productKey(event)}|${event.cart_total ?? ""}`;
+  // ATC/form+fetch often double-fire within ~1s; user_data can re-fire on context invalidate.
+  const ttl = event.event === "dl_user_data" ? 800 : 1600;
+  if (!shouldEmitOnce(dedupeKey, ttl)) {
+    if (config.debug) {
+      // eslint-disable-next-line no-console
+      console.info("[Synapse] deduped", event.event);
+    }
+    return null;
+  }
+
   const session = getOrCreateSession();
   const withMarketing: SynapseDataLayerEvent = {
     ...event,

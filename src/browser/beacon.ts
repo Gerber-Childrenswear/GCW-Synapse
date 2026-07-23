@@ -20,6 +20,8 @@ const ALWAYS_BEACON = new Set([
   "dl_subscribe"
 ]);
 
+const recentBeaconIds = new Map<string, number>();
+
 function shouldBeacon(eventName: string, sampleRate: number): boolean {
   if (ALWAYS_BEACON.has(eventName)) return true;
   if (sampleRate >= 1) return true;
@@ -74,6 +76,40 @@ function leanProduct(item: unknown): unknown {
   };
 }
 
+function rememberBeaconId(eventId: string | undefined): boolean {
+  if (!eventId) return true;
+  const now = Date.now();
+  const prev = recentBeaconIds.get(eventId);
+  if (prev != null && now - prev < 5000) return false;
+  recentBeaconIds.set(eventId, now);
+  if (recentBeaconIds.size > 300) {
+    for (const [id, ts] of recentBeaconIds) {
+      if (now - ts > 30_000) recentBeaconIds.delete(id);
+    }
+  }
+  return true;
+}
+
+function postWithRetry(beaconUrl: string, body: string, attempt: number): void {
+  void fetch(beaconUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+    mode: "cors",
+    keepalive: true,
+    credentials: "omit"
+  })
+    .then((res) => {
+      // Retry once on transient 429/5xx for core funnel beacons.
+      if ((res.status === 429 || res.status >= 500) && attempt < 1) {
+        setTimeout(() => postWithRetry(beaconUrl, body, attempt + 1), 400);
+      }
+    })
+    .catch(() => {
+      if (attempt < 1) setTimeout(() => postWithRetry(beaconUrl, body, attempt + 1), 400);
+    });
+}
+
 export function sendBeacon(
   beaconUrl: string | undefined,
   shop: string,
@@ -84,6 +120,7 @@ export function sendBeacon(
   if (!beaconUrl) return;
   if (typeof fetch === "undefined" && typeof navigator === "undefined") return;
   if (!shouldBeacon(event.event, sampleRate)) return;
+  if (!rememberBeaconId(event.event_id)) return;
 
   const body = JSON.stringify({
     source: "synapse-theme",
@@ -110,14 +147,7 @@ export function sendBeacon(
     // Prefer fetch+keepalive: sendBeacon with application/json blobs is unreliable
     // across browsers/CORS and hides failures from ops.
     if (typeof fetch !== "undefined") {
-      void fetch(beaconUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body,
-        mode: "cors",
-        keepalive: true,
-        credentials: "omit"
-      });
+      postWithRetry(beaconUrl, body, 0);
       return;
     }
 
