@@ -1097,11 +1097,28 @@ async function persistChannelEventsToCache(env?: CloudflareEnv): Promise<void> {
 }
 
 async function hydrateChannelEventsFromCache(env?: CloudflareEnv): Promise<void> {
-  if (channelEventsHydrated) return;
   try {
-    const events = await readChannelEventsFromStore(env);
-    for (const event of events.slice().reverse()) {
+    const remote = await readChannelEventsFromStore(env);
+    const local = getRecentChannelEvents(500);
+
+    // Empty memory + non-empty store: always load (other isolate may have seeded after our reset).
+    if (local.length === 0) {
+      for (const event of remote.slice().reverse()) {
+        ingestStoredChannelEvent(event);
+      }
+      channelEventsHydrated = true;
+      return;
+    }
+
+    // Warm isolate: merge any remote-only fingerprints without doubling local rows.
+    const localFp = new Set(
+      local.map((event) => channelEventFingerprint(event as unknown as Record<string, unknown>))
+    );
+    for (const event of remote.slice().reverse()) {
+      const fp = channelEventFingerprint(event);
+      if (localFp.has(fp)) continue;
       ingestStoredChannelEvent(event);
+      localFp.add(fp);
     }
     channelEventsHydrated = true;
   } catch {
