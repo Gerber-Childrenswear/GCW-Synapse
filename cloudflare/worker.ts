@@ -948,6 +948,7 @@ function getParityModel() {
 const CHANNEL_CACHE_URL = "https://gcw-synapse-super.internal/channel-events-v2";
 const BROWSER_CACHE_URL = "https://gcw-synapse-super.internal/browser-events-v1";
 const BROWSER_KV_KEY = "browser-events-v1";
+const CHANNEL_KV_KEY = "channel-events-v2";
 
 async function clearChannelEventsCache(env?: CloudflareEnv): Promise<void> {
   try {
@@ -956,6 +957,7 @@ async function clearChannelEventsCache(env?: CloudflareEnv): Promise<void> {
     await caches.default.delete("https://gcw-synapse-super.internal/channel-events-v1");
     await caches.default.delete(BROWSER_CACHE_URL);
     await env?.SYNAPSE_STATE?.delete(BROWSER_KV_KEY);
+    await env?.SYNAPSE_STATE?.delete(CHANNEL_KV_KEY);
   } catch {
     // ignore
   }
@@ -1003,30 +1005,40 @@ async function hydrateBrowserEventsFromCache(env?: CloudflareEnv): Promise<void>
   }
 }
 
-async function persistChannelEventsToCache(): Promise<void> {
+async function persistChannelEventsToCache(env?: CloudflareEnv): Promise<void> {
   try {
+    await hydrateChannelEventsFromCache(env);
     const events = getRecentChannelEvents(500);
+    const body = JSON.stringify(events);
     await caches.default.put(
       CHANNEL_CACHE_URL,
-      new Response(JSON.stringify(events), {
+      new Response(body, {
         headers: {
           "content-type": "application/json",
           "cache-control": "max-age=86400"
         }
       })
     );
+    await env?.SYNAPSE_STATE?.put(CHANNEL_KV_KEY, body, { expirationTtl: 86400 });
   } catch {
     // Cache API may be unavailable in some runtimes; ignore.
   }
 }
 
-async function hydrateChannelEventsFromCache(): Promise<void> {
+async function hydrateChannelEventsFromCache(env?: CloudflareEnv): Promise<void> {
   try {
-    if (getRecentChannelEvents(1).length > 0) return;
-    const cached = await caches.default.match(CHANNEL_CACHE_URL);
-    if (!cached) return;
-    const events = (await cached.json()) as Array<Record<string, unknown>>;
-    if (!Array.isArray(events)) return;
+    let events: Array<Record<string, unknown>> | null = null;
+    const fromKv = await env?.SYNAPSE_STATE?.get(CHANNEL_KV_KEY, "json");
+    if (Array.isArray(fromKv)) {
+      events = fromKv as Array<Record<string, unknown>>;
+    } else {
+      const cached = await caches.default.match(CHANNEL_CACHE_URL);
+      if (cached) {
+        const parsed = (await cached.json()) as Array<Record<string, unknown>>;
+        if (Array.isArray(parsed)) events = parsed;
+      }
+    }
+    if (!events?.length) return;
     for (const event of events.slice().reverse()) {
       if (typeof event.channel !== "string" || typeof event.event_name !== "string") continue;
       ingestChannelEvent({
@@ -1047,8 +1059,8 @@ async function hydrateChannelEventsFromCache(): Promise<void> {
   }
 }
 
-async function getChannelSummary() {
-  await hydrateChannelEventsFromCache();
+async function getChannelSummary(env?: CloudflareEnv) {
+  await hydrateChannelEventsFromCache(env);
   const summary = getChannelHealthSummary(90, 5);
   return {
     total_channels: summary.totals.tracked_integrations,
@@ -1506,7 +1518,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
     }
 
     if (typeof payload.channel === "string" && typeof payload.event_name === "string") {
-      await hydrateChannelEventsFromCache();
+      await hydrateChannelEventsFromCache(env);
       ingestChannelEvent({
         channel: payload.channel,
         surface: (payload.surface as "pixel" | "server" | "runtime" | "webhook") || "pixel",
@@ -1519,7 +1531,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
         error_message: typeof payload.error_message === "string" ? payload.error_message : undefined,
         observed_at: observedAt
       });
-      await persistChannelEventsToCache();
+      await persistChannelEventsToCache(env);
     }
 
     return jsonResponse({ ok: true, status: "channel_event_recorded", item: edgeChannelEvents[0] }, 202);
@@ -1539,7 +1551,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
     }
 
     const accepted: Array<Record<string, unknown>> = [];
-    await hydrateChannelEventsFromCache();
+    await hydrateChannelEventsFromCache(env);
     for (const event of events) {
       const item = { ...event, observed_at: (event.observed_at as string | undefined) ?? new Date().toISOString() };
       edgeChannelEvents.unshift(item);
@@ -1563,7 +1575,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
     if (edgeChannelEvents.length > 500) {
       edgeChannelEvents.length = 500;
     }
-    await persistChannelEventsToCache();
+    await persistChannelEventsToCache(env);
 
     return jsonResponse({
       ok: true,
@@ -1627,7 +1639,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
       { channel: "meta", surface: "pixel", destination: "Meta Pixel", event_name: "AddToCart", status: "ok", pixel_id: "demo-meta", event_id: "meta_atc_orphan", minutesAgo: 5 }
     ];
 
-    await hydrateChannelEventsFromCache();
+    await hydrateChannelEventsFromCache(env);
     let seeded = 0;
     for (const sample of samples) {
       const observedAt = new Date(now - sample.minutesAgo * 60_000).toISOString();
@@ -1661,7 +1673,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
     if (edgeChannelEvents.length > 500) {
       edgeChannelEvents.length = 500;
     }
-    await persistChannelEventsToCache();
+    await persistChannelEventsToCache(env);
     return jsonResponse({ ok: true, seeded, note: "Demo channel pulses with dedupe keys recorded" }, 202);
   }
 
@@ -1673,7 +1685,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
   }
 
   if (request.method === "GET" && url.pathname === "/compare/platforms") {
-    await hydrateChannelEventsFromCache();
+    await hydrateChannelEventsFromCache(env);
     return jsonResponse({
       ok: true,
       runtime_mode: "edge",
@@ -1690,7 +1702,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
   }
 
   if (request.method === "GET" && url.pathname === "/compare/troubleshoot") {
-    await hydrateChannelEventsFromCache();
+    await hydrateChannelEventsFromCache(env);
     const summary = getChannelHealthSummary(90, 5);
     const issues = getChannelTroubleshooting(summary);
 
@@ -1891,7 +1903,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
       });
       if (edgeShadowComparisons.length > 500) edgeShadowComparisons.length = 500;
 
-      await hydrateChannelEventsFromCache();
+      await hydrateChannelEventsFromCache(env);
       ingestChannelEvent({
         channel: "server_gtm",
         surface: "webhook",
@@ -1912,7 +1924,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
         status: "ok",
         observed_at: new Date().toISOString()
       });
-      await persistChannelEventsToCache();
+      await persistChannelEventsToCache(env);
       edgeEventsGenerated += 1;
     }
 
@@ -2428,9 +2440,9 @@ export default {
       edgeBrowserBeaconsAccepted += 1;
       edgeEventsGenerated += 1;
       await persistBrowserEventsToCache(env);
-      await hydrateChannelEventsFromCache();
+      await hydrateChannelEventsFromCache(env);
       recordSynapseBrowserChannel(eventName, eventId, shop);
-      await persistChannelEventsToCache();
+      await persistChannelEventsToCache(env);
 
       return addSecurityHeaders(
         addCorsHeaders(
