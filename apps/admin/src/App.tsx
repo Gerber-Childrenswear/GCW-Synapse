@@ -27,6 +27,7 @@ import {
   type UiModel
 } from "./api";
 import { PlatformsDashboard } from "./PlatformsDashboard";
+import { SynapseLogo } from "./SynapseLogo";
 import { getShopifyEmbedContext, type ShopifyEmbedContext } from "./shopifyEmbed";
 
 type NavTab = "platforms" | "runtime" | "advisor" | "events" | "webhooks" | "shadow" | "qa" | "edge";
@@ -1136,8 +1137,9 @@ export default function App() {
     <div className={`shell ${simpleMode ? "shell-simple" : ""} ${embed.embedded ? "shell-embedded" : ""}`}>
       <aside className="sidebar">
         <div className="brand">
-          <h1>SYNAPSE</h1>
-          <p>{embed.shopHandle ? embed.shopHandle : "gcw control panel"}</p>
+          <SynapseLogo variant="mark" className="brand-logo" title="SYNAPSE" />
+          <p className="brand-word">SYNAPSE</p>
+          <p className="brand-sub">{embed.shopHandle ? embed.shopHandle : "gcw control panel"}</p>
         </div>
 
         <nav>

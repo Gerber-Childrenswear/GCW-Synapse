@@ -8,6 +8,7 @@ import type {
   UiModel
 } from "./api";
 import { seedDemoPlatformTraffic } from "./api";
+import { SynapseLogo } from "./SynapseLogo";
 
 type Props = {
   uiModel: UiModel | null;
@@ -441,15 +442,13 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
 
   return (
     <section className="platforms-dashboard">
-      <div className="platforms-hero">
-        <div>
-          <p className="eyebrow">Elevar-grade tracking control</p>
-          <h2>Platforms, dedupe &amp; causes</h2>
-          <p className="muted">
-            Browser vs server health, confirmed event_id / transaction_id dedupe, and vendor-doc exact
-            error causes — organized the way Synapse replaces Elevar.
-          </p>
+      <div className="platforms-hero platforms-hero-brand">
+        <div className="platforms-hero-brand-mark" aria-hidden={false}>
+          <SynapseLogo variant="full" className="platforms-hero-logo" />
         </div>
+        <p className="platforms-hero-tagline">
+          Browser ↔ server health, confirmed dedupe, and exact destination causes — replacing Elevar.
+        </p>
         <div className="platforms-hero-actions">
           <button type="button" className="primary" onClick={onRefresh} disabled={loading}>
             {loading ? "Refreshing…" : "Refresh"}

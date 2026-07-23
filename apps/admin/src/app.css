@@ -3,9 +3,9 @@
 :root {
   --bg: #eef3f0;
   --surface: #ffffff;
-  --sidebar: #10241c;
-  --sidebar-muted: #9bb5a8;
-  --sidebar-active: #1a3a2d;
+  --sidebar: #0a1628;
+  --sidebar-muted: #8aa0b8;
+  --sidebar-active: #132844;
   --text: #12241c;
   --muted: #51665b;
   --border: #cfdcd4;
@@ -13,8 +13,12 @@
   --success: #0f6b4c;
   --warning: #9a6700;
   --danger: #b42318;
+  --synapse-navy: #07111f;
+  --synapse-cyan: #3dd6ff;
+  --synapse-violet: #b14bff;
   --font: "IBM Plex Sans", "Segoe UI", sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, monospace;
+  --display: "Orbitron", "IBM Plex Sans", sans-serif;
 }
 
 * {
@@ -51,25 +55,329 @@ body {
 
 .sidebar {
   background:
-    radial-gradient(circle at top right, rgba(46, 160, 110, 0.35) 0%, transparent 42%),
-    linear-gradient(180deg, #163528 0%, #0d1f18 100%);
+    radial-gradient(ellipse 80% 50% at 10% 0%, rgba(61, 214, 255, 0.18), transparent 55%),
+    radial-gradient(ellipse 70% 45% at 90% 20%, rgba(177, 75, 255, 0.22), transparent 50%),
+    linear-gradient(180deg, #0c1a30 0%, var(--synapse-navy) 55%, #050d18 100%);
   color: #f4faf7;
-  padding: 24px 18px;
+  padding: 20px 16px;
   display: flex;
   flex-direction: column;
   gap: 20px;
 }
 
-.brand h1 {
-  margin: 0;
-  letter-spacing: 0.14em;
-  font-size: 20px;
+.brand {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 2px 10px;
+  align-items: flex-start;
 }
 
-.brand p {
-  margin: 4px 0 0;
+.brand-logo {
+  width: 118px;
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+.brand-word {
+  margin: 2px 0 0;
+  font-family: var(--display);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  color: #fff;
+  animation: synapse-word-glow 2.8s ease-in-out infinite;
+}
+
+.brand-sub {
+  margin: 0;
   color: var(--sidebar-muted);
-  font-size: 13px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  padding-left: 2px;
+}
+
+/* Full logo hero (raster + fire overlays) */
+.synapse-logo-hero {
+  position: relative;
+  width: 100%;
+  isolation: isolate;
+  line-height: 0;
+}
+
+.synapse-logo-img {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 0;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.synapse-fire {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.fire-pixels {
+  position: absolute;
+  left: 4%;
+  top: 28%;
+  width: 18%;
+  height: 42%;
+  background:
+    radial-gradient(circle at 20% 30%, rgba(94, 231, 255, 0.55), transparent 40%),
+    radial-gradient(circle at 70% 55%, rgba(61, 214, 255, 0.4), transparent 45%),
+    radial-gradient(circle at 40% 75%, rgba(120, 180, 255, 0.35), transparent 40%);
+  mix-blend-mode: screen;
+  animation: fire-pixel-flicker 1.35s steps(3, end) infinite;
+}
+
+.fire-hub {
+  position: absolute;
+  left: 28%;
+  top: 38%;
+  width: 16%;
+  height: 28%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.85) 0%, rgba(177, 75, 255, 0.55) 35%, transparent 70%);
+  mix-blend-mode: screen;
+  animation: fire-hub-pulse 1.35s ease-in-out infinite;
+  filter: blur(2px);
+}
+
+.fire-flare {
+  position: absolute;
+  left: 18%;
+  top: 48%;
+  width: 36%;
+  height: 6%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(200, 160, 255, 0.15) 20%,
+    rgba(255, 255, 255, 0.85) 50%,
+    rgba(177, 75, 255, 0.35) 70%,
+    transparent 100%
+  );
+  mix-blend-mode: screen;
+  transform: translateY(-50%);
+  animation: fire-flare-flicker 1.35s ease-in-out infinite;
+  filter: blur(1px);
+}
+
+.fire-spark {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff 0%, #7ef0ff 40%, transparent 70%);
+  box-shadow: 0 0 14px rgba(61, 214, 255, 0.95);
+  mix-blend-mode: screen;
+  opacity: 0;
+}
+
+.spark-a {
+  animation: fire-spark-a 1.9s linear infinite;
+}
+
+.spark-b {
+  background: radial-gradient(circle, #fff 0%, #e0a8ff 45%, transparent 70%);
+  box-shadow: 0 0 14px rgba(177, 75, 255, 0.95);
+  animation: fire-spark-b 2.2s linear infinite;
+  animation-delay: 0.45s;
+}
+
+.spark-c {
+  animation: fire-spark-c 2s linear infinite;
+  animation-delay: 0.9s;
+}
+
+@keyframes fire-spark-a {
+  0% {
+    left: 8%;
+    top: 38%;
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  55% {
+    left: 34%;
+    top: 50%;
+    opacity: 1;
+  }
+  100% {
+    left: 44%;
+    top: 32%;
+    opacity: 0;
+  }
+}
+
+@keyframes fire-spark-b {
+  0% {
+    left: 10%;
+    top: 48%;
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  55% {
+    left: 34%;
+    top: 52%;
+    opacity: 1;
+  }
+  100% {
+    left: 44%;
+    top: 50%;
+    opacity: 0;
+  }
+}
+
+@keyframes fire-spark-c {
+  0% {
+    left: 9%;
+    top: 58%;
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  55% {
+    left: 34%;
+    top: 54%;
+    opacity: 1;
+  }
+  100% {
+    left: 44%;
+    top: 66%;
+    opacity: 0;
+  }
+}
+
+.fire-node {
+  position: absolute;
+  width: 4.2%;
+  height: 5.5%;
+  border-radius: 4px;
+  background: rgba(196, 77, 255, 0.55);
+  box-shadow: 0 0 16px rgba(177, 75, 255, 0.8);
+  mix-blend-mode: screen;
+  animation: fire-node-glow 2.1s ease-in-out infinite;
+}
+
+.fire-node.node-a {
+  left: 42.5%;
+  top: 29%;
+  animation-delay: 0.15s;
+}
+
+.fire-node.node-b {
+  left: 42.5%;
+  top: 46%;
+  animation-delay: 0.5s;
+}
+
+.fire-node.node-c {
+  left: 42.5%;
+  top: 62%;
+  animation-delay: 0.85s;
+}
+
+.fire-wordglow {
+  position: absolute;
+  left: 48%;
+  top: 36%;
+  width: 48%;
+  height: 32%;
+  background: radial-gradient(ellipse at center, rgba(177, 75, 255, 0.22), transparent 65%);
+  mix-blend-mode: screen;
+  animation: synapse-word-glow 2.8s ease-in-out infinite;
+}
+
+@keyframes fire-pixel-flicker {
+  0% {
+    opacity: 0.25;
+    transform: scale(1);
+  }
+  33% {
+    opacity: 0.95;
+    transform: scale(1.03);
+  }
+  66% {
+    opacity: 0.4;
+    transform: scale(0.98);
+  }
+  100% {
+    opacity: 0.7;
+    transform: scale(1.02);
+  }
+}
+
+@keyframes fire-hub-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+  55% {
+    opacity: 0.7;
+    transform: scale(1.05);
+  }
+}
+
+@keyframes fire-flare-flicker {
+  0%,
+  100% {
+    opacity: 0.2;
+    transform: translateY(-50%) scaleX(0.85);
+  }
+  42% {
+    opacity: 1;
+    transform: translateY(-50%) scaleX(1.15);
+  }
+  58% {
+    opacity: 0.55;
+    transform: translateY(-50%) scaleX(1);
+  }
+}
+
+@keyframes fire-spark-travel {
+  0% {
+    offset-distance: 0%;
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  75% {
+    opacity: 1;
+  }
+  100% {
+    offset-distance: 100%;
+    opacity: 0;
+  }
+}
+
+@keyframes fire-node-glow {
+  0%,
+  100% {
+    opacity: 0.2;
+    filter: brightness(0.8);
+  }
+  40% {
+    opacity: 1;
+    filter: brightness(1.6);
+  }
 }
 
 .sidebar nav {
@@ -877,10 +1185,272 @@ pre {
     linear-gradient(180deg, #ffffff 0%, #f7fbf8 100%);
 }
 
+.platforms-hero-brand {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  padding: 0 0 18px;
+  border: 1px solid rgba(61, 214, 255, 0.18);
+  border-radius: 0;
+  margin: -8px -8px 0;
+  background: var(--synapse-navy);
+  color: #e8f0fa;
+  overflow: hidden;
+  position: relative;
+  min-height: 0;
+  justify-content: flex-end;
+}
+
+.platforms-hero-brand::before {
+  content: none;
+}
+
+.platforms-hero-brand-mark {
+  position: relative;
+  z-index: 1;
+  max-width: none;
+  width: 100%;
+}
+
+.platforms-hero-logo {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.platforms-hero-tagline {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  max-width: 42rem;
+  padding: 0 24px;
+  color: rgba(200, 214, 232, 0.88);
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.platforms-hero-brand .platforms-hero-actions {
+  position: relative;
+  z-index: 1;
+  justify-content: flex-start;
+  padding: 0 24px;
+}
+
+.platforms-hero-brand .primary {
+  background: linear-gradient(135deg, #3dd6ff, #7b6cff);
+  border: none;
+  color: #061018;
+  font-weight: 700;
+}
+
+.platforms-hero-brand .secondary {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  color: #f0f6ff;
+}
+
+.platforms-hero-brand .toggle {
+  color: rgba(210, 222, 238, 0.9);
+}
+
 .platforms-hero h2 {
   margin: 4px 0 8px;
   font-size: 28px;
   letter-spacing: -0.02em;
+}
+
+@keyframes synapse-grid-drift {
+  from {
+    background-position: 0 0, 0 0;
+  }
+  to {
+    background-position: 28px 28px, 28px 28px;
+  }
+}
+
+/* —— Synapse logo firing animations —— */
+.synapse-logo .px {
+  transform-origin: center;
+  animation: synapse-pixel-flicker 1.6s ease-in-out infinite;
+}
+
+.synapse-logo .p1 { animation-delay: 0s; }
+.synapse-logo .p2 { animation-delay: 0.12s; }
+.synapse-logo .p3 { animation-delay: 0.28s; }
+.synapse-logo .p4 { animation-delay: 0.4s; }
+.synapse-logo .p5 { animation-delay: 0.55s; }
+.synapse-logo .p6 { animation-delay: 0.18s; }
+.synapse-logo .p7 { animation-delay: 0.7s; }
+.synapse-logo .p8 { animation-delay: 0.33s; }
+.synapse-logo .p9 { animation-delay: 0.9s; }
+.synapse-logo .p10 { animation-delay: 0.48s; }
+.synapse-logo .p11 { animation-delay: 1.05s; }
+.synapse-logo .p12 { animation-delay: 0.62s; }
+
+.synapse-logo .trace {
+  stroke-dasharray: 140;
+  animation: synapse-trace-charge 2.8s ease-in-out infinite;
+}
+
+.synapse-logo .t1 { animation-delay: 0s; }
+.synapse-logo .t2 { animation-delay: 0.25s; }
+.synapse-logo .t3 { animation-delay: 0.5s; }
+.synapse-logo .t4 { animation-delay: 0.75s; }
+
+.synapse-logo .hub-bloom {
+  animation: synapse-hub-pulse 1.4s ease-in-out infinite;
+  transform-origin: center;
+  transform-box: fill-box;
+}
+
+.synapse-logo .hub-core {
+  animation: synapse-hub-core 1.4s ease-in-out infinite;
+  transform-origin: center;
+  transform-box: fill-box;
+}
+
+.synapse-logo .hub-streak {
+  animation: synapse-streak 1.4s ease-in-out infinite;
+  transform-origin: center;
+  transform-box: fill-box;
+}
+
+.synapse-logo .node {
+  animation: synapse-node-fire 2.1s ease-in-out infinite;
+  transform-origin: center;
+  transform-box: fill-box;
+}
+
+.synapse-logo .n1 { animation-delay: 0.2s; }
+.synapse-logo .n2 { animation-delay: 0.55s; }
+.synapse-logo .n3 { animation-delay: 0.9s; }
+
+.synapse-logo .synapse-wordmark-text {
+  animation: synapse-word-glow 2.8s ease-in-out infinite;
+}
+
+.synapse-logo .spark {
+  opacity: 0.95;
+}
+
+@keyframes synapse-pixel-flicker {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  40% {
+    opacity: 1;
+  }
+  55% {
+    opacity: 0.55;
+  }
+  70% {
+    opacity: 0.95;
+  }
+}
+
+@keyframes synapse-trace-charge {
+  0%,
+  100% {
+    stroke-opacity: 0.45;
+    stroke-dashoffset: 40;
+  }
+  50% {
+    stroke-opacity: 1;
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes synapse-hub-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.88);
+  }
+  45% {
+    opacity: 1;
+    transform: scale(1.18);
+  }
+  60% {
+    opacity: 0.8;
+    transform: scale(1.02);
+  }
+}
+
+@keyframes synapse-hub-core {
+  0%,
+  100% {
+    opacity: 0.75;
+    transform: scale(0.92);
+  }
+  45% {
+    opacity: 1;
+    transform: scale(1.25);
+  }
+}
+
+@keyframes synapse-streak {
+  0%,
+  100% {
+    opacity: 0.25;
+    stroke-width: 1.2;
+  }
+  45% {
+    opacity: 0.95;
+    stroke-width: 2.6;
+  }
+}
+
+@keyframes synapse-node-fire {
+  0%,
+  100% {
+    opacity: 0.45;
+    filter: brightness(0.9);
+  }
+  35% {
+    opacity: 1;
+    filter: brightness(1.45);
+  }
+  55% {
+    opacity: 0.7;
+  }
+}
+
+@keyframes synapse-word-glow {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 0 transparent);
+    opacity: 0.92;
+  }
+  50% {
+    filter: drop-shadow(0 0 12px rgba(177, 75, 255, 0.65)) drop-shadow(0 0 22px rgba(61, 214, 255, 0.35));
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .synapse-logo .px,
+  .synapse-logo .trace,
+  .synapse-logo .hub-bloom,
+  .synapse-logo .hub-core,
+  .synapse-logo .hub-streak,
+  .synapse-logo .node,
+  .synapse-logo .synapse-wordmark-text,
+  .brand-word,
+  .fire-pixels,
+  .fire-hub,
+  .fire-flare,
+  .fire-spark,
+  .fire-node,
+  .fire-wordglow,
+  .synapse-logo .spark {
+    animation: none !important;
+  }
+
+  .synapse-logo .spark,
+  .fire-spark {
+    display: none;
+  }
 }
 
 .eyebrow {
