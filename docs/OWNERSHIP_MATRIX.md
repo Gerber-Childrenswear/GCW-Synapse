@@ -1,6 +1,6 @@
-# Ownership matrix — Synapse vs GTM vs Triple Whale
+# Ownership matrix — Synapse vs GTM
 
-Canonical companion to `docs/TRIPLE_WHALE_ROUTING_DECISION.md` and `docs/FULL_ELEVAR_REPLACEMENT.md`.
+Canonical companion to `docs/FULL_ELEVAR_REPLACEMENT.md`.
 
 | Capability | Owner | Notes |
 |---|---|---|
@@ -12,7 +12,8 @@ Canonical companion to `docs/TRIPLE_WHALE_ROUTING_DECISION.md` and `docs/FULL_EL
 | Browser dual-run parity UI | **Synapse** | `/compare/browser`, Platforms launch gate |
 | Accuracy Slack/email alerts | **Synapse** | `SLACK_WEBHOOK_URL`, `ALERT_EMAIL_*` |
 | Destination tags (Meta, GA4, Ads, …) | **GTM web + sGTM** | Dev web `GTM-WH3W368X`; prod web `GTM-TKW58K8`; sGTM `GTM-N45F3JCC` |
-| Optional non-custom pixels | Triple Whale | Never duplicates Synapse `dl_*` or GTM tags |
+
+**Out of scope:** Triple Whale (attribution + pixel). Do not monitor or dual-run with TW — Synapse + GTM own the Elevar replacement.
 
 ## Cutover docs
 

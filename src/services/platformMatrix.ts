@@ -174,17 +174,6 @@ const PLATFORM_DEFS: PlatformDefinition[] = [
     ]
   },
   {
-    id: "triple_whale",
-    label: "Triple Whale",
-    group: "commerce",
-    aliases: ["triple_whale", "triplewhale", "tw"],
-    expected_events: ["page_view", "add_to_cart", "purchase"],
-    tips: [
-      "Dual-run with TW pixel ON will double client events — plan the cutover.",
-      "Prefer a single server purchase path via Synapse → sGTM."
-    ]
-  },
-  {
     id: "cj",
     label: "Commission Junction",
     group: "commerce",

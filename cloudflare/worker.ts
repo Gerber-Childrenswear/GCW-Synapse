@@ -1777,8 +1777,6 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
       { channel: "reddit", surface: "server", destination: "Reddit CAPI", event_name: "PageVisit", status: "ok", event_id: "rd_pv_1", minutesAgo: 3 },
       // Bloomreach server-only + schema hint
       { channel: "bloomreach", surface: "server", destination: "Bloomreach Engagement", event_name: "purchase", status: "ok", transaction_id: "GCW-10042", minutesAgo: 12 },
-      // Triple Whale browser-only
-      { channel: "triple_whale", surface: "pixel", destination: "Triple Whale Pixel", event_name: "Purchase", status: "ok", event_id: "tw_pur_1", minutesAgo: 11 },
       // CJ server-only
       { channel: "cj", surface: "server", destination: "CJ AffNet", event_name: "purchase", status: "ok", transaction_id: "GCW-10042", minutesAgo: 15 },
       // Pipe

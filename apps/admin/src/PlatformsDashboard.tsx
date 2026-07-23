@@ -41,8 +41,8 @@ const GROUPS: PlatformGroup[] = [
   {
     id: "commerce",
     label: "Commerce engines",
-    blurb: "CRM, attribution, and affiliate fan-out",
-    platformIds: ["bloomreach", "triple_whale", "cj"]
+    blurb: "CRM and affiliate fan-out",
+    platformIds: ["bloomreach", "cj"]
   },
   {
     id: "pipe",

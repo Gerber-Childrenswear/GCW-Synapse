@@ -121,10 +121,6 @@ const docsByChannel: Record<string, string[]> = {
     "https://documentation.bloomreach.com/engagement/docs/gtm-integration",
     "https://documentation.bloomreach.com/engagement/reference/track-event"
   ],
-  triple_whale: [
-    "https://triplewhale.zendesk.com/hc/en-us/articles/7649388602779-Pixel",
-    "https://kb.triplewhale.com/"
-  ],
   cj: [
     "https://developers.cj.com/",
     "https://signin.cj.com/loginHelp"

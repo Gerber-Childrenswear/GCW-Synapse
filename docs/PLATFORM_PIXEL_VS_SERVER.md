@@ -56,10 +56,6 @@ Re-check conversion **label** mapping after Synapse cutover.
 
 Primarily **GTM browser tags** (Product Page, Add To Cart, Purchase) reading Synapse `dl_*` + Bloomreach cookies/segments — not a classic Pixel/CAPI pair. Platforms expected: `view_item`, `cart_update`, `purchase`, `consent`. Remap any Elevar-only dataLayer paths before cutover.
 
-### Triple Whale
-
-Client pixel only when it does **not** duplicate Synapse `dl_*` / GTM (see `TRIPLE_WHALE_ROUTING_DECISION.md`). Prefer one purchase path via Synapse → sGTM.
-
 ### CJ (Commission Junction)
 
 Server-side order confirmation with coupon fidelity — Platforms expects `purchase` with stable order id.
