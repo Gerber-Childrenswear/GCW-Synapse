@@ -67,6 +67,10 @@ import {
 } from "../src/services/channelHealth";
 import { buildPlatformMatrix } from "../src/services/platformMatrix";
 import {
+  buildDemoSamples,
+  resolveDemoSeedScenario
+} from "../src/services/platformDemoSeed";
+import {
   getBrowserParityReport,
   getRecentBrowserEvents,
   getBrowserEventsSnapshot,
@@ -1740,53 +1744,20 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
   }
 
   if (request.method === "POST" && url.pathname === "/compare/demo-seed") {
+    const scenario = resolveDemoSeedScenario(url.searchParams.get("scenario"));
+    const samples = buildDemoSamples(scenario);
     const now = Date.now();
-    type DemoSample = {
-      channel: string;
-      surface: "pixel" | "server" | "runtime" | "webhook";
-      destination: string;
-      event_name: string;
-      status: "ok" | "error";
-      pixel_id?: string;
-      event_id?: string;
-      transaction_id?: string;
-      error_message?: string;
-      minutesAgo: number;
-    };
-    const samples: DemoSample[] = [
-      // Meta — full dedupe confirmed
-      { channel: "meta", surface: "pixel", destination: "Meta Pixel", event_name: "PageView", status: "ok", pixel_id: "demo-meta", event_id: "meta_pv_1", minutesAgo: 2 },
-      { channel: "meta", surface: "server", destination: "Meta CAPI", event_name: "PageView", status: "ok", event_id: "meta_pv_1", minutesAgo: 2 },
-      { channel: "meta", surface: "pixel", destination: "Meta Pixel", event_name: "ViewContent", status: "ok", pixel_id: "demo-meta", event_id: "meta_vc_1", minutesAgo: 4 },
-      { channel: "meta", surface: "server", destination: "Meta CAPI", event_name: "ViewContent", status: "ok", event_id: "meta_vc_1", minutesAgo: 4 },
-      { channel: "meta", surface: "pixel", destination: "Meta Pixel", event_name: "Purchase", status: "ok", pixel_id: "demo-meta", event_id: "meta_pur_1", minutesAgo: 8 },
-      { channel: "meta", surface: "server", destination: "Meta CAPI", event_name: "Purchase", status: "ok", event_id: "meta_pur_1", minutesAgo: 8 },
-      // GA4 — transaction_id aligned
-      { channel: "ga4", surface: "pixel", destination: "GA4 Browser", event_name: "page_view", status: "ok", event_id: "ga4_pv_1", minutesAgo: 1 },
-      { channel: "ga4", surface: "server", destination: "GA4 MP", event_name: "page_view", status: "ok", event_id: "ga4_pv_1", minutesAgo: 1 },
-      { channel: "ga4", surface: "pixel", destination: "GA4 Browser", event_name: "purchase", status: "ok", transaction_id: "GCW-10042", event_id: "ga4_pur_1", minutesAgo: 9 },
-      { channel: "ga4", surface: "server", destination: "GA4 MP", event_name: "purchase", status: "ok", transaction_id: "GCW-10042", event_id: "ga4_pur_1", minutesAgo: 9 },
-      // Google Ads — purchase aligned
-      { channel: "google_ads", surface: "pixel", destination: "Google Ads Tag", event_name: "purchase", status: "ok", transaction_id: "GCW-10042", minutesAgo: 10 },
-      { channel: "google_ads", surface: "server", destination: "Enhanced Conv", event_name: "purchase", status: "ok", transaction_id: "GCW-10042", minutesAgo: 10 },
-      // TikTok — browser ok, server auth failure + mismatched event_id (browser-only dedupe)
-      { channel: "tiktok", surface: "pixel", destination: "TikTok Pixel", event_name: "ViewContent", status: "ok", event_id: "tt_vc_browser", minutesAgo: 6 },
-      { channel: "tiktok", surface: "server", destination: "TikTok Events API", event_name: "ViewContent", status: "error", event_id: "tt_vc_server_other", error_message: "access_token_invalid: Events API access token is invalid", minutesAgo: 6 },
-      // Reddit — confirmed
-      { channel: "reddit", surface: "pixel", destination: "Reddit Pixel", event_name: "PageVisit", status: "ok", event_id: "rd_pv_1", minutesAgo: 3 },
-      { channel: "reddit", surface: "server", destination: "Reddit CAPI", event_name: "PageVisit", status: "ok", event_id: "rd_pv_1", minutesAgo: 3 },
-      // Bloomreach server-only + schema hint
-      { channel: "bloomreach", surface: "server", destination: "Bloomreach Engagement", event_name: "purchase", status: "ok", transaction_id: "GCW-10042", minutesAgo: 12 },
-      // CJ server-only
-      { channel: "cj", surface: "server", destination: "CJ AffNet", event_name: "purchase", status: "ok", transaction_id: "GCW-10042", minutesAgo: 15 },
-      // Pipe
-      { channel: "server_gtm", surface: "server", destination: "sGTM N45F3JCC", event_name: "purchase", status: "ok", transaction_id: "GCW-10042", event_id: "sgtm_pur_1", minutesAgo: 8 },
-      { channel: "synapse", surface: "runtime", destination: "Worker /event", event_name: "dl_purchase", status: "ok", transaction_id: "GCW-10042", event_id: "syn_pur_1", minutesAgo: 8 },
-      // Meta browser-only orphan to show partial dedupe sample elsewhere
-      { channel: "meta", surface: "pixel", destination: "Meta Pixel", event_name: "AddToCart", status: "ok", pixel_id: "demo-meta", event_id: "meta_atc_orphan", minutesAgo: 5 }
-    ];
 
-    await hydrateChannelEventsFromCache(env);
+    // Healthy seed always starts clean so prior token/orphan pulses cannot keep Meta/TikTok red.
+    if (scenario === "healthy") {
+      resetChannelHealth();
+      channelEventsHydrated = false;
+      edgeChannelEvents.length = 0;
+      await clearChannelEventsCache(env);
+    } else {
+      await hydrateChannelEventsFromCache(env);
+    }
+
     let seeded = 0;
     for (const sample of samples) {
       const observedAt = new Date(now - sample.minutesAgo * 60_000).toISOString();
@@ -1821,7 +1792,18 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
       edgeChannelEvents.length = 500;
     }
     await persistChannelEventsToCache(env);
-    return jsonResponse({ ok: true, seeded, note: "Demo channel pulses with dedupe keys recorded" }, 202);
+    return jsonResponse(
+      {
+        ok: true,
+        seeded,
+        scenario,
+        note:
+          scenario === "healthy"
+            ? "Healthy Meta/TikTok/platform pulses with confirmed dedupe (prior health cleared)"
+            : "Broken diagnostic pulses recorded (token failure + orphan dedupe)"
+      },
+      202
+    );
   }
 
   if (request.method === "GET" && url.pathname === "/api/advisor/alerts") {

@@ -93,6 +93,8 @@ type PlatformDefinition = {
   aliases: string[];
   expected_events: string[];
   tips: string[];
+  /** Affiliate / server confirmation only — browser idle is not a warning. */
+  server_primary?: boolean;
 };
 
 const PLATFORM_DEFS: PlatformDefinition[] = [
@@ -179,6 +181,7 @@ const PLATFORM_DEFS: PlatformDefinition[] = [
     group: "commerce",
     aliases: ["cj", "commission_junction", "commissionjunction"],
     expected_events: ["purchase"],
+    server_primary: true,
     tips: [
       "CJ needs reliable server-side order confirmation with coupon fidelity.",
       "Verify enterprise CID / action IDs after webhook mapping changes."
@@ -389,7 +392,8 @@ function rowStatus(
   server: SurfacePulse,
   dedupe: DedupeStats,
   causes: DiagnosedCause[],
-  group: string
+  group: string,
+  serverPrimary = false
 ): PlatformRow["status"] {
   if (browser.status === "idle" && server.status === "idle") return "idle";
   if (causes.some((c) => c.severity === "critical") || browser.status === "error" || server.status === "error") {
@@ -399,6 +403,12 @@ function rowStatus(
     if (browser.status === "firing" || server.status === "firing") return "healthy";
     if (browser.status === "silent" || server.status === "silent") return "warning";
     return "warning";
+  }
+  if (serverPrimary) {
+    if (server.status === "firing") return "healthy";
+    if (server.status === "silent") return "warning";
+    if (browser.status === "firing") return "warning";
+    return "idle";
   }
   if (dedupe.status === "missing" && (browser.status === "firing" || server.status === "firing")) {
     return "warning";
@@ -420,15 +430,19 @@ function buildCausesForPlatform(
     .map((i) => i.last_error_message)
     .filter((m): m is string => Boolean(m));
   const primaryError = server.last_error_message || browser.last_error_message || errorMessages[0];
+  const skipSurfaceBalance = def.group === "pipe" || Boolean(def.server_primary);
 
   return diagnoseErrorMessage(def.id, primaryError, {
     missingDedupe:
       dedupe.status === "missing" &&
       (dedupe.browser_keys > 0 || dedupe.server_keys > 0) &&
-      def.group !== "pipe",
-    partialDedupe: dedupe.status === "partial" && def.group !== "pipe",
-    browserOnly: browser.status === "firing" && server.status === "idle" && def.group !== "pipe",
-    serverOnly: server.status === "firing" && browser.status === "idle" && def.group !== "pipe"
+      def.group !== "pipe" &&
+      !def.server_primary,
+    partialDedupe: dedupe.status === "partial" && def.group !== "pipe" && !def.server_primary,
+    browserOnly:
+      !skipSurfaceBalance && browser.status === "firing" && server.status === "idle",
+    serverOnly:
+      !skipSurfaceBalance && server.status === "firing" && browser.status === "idle"
   });
 }
 
@@ -471,7 +485,7 @@ export function buildPlatformMatrix(
       server,
       match_pct,
       paired_events,
-      status: rowStatus(browser, server, dedupe, causes, def.group),
+      status: rowStatus(browser, server, dedupe, causes, def.group, def.server_primary),
       expected_events: def.expected_events,
       event_coverage: coverage,
       coverage_pct,

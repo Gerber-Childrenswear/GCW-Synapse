@@ -67,6 +67,8 @@ Pipe rows: healthy when either surface is firing. Synapse theme embed + web pixe
 ## Live verify
 
 ```bash
+# Prefer healthy demo pulses (clears prior health, seeds Meta/TikTok/Pinterest/… green)
+curl -sS -X POST 'https://gcw-synapse-super.gcwsynapse.workers.dev/compare/demo-seed'
 curl -sS https://gcw-synapse-super.gcwsynapse.workers.dev/compare/platforms \
   | jq '.matrix.platforms[] | {id, status, dedupe:.dedupe.status, pct:.dedupe.confirmation_pct}'
 ```

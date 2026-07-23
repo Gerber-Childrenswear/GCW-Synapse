@@ -49,11 +49,15 @@ Platforms expected core set: `Pageview`, `ViewContent`, `AddToCart`, `InitiateCh
 ## Verify
 
 ```bash
-# After clean paired seeds
+# Reset stale pulses, then seed healthy Meta/TikTok pairs (default)
+curl -sS -X POST https://gcw-synapse-super.gcwsynapse.workers.dev/ops/reset-health
+curl -sS -X POST 'https://gcw-synapse-super.gcwsynapse.workers.dev/compare/demo-seed'
 curl -sS https://gcw-synapse-super.gcwsynapse.workers.dev/compare/platforms \
-  | jq '.matrix.platforms[] | select(.id=="tiktok") | {status, match_pct, dedupe}'
+  | jq '.matrix.platforms[] | select(.id=="tiktok" or .id=="meta") | {id, status, match_pct, dedupe}'
 ```
 
 Healthy target: `status=healthy`, `dedupe.status=confirmed`, `confirmation_pct=100`.
+
+Diagnostic (intentionally broken) seed: `POST /compare/demo-seed?scenario=broken`.
 
 Live storefront: GTM Preview on `gcw-dev` — confirm TikTok tags fire with `event_id` after consent; headless often misses consent-gated pixels.
