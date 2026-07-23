@@ -201,10 +201,11 @@ const EDGE_CHECKS: EdgeCheckDefinition[] = [
     expectedStatuses: [302],
     group: "guardrails"
   },
+  { id: "compare-platforms", label: "Compare Platforms", path: "/compare/platforms", method: "GET", expectedStatuses: [200], group: "runtime" },
   {
-    id: "compare-platforms",
-    label: "Compare Platforms",
-    path: "/compare/platforms",
+    id: "compare-browser",
+    label: "Compare Browser Dual-run",
+    path: "/compare/browser",
     method: "GET",
     expectedStatuses: [200],
     group: "runtime"
@@ -218,11 +219,35 @@ const EDGE_CHECKS: EdgeCheckDefinition[] = [
     group: "runtime"
   },
   {
+    id: "ops-connection",
+    label: "Ops Connection",
+    path: "/ops/connection",
+    method: "GET",
+    expectedStatuses: [200],
+    group: "webhooks"
+  },
+  {
+    id: "ops-wire",
+    label: "Ops Wire (gcw-dev)",
+    path: "/ops/wire?shop=gcw-dev.myshopify.com",
+    method: "GET",
+    expectedStatuses: [200],
+    group: "webhooks"
+  },
+  {
+    id: "compat-ids",
+    label: "Compatibility IDs",
+    path: "/compatibility/ids",
+    method: "GET",
+    expectedStatuses: [200],
+    group: "guardrails"
+  },
+  {
     id: "guard-compat",
-    label: "Compatibility Guardrail",
+    label: "Compatibility GA4",
     path: "/compatibility/ga4-id",
     method: "GET",
-    expectedStatuses: [501],
+    expectedStatuses: [200],
     group: "guardrails"
   }
 ];

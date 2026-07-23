@@ -705,7 +705,7 @@ async function wireShopToSynapse(
     expires_in: token.expires_in,
     pixel,
     webhooks,
-    cdn: `${appOrigin}/gcw-synapse.js?v=1.3.1`,
+    cdn: `${appOrigin}/gcw-synapse.js?v=1.4.0`,
     beacon: `${appOrigin}/browser/beacon`,
     compatibility_ids: `${appOrigin}/compatibility/ids`
   };
@@ -1370,7 +1370,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
       { id: "shopify_webhook_secret", label: "Shopify webhook HMAC secret", ok: webhookSecret, detail: webhookSecret ? "set" : "missing" },
       { id: "shopify_scopes", label: "Install scopes (lean)", ok: scopes.length > 0 && !scopes.includes("read_all_orders"), detail: scopes },
       { id: "oauth_callback", label: "OAuth callback host", ok: appUrlOk, detail: `${url.origin}/auth/shopify/callback` },
-      { id: "cdn_script", label: "Storefront CDN script", ok: true, detail: `${url.origin}/gcw-synapse.js?v=1.3.1` },
+      { id: "cdn_script", label: "Storefront CDN script", ok: true, detail: `${url.origin}/gcw-synapse.js?v=1.4.0` },
       { id: "browser_beacon", label: "Browser beacon", ok: true, detail: `${url.origin}/browser/beacon` },
       {
         id: "gtm_forward",
@@ -1792,6 +1792,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
     const healthSummary = getChannelHealthSummary(90, 5);
     const issues = getChannelTroubleshooting(healthSummary);
     const parity = getParityModel();
+    await hydrateBrowserEventsFromCache(env);
     const browserParity = getBrowserParityReport(5);
     const launch = buildLaunchReadiness(parity, browserParity);
 
@@ -1803,6 +1804,10 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
       browser_parity: {
         matched_rate_pct: browserParity.matched_rate_pct,
         mismatch_rate_pct: browserParity.mismatch_rate_pct,
+        volume_match_pct: browserParity.volume_match_pct,
+        fuzzy_paired: browserParity.fuzzy_paired,
+        cart_total_coverage_pct: browserParity.cart_total_coverage_pct,
+        product_id_coverage_pct: browserParity.product_id_coverage_pct,
         paired_events: browserParity.paired_events,
         synapse_events: browserParity.synapse_events,
         elevar_events: browserParity.elevar_events,

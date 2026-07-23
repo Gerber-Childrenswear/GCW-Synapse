@@ -41,8 +41,8 @@ const USER_CONTEXT_FIELDS: EventField[] = [
     type: "string",
     required: true,
     path: "user_properties.visitor_type",
-    description: "guest or logged_in",
-    example: "logged_in"
+    description: "Guest or Logged In (Elevar title case)",
+    example: "Logged In"
   },
   {
     name: "customer_id",

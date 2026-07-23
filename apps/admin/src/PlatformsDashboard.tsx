@@ -405,11 +405,17 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
       ? String((uiModel.launch_readiness as { status?: string }).status ?? "—")
       : "—";
   const browserParity = uiModel?.browser_parity;
+  const launchChecks =
+    uiModel?.launch_readiness &&
+    typeof uiModel.launch_readiness === "object" &&
+    Array.isArray(uiModel.launch_readiness.checks)
+      ? uiModel.launch_readiness.checks
+      : [];
+  const dualRunRows = [...(browserParity?.by_event ?? [])].sort((a, b) => a.event.localeCompare(b.event));
+  const volumePct = browserParity?.volume_match_pct ?? browserParity?.matched_rate_pct;
   const browserParityHold =
     browserParity?.status === "alert" ||
-    (typeof browserParity?.matched_rate_pct === "number" &&
-      browserParity.matched_rate_pct < 95 &&
-      (browserParity.paired_events ?? 0) > 0);
+    (typeof volumePct === "number" && volumePct < 80 && (browserParity?.paired_events ?? 0) > 0);
   const launchStatus =
     (data?.totals.critical_causes ?? 0) > 0 || (data?.totals.critical ?? 0) > 0
       ? "HOLD"
@@ -488,10 +494,10 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
         </div>
         <div className="summary-card">
           <span className="label">Browser dual-run</span>
-          <strong>{formatPct(browserParity?.matched_rate_pct)}</strong>
+          <strong>{formatPct(volumePct)}</strong>
           <small>
             {browserParity
-              ? `${browserParity.paired_events ?? 0} paired · ${browserParity.status ?? "—"}`
+              ? `${browserParity.synapse_events ?? 0} Synapse · ${browserParity.elevar_events ?? 0} Elevar · fuzzy ${browserParity.fuzzy_paired ?? 0}`
               : "waiting for Synapse + Elevar beacons"}
           </small>
         </div>
@@ -523,13 +529,74 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
             {(data?.totals.critical_causes ?? 0) > 0
               ? "Blocked by critical destination causes"
               : browserParityHold
-                ? "HOLD — browser dual-run below 95%"
+                ? "HOLD — browser dual-run volume below 80%"
                 : launchStatus === "READY"
                   ? "Connected — waiting for storefront dual-run traffic"
                   : "GO / HOLD from readiness + browser parity"}
           </small>
         </div>
       </div>
+
+      {(dualRunRows.length > 0 || launchChecks.length > 0) && (
+        <div className="dual-run-panel">
+          <div className="dual-run-block">
+            <h3>Synapse vs Elevar (browser)</h3>
+            <p className="muted">Live dual-run volume — Synapse should match or exceed Elevar per event.</p>
+            {browserParity ? (
+              <p className="field-coverage muted">
+                Field coverage: cart_total {formatPct(browserParity.cart_total_coverage_pct)} · product ids{" "}
+                {formatPct(browserParity.product_id_coverage_pct)}
+              </p>
+            ) : null}
+            {dualRunRows.length === 0 ? (
+              <p className="muted">No dual-run beacons yet. Browse gcw-dev with both embeds on.</p>
+            ) : (
+              <table className="dual-run-table">
+                <thead>
+                  <tr>
+                    <th>Event</th>
+                    <th>Synapse</th>
+                    <th>Elevar</th>
+                    <th>Delta</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dualRunRows.map((row) => {
+                    const delta = row.synapse - row.elevar;
+                    return (
+                      <tr key={row.event}>
+                        <td>
+                          <code>{row.event}</code>
+                        </td>
+                        <td>{row.synapse}</td>
+                        <td>{row.elevar}</td>
+                        <td className={delta < 0 ? "bad" : delta > 0 ? "ok" : ""}>
+                          {delta > 0 ? `+${delta}` : delta}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+          <div className="dual-run-block">
+            <h3>Launch checks</h3>
+            <ul className="launch-checks">
+              {launchChecks.length === 0 ? (
+                <li className="muted">No launch checks in ui-model yet.</li>
+              ) : (
+                launchChecks.map((check) => (
+                  <li key={check.id || check.detail} className={statusClass(String(check.status || ""))}>
+                    <strong>{String(check.status || "—").toUpperCase()}</strong>{" "}
+                    <span>{check.detail || check.id}</span>
+                  </li>
+                ))
+              )}
+            </ul>
+          </div>
+        </div>
+      )}
 
       <div className="status-filters">
         {(["all", "critical", "warning", "healthy", "idle"] as const).map((value) => (

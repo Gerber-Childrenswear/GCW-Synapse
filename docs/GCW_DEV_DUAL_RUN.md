@@ -7,7 +7,7 @@ Dev store only — both stacks stay **on** so we can compare.
 | Piece | State |
 |---|---|
 | Elevar app embed | **ON** (do not disable yet) |
-| Synapse theme embed | **ON** — script `gcw-synapse.js?v=1.3.0`, beacon 100% |
+| Synapse theme embed | **ON** — script `gcw-synapse.js?v=1.4.0`, beacon 100% |
 | Synapse web pixel | **ON** — checkout → `/browser/beacon` |
 | Purchase webhooks | **ON** → Worker |
 | Worker `RUNTIME_MODE` | **`forward`** — purchases post to sGTM (`GTM_SERVER_URL`) |
@@ -26,9 +26,19 @@ Web GTM stays `GTM-TKW58K8` on this storefront; sGTM is `GTM-N45F3JCC` via the l
 
 In **Theme → App embeds → GCW Synapse**, set script URL to:
 
-`https://gcw-synapse-super.gcwsynapse.workers.dev/gcw-synapse.js?v=1.3.0`
+`https://gcw-synapse-super.gcwsynapse.workers.dev/gcw-synapse.js?v=1.4.0`
 
 Beacon sample rate: **100%**. Keep Elevar enabled.
+
+## v1.4.0 beat-Elevar field parity
+
+- `cart_total` on ATC / remove / view_cart / checkout steps / purchase
+- `ecommerce.currency` + `currencyCode` (GTM vars that read either)
+- UTMs on dataLayer `marketing` + cart attributes (`utm_content` / `utm_term` too)
+- `cart_contents.products` on `dl_view_cart` / `dl_user_data`
+- Visitor type title case: **`Logged In` / `Guest`** (Elevar GTM contract)
+- Cart reconcile after mutate + XHR hook
+- Admin dual-run table + cart_total / product_id field coverage
 
 ## Expectation
 

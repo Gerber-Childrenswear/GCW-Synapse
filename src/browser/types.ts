@@ -16,7 +16,8 @@ export type SynapseProduct = {
 };
 
 export type SynapseUserProperties = {
-  visitor_type: "logged_in" | "guest";
+  /** Elevar GTM contract uses title case: "Logged In" | "Guest". */
+  visitor_type: "Logged In" | "Guest";
   customer_id?: string;
   customer_email?: string;
   customer_first_name?: string;
@@ -24,6 +25,11 @@ export type SynapseUserProperties = {
   customer_phone?: string;
   customer_order_count?: string;
   customer_total_spent?: string;
+  customer_address_1?: string;
+  customer_city?: string;
+  customer_province_code?: string;
+  customer_zip?: string;
+  customer_country_code?: string;
 };
 
 export type SynapseConfig = {
@@ -89,6 +95,11 @@ export type SynapseDataLayerEvent = {
   user_properties?: SynapseUserProperties;
   marketing?: {
     landing_site?: string;
+    utm_source?: string;
+    utm_medium?: string;
+    utm_campaign?: string;
+    utm_content?: string;
+    utm_term?: string;
   };
   ecommerce?: Record<string, unknown>;
   [key: string]: unknown;

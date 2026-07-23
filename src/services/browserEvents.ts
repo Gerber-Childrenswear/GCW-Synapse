@@ -22,6 +22,10 @@ export type BrowserParityReport = {
   volume_match_pct: number;
   /** Fuzzy pairs matched by shop+event+product within a time window. */
   fuzzy_paired: number;
+  /** % of Synapse core funnel events that include cart_total (Elevar field completeness). */
+  cart_total_coverage_pct: number;
+  /** % of Synapse core funnel events that include at least one product id. */
+  product_id_coverage_pct: number;
   paired_events: number;
   synapse_events: number;
   elevar_events: number;
@@ -37,7 +41,31 @@ export type BrowserParityReport = {
 const CORE_FUNNEL = new Set([
   "dl_view_item",
   "dl_add_to_cart",
+  "dl_view_cart",
   "dl_begin_checkout",
+  "dl_purchase"
+]);
+
+const CART_TOTAL_EVENTS = new Set([
+  "dl_user_data",
+  "dl_add_to_cart",
+  "dl_remove_from_cart",
+  "dl_view_cart",
+  "dl_begin_checkout",
+  "dl_add_shipping_info",
+  "dl_add_payment_info",
+  "dl_purchase"
+]);
+
+const PRODUCT_ID_EVENTS = new Set([
+  "dl_view_item",
+  "dl_select_item",
+  "dl_add_to_cart",
+  "dl_remove_from_cart",
+  "dl_view_cart",
+  "dl_begin_checkout",
+  "dl_add_shipping_info",
+  "dl_add_payment_info",
   "dl_purchase"
 ]);
 
@@ -254,12 +282,39 @@ export function getBrowserParityReport(thresholdPct = 5): BrowserParityReport {
   const matchedRate = volumeMatchPct;
   const alert = volumePaired > 0 && mismatchRate > thresholdPct;
 
+  let cartTotalEligible = 0;
+  let cartTotalPresent = 0;
+  let productIdEligible = 0;
+  let productIdPresent = 0;
+  for (const syn of synapseByKey.values()) {
+    if (CART_TOTAL_EVENTS.has(syn.event)) {
+      cartTotalEligible += 1;
+      if (syn.cart_total != null && String(syn.cart_total).trim() !== "") {
+        cartTotalPresent += 1;
+      }
+    }
+    if (PRODUCT_ID_EVENTS.has(syn.event)) {
+      productIdEligible += 1;
+      if (syn.product_ids.length > 0) productIdPresent += 1;
+    }
+  }
+  const cartTotalCoveragePct =
+    cartTotalEligible > 0
+      ? Number(((cartTotalPresent / cartTotalEligible) * 100).toFixed(2))
+      : 100;
+  const productIdCoveragePct =
+    productIdEligible > 0
+      ? Number(((productIdPresent / productIdEligible) * 100).toFixed(2))
+      : 100;
+
   return {
     threshold_pct: thresholdPct,
     mismatch_rate_pct: Number(mismatchRate.toFixed(2)),
     matched_rate_pct: matchedRate,
     volume_match_pct: volumeMatchPct,
     fuzzy_paired: fuzzyPaired,
+    cart_total_coverage_pct: cartTotalCoveragePct,
+    product_id_coverage_pct: productIdCoveragePct,
     paired_events: volumePaired,
     synapse_events: counts.synapse_events,
     elevar_events: counts.elevar_events,

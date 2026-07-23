@@ -3,7 +3,8 @@ import type { SynapseConfig, SynapseUserProperties } from "./types";
 export function buildUserProperties(config: SynapseConfig): SynapseUserProperties {
   const customer = config.customer;
   const props: SynapseUserProperties = {
-    visitor_type: customer?.id ? "logged_in" : "guest"
+    // Match Elevar / resolveVisitorType title-case for GTM dlv - Global - Visitor Type.
+    visitor_type: customer?.id || customer?.email ? "Logged In" : "Guest"
   };
 
   if (customer?.id != null) props.customer_id = String(customer.id);

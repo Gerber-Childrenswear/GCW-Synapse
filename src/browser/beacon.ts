@@ -36,7 +36,7 @@ function leanEcommerce(ecommerce: unknown): unknown {
   const out: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(root)) {
-    if (key === "currencyCode") {
+    if (key === "currencyCode" || key === "currency") {
       out[key] = value;
       continue;
     }

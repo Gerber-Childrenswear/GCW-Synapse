@@ -56,6 +56,11 @@ function emit(config: SynapseConfig, event: SynapseDataLayerEvent): SynapseDataL
     user_properties: event.user_properties ?? buildUserProperties(config),
     marketing: {
       landing_site: session.landing_site,
+      ...(session.utm_source ? { utm_source: session.utm_source } : {}),
+      ...(session.utm_medium ? { utm_medium: session.utm_medium } : {}),
+      ...(session.utm_campaign ? { utm_campaign: session.utm_campaign } : {}),
+      ...(session.utm_content ? { utm_content: session.utm_content } : {}),
+      ...(session.utm_term ? { utm_term: session.utm_term } : {}),
       ...(event.marketing || {})
     }
   };
@@ -69,15 +74,39 @@ function emit(config: SynapseConfig, event: SynapseDataLayerEvent): SynapseDataL
   return pushed;
 }
 
+function cartTotalFromProducts(products: SynapseProduct[], fallback?: string): string {
+  if (fallback && fallback !== "0" && fallback !== "0.0" && fallback !== "0.00") return fallback;
+  let sum = 0;
+  let any = false;
+  for (const p of products) {
+    const price = Number.parseFloat(String(p.price ?? "0"));
+    const qty = Number.parseFloat(String(p.quantity ?? "1"));
+    if (Number.isFinite(price) && Number.isFinite(qty)) {
+      sum += price * qty;
+      any = true;
+    }
+  }
+  return any ? sum.toFixed(2) : fallback ?? "0.0";
+}
+
+/** Elevar pushes currencyCode; some GTM vars also read ecommerce.currency. */
+function withCurrency(config: SynapseConfig, ecommerce: Record<string, unknown>): Record<string, unknown> {
+  const code = config.currency || "USD";
+  return {
+    currencyCode: code,
+    currency: code,
+    ...ecommerce
+  };
+}
+
 export function emitUserData(config: SynapseConfig): void {
   const cartItems = config.cart?.items ?? [];
   emit(config, {
     event: "dl_user_data",
     cart_total: config.cart?.total ?? "0.0",
-    ecommerce: {
-      currencyCode: config.currency,
+    ecommerce: withCurrency(config, {
       cart_contents: { products: cartItems }
-    }
+    })
   });
 }
 
@@ -101,8 +130,7 @@ export function emitViewItem(config: SynapseConfig): void {
 
   emit(config, {
     event: "dl_view_item",
-    ecommerce: {
-      currencyCode: config.currency,
+    ecommerce: withCurrency(config, {
       detail: {
         actionField: {
           list: config.page?.path || location.pathname,
@@ -110,7 +138,7 @@ export function emitViewItem(config: SynapseConfig): void {
         },
         products: [product]
       }
-    }
+    })
   });
 }
 
@@ -120,10 +148,7 @@ export function emitViewItemList(config: SynapseConfig): void {
 
   emit(config, {
     event: "dl_view_item_list",
-    ecommerce: {
-      currencyCode: config.currency,
-      impressions
-    }
+    ecommerce: withCurrency(config, { impressions })
   });
 }
 
@@ -133,19 +158,17 @@ export function emitViewSearchResults(config: SynapseConfig): void {
 
   emit(config, {
     event: "dl_view_search_results",
-    ecommerce: {
-      currencyCode: config.currency,
+    ecommerce: withCurrency(config, {
       actionField: { list: "search results" },
       impressions
-    }
+    })
   });
 }
 
 export function emitSelectItem(config: SynapseConfig, product: SynapseProduct, list?: string): void {
   emit(config, {
     event: "dl_select_item",
-    ecommerce: {
-      currencyCode: config.currency,
+    ecommerce: withCurrency(config, {
       click: {
         actionField: {
           list: list || location.pathname,
@@ -153,7 +176,7 @@ export function emitSelectItem(config: SynapseConfig, product: SynapseProduct, l
         },
         products: [product]
       }
-    }
+    })
   });
 }
 
@@ -161,13 +184,13 @@ export function emitAddToCart(config: SynapseConfig, products: SynapseProduct[])
   if (!products.length) return;
   emit(config, {
     event: "dl_add_to_cart",
-    ecommerce: {
-      currencyCode: config.currency,
+    cart_total: cartTotalFromProducts(products, config.cart?.total),
+    ecommerce: withCurrency(config, {
       add: {
         actionField: { list: location.pathname },
         products
       }
-    }
+    })
   });
 }
 
@@ -175,26 +198,27 @@ export function emitRemoveFromCart(config: SynapseConfig, products: SynapseProdu
   if (!products.length) return;
   emit(config, {
     event: "dl_remove_from_cart",
-    ecommerce: {
-      currencyCode: config.currency,
+    cart_total: config.cart?.total ?? "0.0",
+    ecommerce: withCurrency(config, {
       remove: {
         actionField: { list: location.pathname },
         products
       }
-    }
+    })
   });
 }
 
 export function emitViewCart(config: SynapseConfig): void {
-  const impressions = config.cart?.items ?? [];
+  const items = config.cart?.items ?? [];
   emit(config, {
     event: "dl_view_cart",
     cart_total: config.cart?.total ?? "0.0",
-    ecommerce: {
-      currencyCode: config.currency,
+    ecommerce: withCurrency(config, {
       actionField: {},
-      impressions
-    }
+      // Elevar GTM reads cart_contents.products; keep impressions for list-style tags.
+      cart_contents: { products: items },
+      impressions: items
+    })
   });
 }
 
@@ -202,13 +226,13 @@ export function emitBeginCheckout(config: SynapseConfig, products?: SynapseProdu
   const items = products ?? config.cart?.items ?? [];
   emit(config, {
     event: "dl_begin_checkout",
-    ecommerce: {
-      currencyCode: config.currency,
+    cart_total: cartTotalFromProducts(items, config.cart?.total),
+    ecommerce: withCurrency(config, {
       checkout: {
         actionField: { step: "1" },
         products: items
       }
-    }
+    })
   });
 }
 
@@ -216,13 +240,13 @@ export function emitAddShippingInfo(config: SynapseConfig, products?: SynapsePro
   const items = products ?? config.cart?.items ?? [];
   emit(config, {
     event: "dl_add_shipping_info",
-    ecommerce: {
-      currencyCode: config.currency,
+    cart_total: cartTotalFromProducts(items, config.cart?.total),
+    ecommerce: withCurrency(config, {
       checkout: {
         actionField: { step: "2" },
         products: items
       }
-    }
+    })
   });
 }
 
@@ -230,13 +254,13 @@ export function emitAddPaymentInfo(config: SynapseConfig, products?: SynapseProd
   const items = products ?? config.cart?.items ?? [];
   emit(config, {
     event: "dl_add_payment_info",
-    ecommerce: {
-      currencyCode: config.currency,
+    cart_total: cartTotalFromProducts(items, config.cart?.total),
+    ecommerce: withCurrency(config, {
       checkout: {
         actionField: { step: "3" },
         products: items
       }
-    }
+    })
   });
 }
 
@@ -247,13 +271,13 @@ export function emitPurchase(
 ): void {
   emit(config, {
     event: "dl_purchase",
-    ecommerce: {
-      currencyCode: config.currency,
+    cart_total: actionField.revenue || cartTotalFromProducts(products, config.cart?.total),
+    ecommerce: withCurrency(config, {
       purchase: {
         actionField,
         products
       }
-    }
+    })
   });
 }
 

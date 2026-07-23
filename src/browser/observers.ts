@@ -6,6 +6,7 @@ import {
   emitSelectItem,
   emitSignUp,
   emitSubscribe,
+  emitUserData,
   emitViewCart
 } from "./events";
 import { toSynapseProduct } from "./product";
@@ -37,11 +38,37 @@ function cartUrl(input: RequestInfo | URL): string {
 }
 
 function isCartMutateUrl(url: string): boolean {
-  return /\/cart\/(add|change)(\.js)?(\?|$)/i.test(url);
+  return /\/cart\/(add|change|update|clear)(\.js)?(\?|$)/i.test(url);
+}
+
+/** Elevar-style cart_reconcile: refresh config.cart from /cart.js and re-push dl_user_data. */
+async function reconcileCart(config: SynapseConfig): Promise<void> {
+  try {
+    const res = await fetch("/cart.js", {
+      credentials: "same-origin",
+      headers: { Accept: "application/json" }
+    });
+    if (!res.ok) return;
+    const body = (await res.json()) as Record<string, unknown>;
+    const items = Array.isArray(body.items)
+      ? (body.items as Array<Record<string, unknown>>).map(parseCartLine)
+      : [];
+    const total =
+      typeof body.total_price === "number"
+        ? (body.total_price / 100).toFixed(2)
+        : String(body.total_price ?? config.cart?.total ?? "0.0");
+    config.cart = {
+      total,
+      itemCount: typeof body.item_count === "number" ? body.item_count : items.length,
+      items
+    };
+    emitUserData(config);
+  } catch {
+    // Cart API may be unavailable.
+  }
 }
 
 export function attachObservers(config: SynapseConfig): void {
-  // Intercept only cart mutate fetches — all other fetch traffic is untouched after a cheap URL check.
   if (typeof window.fetch === "function") {
     const originalFetch = window.fetch.bind(window);
     window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -57,10 +84,11 @@ export function attachObservers(config: SynapseConfig): void {
             ? (body.items as Array<Record<string, unknown>>).map(parseCartLine)
             : [parseCartLine(body)];
           emitAddToCart(config, items);
+          void reconcileCart(config);
           return response;
         }
 
-        if (/\/cart\/change(\.js)?/i.test(url)) {
+        if (/\/cart\/(change|update|clear)(\.js)?/i.test(url)) {
           const body = (await response.clone().json()) as Record<string, unknown>;
           let requestQuantity: number | undefined;
           if (typeof init?.body === "string") {
@@ -92,11 +120,32 @@ export function attachObservers(config: SynapseConfig): void {
           }
 
           if (removed.length) emitRemoveFromCart(config, removed);
+          void reconcileCart(config);
         }
       } catch {
         // ignore parse errors
       }
       return response;
+    };
+  }
+
+  if (typeof XMLHttpRequest !== "undefined") {
+    const proto = XMLHttpRequest.prototype;
+    const open = proto.open;
+    const send = proto.send;
+    proto.open = function (method: string, url: string | URL, ...rest: unknown[]) {
+      (this as XMLHttpRequest & { __synapseCartUrl?: string }).__synapseCartUrl = String(url);
+      return open.apply(this, [method, url, ...rest] as Parameters<typeof open>);
+    };
+    proto.send = function (...args: unknown[]) {
+      const xhr = this as XMLHttpRequest & { __synapseCartUrl?: string };
+      const url = xhr.__synapseCartUrl || "";
+      if (isCartMutateUrl(url)) {
+        xhr.addEventListener("load", () => {
+          if (xhr.status >= 200 && xhr.status < 300) void reconcileCart(config);
+        });
+      }
+      return send.apply(this, args as Parameters<typeof send>);
     };
   }
 
@@ -124,6 +173,7 @@ export function attachObservers(config: SynapseConfig): void {
             url: config.product.url
           })
         ]);
+        void reconcileCart(config);
       }
 
       if (action.includes("/account") || form.id?.toLowerCase().includes("create_customer")) {
@@ -164,15 +214,22 @@ export function attachObservers(config: SynapseConfig): void {
         if (link) {
           const href = link.getAttribute("href") || "";
           const name = (link.getAttribute("aria-label") || link.textContent || "").trim() || href;
+          const handleMatch = href.match(/\/products\/([^/?#]+)/);
+          const fromList = [...(config.collection?.products || []), ...(config.search?.products || [])].find(
+            (p) =>
+              (handleMatch && (p.url || "").includes(handleMatch[1] || "")) ||
+              (name && p.name && p.name.toLowerCase() === name.toLowerCase())
+          );
           emitSelectItem(
             config,
-            toSynapseProduct({
-              name,
-              price: "0.0",
-              productId: undefined,
-              variantId: undefined,
-              list: config.collection?.path || "search results"
-            }),
+            fromList ||
+              toSynapseProduct({
+                name,
+                price: "0.0",
+                productId: undefined,
+                variantId: undefined,
+                list: config.collection?.path || "search results"
+              }),
             config.collection?.path || "search results"
           );
         }
@@ -191,6 +248,7 @@ export function attachObservers(config: SynapseConfig): void {
       );
       if (remove && config.cart?.items?.[0]) {
         emitRemoveFromCart(config, [config.cart.items[0]]);
+        void reconcileCart(config);
       }
     },
     true

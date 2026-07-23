@@ -99,7 +99,9 @@ export function syncCartAttributes(session: SynapseSession): void {
             synapse_landing_site: session.landing_site,
             synapse_utm_source: session.utm_source ?? "",
             synapse_utm_medium: session.utm_medium ?? "",
-            synapse_utm_campaign: session.utm_campaign ?? ""
+            synapse_utm_campaign: session.utm_campaign ?? "",
+            synapse_utm_content: session.utm_content ?? "",
+            synapse_utm_term: session.utm_term ?? ""
           }
         }),
         credentials: "same-origin",

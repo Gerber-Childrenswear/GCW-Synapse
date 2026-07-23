@@ -57,10 +57,12 @@ function postElevarMirror(
 
   const ecommerce = row.ecommerce;
   const currency =
-    ecommerce &&
-    typeof ecommerce === "object" &&
-    typeof (ecommerce as { currencyCode?: unknown }).currencyCode === "string"
-      ? (ecommerce as { currencyCode: string }).currencyCode
+    ecommerce && typeof ecommerce === "object"
+      ? typeof (ecommerce as { currencyCode?: unknown }).currencyCode === "string"
+        ? (ecommerce as { currencyCode: string }).currencyCode
+        : typeof (ecommerce as { currency?: unknown }).currency === "string"
+          ? (ecommerce as { currency: string }).currency
+          : undefined
       : undefined;
 
   const body = JSON.stringify({

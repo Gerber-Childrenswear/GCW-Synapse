@@ -359,6 +359,10 @@ export type UiModel = {
   browser_parity?: {
     matched_rate_pct?: number;
     mismatch_rate_pct?: number;
+    volume_match_pct?: number;
+    fuzzy_paired?: number;
+    cart_total_coverage_pct?: number;
+    product_id_coverage_pct?: number;
     paired_events?: number;
     synapse_events?: number;
     elevar_events?: number;
@@ -382,13 +386,25 @@ export type UiModel = {
     issues?: TroubleshootingIssue[];
     links?: Record<string, string[]> | Array<{ label: string; href: string }>;
   };
-  launch_readiness?: unknown;
+  launch_readiness?: {
+    status?: string;
+    rationale?: string[];
+    checks?: Array<{ id?: string; status?: string; detail?: string }>;
+  };
   recent?: {
     channel_events?: RecentChannelEvent[];
     browser_events?: unknown[];
     shadow_comparisons?: unknown[];
   };
 };
+
+export async function getOpsConnection(): Promise<Record<string, unknown>> {
+  return requestJson<Record<string, unknown>>("/ops/connection", "GET");
+}
+
+export async function wireShop(shop = "gcw-dev.myshopify.com"): Promise<Record<string, unknown>> {
+  return requestJson<Record<string, unknown>>(`/ops/wire?shop=${encodeURIComponent(shop)}`, "POST");
+}
 
 export async function seedDemoPlatformTraffic(): Promise<{ ok: boolean; seeded: number }> {
   return requestJson<{ ok: boolean; seeded: number }>("/compare/demo-seed", "POST");
