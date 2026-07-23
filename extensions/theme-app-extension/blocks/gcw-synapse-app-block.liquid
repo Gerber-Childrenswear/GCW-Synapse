@@ -136,8 +136,8 @@
       "step": 5,
       "unit": "%",
       "label": "Beacon sample rate (views)",
-      "default": 20,
-      "info": "GTM still gets 100% of dl_* via dataLayer. Beacons are ops-only; funnel events always send."
+      "default": 100,
+      "info": "During dual-run keep at 100%. GTM still gets 100% of dl_* via dataLayer; beacons feed Worker parity. Core browse + funnel events always send regardless."
     },
     {
       "type": "text",
@@ -149,7 +149,7 @@
       "type": "text",
       "id": "script_url",
       "label": "Data layer script URL",
-      "default": "https://gcw-synapse-super.gcwsynapse.workers.dev/gcw-synapse.js?v=1.1.0"
+      "default": "https://gcw-synapse-super.gcwsynapse.workers.dev/gcw-synapse.js?v=1.2.0"
     }
   ]
 }

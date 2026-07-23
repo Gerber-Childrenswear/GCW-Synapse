@@ -23,6 +23,10 @@ REDDIT_PIXEL_ID = "a2_iql6tlstlbj4"
 GOOGLE_ADS_CONVERSION_ID = "874796722"
 BLOOMREACH_ACCOUNT_ID = "7858"
 
+[[kv_namespaces]]
+binding = "SYNAPSE_STATE"
+id = "ab156619a930418c834e53588103970b"
+
 # Configure as secrets when ready:
 # wrangler secret put SYNAPSE_INGRESS_TOKEN
 # wrangler secret put SHOPIFY_WEBHOOK_SECRET

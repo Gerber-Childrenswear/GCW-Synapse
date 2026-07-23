@@ -138,6 +138,35 @@ export function getRecentBrowserEvents(limit = 50): BrowserEventRecord[] {
   return recent.slice(0, Math.max(1, Math.min(limit, 500)));
 }
 
+/** Snapshot for Cache API persistence across Worker isolates. */
+export function getBrowserEventsSnapshot(limit = 500): BrowserEventRecord[] {
+  return recent.slice(0, Math.max(1, Math.min(limit, maxRecords)));
+}
+
+/** Merge persisted records into in-memory maps (upsert by key). */
+export function hydrateBrowserEvents(records: BrowserEventRecord[]): number {
+  let loaded = 0;
+  for (const row of [...records].reverse()) {
+    if (!row || (row.source !== "synapse" && row.source !== "elevar")) continue;
+    if (!row.shop || !row.event || !row.key || !row.observed_at) continue;
+    const map = row.source === "synapse" ? synapseByKey : elevarByKey;
+    const normalized: BrowserEventRecord = {
+      ...row,
+      product_ids: Array.isArray(row.product_ids) ? row.product_ids : []
+    };
+    const existed = map.has(row.key);
+    map.set(row.key, normalized);
+    if (!existed) {
+      recent.unshift(normalized);
+      loaded += 1;
+    }
+  }
+  while (recent.length > maxRecords) {
+    recent.pop();
+  }
+  return loaded;
+}
+
 export function getBrowserEventCounts(): {
   synapse_events: number;
   elevar_events: number;

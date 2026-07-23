@@ -1,5 +1,6 @@
 type CloudflareEnv = {
   ASSETS: Fetcher;
+  SYNAPSE_STATE?: KVNamespace;
   SYNAPSE_ORIGIN_URL?: string;
   SYNAPSE_INGRESS_TOKEN?: string;
   PUBLIC_EVENT_ALLOWED_ORIGINS?: string;
@@ -68,6 +69,8 @@ import { buildPlatformMatrix } from "../src/services/platformMatrix";
 import {
   getBrowserParityReport,
   getRecentBrowserEvents,
+  getBrowserEventsSnapshot,
+  hydrateBrowserEvents,
   ingestBrowserEvent,
   resetBrowserEventsForTests
 } from "../src/services/browserEvents";
@@ -468,18 +471,40 @@ async function exchangeShopifyAccessToken(
   return { access_token: data.access_token, scope: data.scope || "" };
 }
 
-async function ensureSynapseWebPixel(
+async function obtainShopifyClientCredentialsToken(
   shop: string,
-  accessToken: string,
-  appOrigin: string
-): Promise<{ ok: boolean; detail: Record<string, unknown> }> {
-  const settings = {
-    beaconUrl: `${appOrigin}/browser/beacon`,
-    shopDomain: shop
+  apiKey: string,
+  apiSecret: string
+): Promise<{ access_token: string; scope: string; expires_in?: number }> {
+  const response = await fetch(`https://${shop}/admin/oauth/access_token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      client_id: apiKey,
+      client_secret: apiSecret,
+      grant_type: "client_credentials"
+    })
+  });
+  const data = (await response.json()) as {
+    access_token?: string;
+    scope?: string;
+    expires_in?: number;
+    error?: string;
   };
-  const settingsJson = JSON.stringify(settings);
+  if (!response.ok || !data.access_token) {
+    throw new Error(data.error || `Client credentials failed (${response.status})`);
+  }
+  return {
+    access_token: data.access_token,
+    scope: data.scope || "",
+    expires_in: data.expires_in
+  };
+}
 
-  const gql = async (query: string, variables?: Record<string, unknown>) => {
+type ShopifyGql = (query: string, variables?: Record<string, unknown>) => Promise<Record<string, unknown>>;
+
+function createShopifyGraphql(shop: string, accessToken: string): ShopifyGql {
+  return async (query, variables) => {
     const response = await fetch(`https://${shop}/admin/api/2025-10/graphql.json`, {
       method: "POST",
       headers: {
@@ -490,13 +515,35 @@ async function ensureSynapseWebPixel(
     });
     const json = (await response.json()) as {
       data?: Record<string, unknown>;
-      errors?: Array<{ message: string }>;
+      errors?: Array<{ message: string; extensions?: { code?: string } }>;
     };
-    if (!response.ok || json.errors?.length) {
-      throw new Error(json.errors?.map((e) => e.message).join("; ") || `GraphQL HTTP ${response.status}`);
+    if (!response.ok) {
+      throw new Error(`GraphQL HTTP ${response.status}`);
+    }
+    // Shopify returns RESOURCE_NOT_FOUND for missing webPixel — treat as empty data.
+    if (json.errors?.length) {
+      const onlyMissing = json.errors.every(
+        (e) => e.extensions?.code === "RESOURCE_NOT_FOUND" || /no web pixel/i.test(e.message)
+      );
+      if (!onlyMissing) {
+        throw new Error(json.errors.map((e) => e.message).join("; "));
+      }
     }
     return json.data ?? {};
   };
+}
+
+async function ensureSynapseWebPixel(
+  shop: string,
+  accessToken: string,
+  appOrigin: string
+): Promise<{ ok: boolean; detail: Record<string, unknown> }> {
+  const settings = {
+    beaconUrl: `${appOrigin}/browser/beacon`,
+    shopDomain: shop
+  };
+  const settingsJson = JSON.stringify(settings);
+  const gql = createShopifyGraphql(shop, accessToken);
 
   const existing = (await gql(`query { webPixel { id settings } }`)) as {
     webPixel?: { id?: string; settings?: string } | null;
@@ -548,6 +595,119 @@ async function ensureSynapseWebPixel(
   return {
     ok: true,
     detail: { action: "create", webPixel: created.webPixelCreate?.webPixel }
+  };
+}
+
+const WEBHOOK_TOPICS = [
+  { topic: "ORDERS_CREATE", path: "/webhooks/shopify/orders/create" },
+  { topic: "ORDERS_PAID", path: "/webhooks/shopify/orders/paid" },
+  { topic: "REFUNDS_CREATE", path: "/webhooks/shopify/refunds/create" }
+] as const;
+
+async function ensureSynapseWebhooks(
+  shop: string,
+  accessToken: string,
+  appOrigin: string
+): Promise<{ ok: boolean; detail: Record<string, unknown> }> {
+  const gql = createShopifyGraphql(shop, accessToken);
+  const listed = (await gql(`query {
+    webhookSubscriptions(first: 50) {
+      edges { node { id topic endpoint { __typename ... on WebhookHttpEndpoint { callbackUrl } } } }
+    }
+  }`)) as {
+    webhookSubscriptions?: {
+      edges?: Array<{
+        node: {
+          id: string;
+          topic: string;
+          endpoint?: { callbackUrl?: string };
+        };
+      }>;
+    };
+  };
+
+  const byTopic = new Map<string, { id: string; callbackUrl?: string }>();
+  for (const edge of listed.webhookSubscriptions?.edges ?? []) {
+    byTopic.set(edge.node.topic, {
+      id: edge.node.id,
+      callbackUrl: edge.node.endpoint?.callbackUrl
+    });
+  }
+
+  const results: Array<Record<string, unknown>> = [];
+  for (const row of WEBHOOK_TOPICS) {
+    const callbackUrl = `${appOrigin}${row.path}`;
+    const existing = byTopic.get(row.topic);
+    if (existing?.callbackUrl === callbackUrl) {
+      results.push({ topic: row.topic, action: "unchanged", id: existing.id, callbackUrl });
+      continue;
+    }
+    if (existing?.id) {
+      await gql(
+        `mutation($id: ID!) {
+          webhookSubscriptionDelete(id: $id) {
+            userErrors { message }
+            deletedWebhookSubscriptionId
+          }
+        }`,
+        { id: existing.id }
+      );
+    }
+    const created = (await gql(
+      `mutation($topic: WebhookSubscriptionTopic!, $url: URL!) {
+        webhookSubscriptionCreate(topic: $topic, webhookSubscription: { callbackUrl: $url, format: JSON }) {
+          userErrors { field message }
+          webhookSubscription { id topic endpoint { ... on WebhookHttpEndpoint { callbackUrl } } }
+        }
+      }`,
+      { topic: row.topic, url: callbackUrl }
+    )) as {
+      webhookSubscriptionCreate?: {
+        userErrors?: Array<{ message: string }>;
+        webhookSubscription?: { id?: string; topic?: string };
+      };
+    };
+    const errors = created.webhookSubscriptionCreate?.userErrors ?? [];
+    if (errors.length) {
+      results.push({ topic: row.topic, action: "error", errors });
+    } else {
+      results.push({
+        topic: row.topic,
+        action: existing ? "replaced" : "created",
+        webhook: created.webhookSubscriptionCreate?.webhookSubscription
+      });
+    }
+  }
+
+  const ok = results.every((r) => r.action !== "error");
+  return { ok, detail: { webhooks: results } };
+}
+
+async function wireShopToSynapse(
+  shop: string,
+  env: CloudflareEnv,
+  appOrigin: string
+): Promise<Record<string, unknown>> {
+  const apiKey = env.SHOPIFY_API_KEY;
+  const apiSecret = env.SHOPIFY_API_SECRET;
+  if (!apiKey || !apiSecret) {
+    return { ok: false, error: "Missing SHOPIFY_API_KEY / SHOPIFY_API_SECRET" };
+  }
+
+  const token = await obtainShopifyClientCredentialsToken(shop, apiKey, apiSecret);
+  const pixel = await ensureSynapseWebPixel(shop, token.access_token, appOrigin);
+  const webhooks = await ensureSynapseWebhooks(shop, token.access_token, appOrigin);
+
+  return {
+    ok: pixel.ok && webhooks.ok,
+    shop,
+    scope: token.scope,
+    expires_in: token.expires_in,
+    pixel,
+    webhooks,
+    cdn: `${appOrigin}/gcw-synapse.js?v=1.2.0`,
+    beacon: `${appOrigin}/browser/beacon`,
+    compatibility_ids: `${appOrigin}/compatibility/ids`
   };
 }
 
@@ -638,9 +798,13 @@ async function handleShopifyOAuth(
   try {
     const token = await exchangeShopifyAccessToken(shop, code, apiKey, apiSecret);
     const pixel = await ensureSynapseWebPixel(shop, token.access_token, appOrigin);
+    const webhooks = await ensureSynapseWebhooks(shop, token.access_token, appOrigin);
     const pixelStatus = pixel.ok
       ? `Web pixel ${String(pixel.detail.action)}d successfully.`
       : `Web pixel activation issue: ${JSON.stringify(pixel.detail.errors || pixel.detail)}`;
+    const webhookStatus = webhooks.ok
+      ? "Purchase/refund webhooks registered."
+      : `Webhook issue: ${JSON.stringify(webhooks.detail)}`;
 
     const handle = shop.replace(/\.myshopify\.com$/i, "");
     const appHome = `${appOrigin}/?shop=${encodeURIComponent(shop)}&embedded=1`;
@@ -665,6 +829,7 @@ async function handleShopifyOAuth(
   <p><strong>Shop:</strong> ${shop}</p>
   <p><strong>Scopes:</strong> ${token.scope || scopes}</p>
   <p>${pixelStatus}</p>
+  <p>${webhookStatus}</p>
   <p>Opening the platforms control panel…</p>
   <p>
     <a class="btn" href="${adminApp}">Open app in Shopify admin</a>
@@ -781,12 +946,58 @@ function getParityModel() {
 }
 
 const CHANNEL_CACHE_URL = "https://gcw-synapse-super.internal/channel-events-v2";
+const BROWSER_CACHE_URL = "https://gcw-synapse-super.internal/browser-events-v1";
+const BROWSER_KV_KEY = "browser-events-v1";
 
-async function clearChannelEventsCache(): Promise<void> {
+async function clearChannelEventsCache(env?: CloudflareEnv): Promise<void> {
   try {
     await caches.default.delete(CHANNEL_CACHE_URL);
     // Also drop legacy v1 cache that held demo-seed errors.
     await caches.default.delete("https://gcw-synapse-super.internal/channel-events-v1");
+    await caches.default.delete(BROWSER_CACHE_URL);
+    await env?.SYNAPSE_STATE?.delete(BROWSER_KV_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+async function persistBrowserEventsToCache(env?: CloudflareEnv): Promise<void> {
+  try {
+    // Merge any KV/cache rows we may be missing before writing, so concurrent
+    // isolates cannot clobber each other's synapse/elevar halves.
+    await hydrateBrowserEventsFromCache(env);
+    const events = getBrowserEventsSnapshot(500);
+    const body = JSON.stringify(events);
+    await caches.default.put(
+      BROWSER_CACHE_URL,
+      new Response(body, {
+        headers: {
+          "content-type": "application/json",
+          "cache-control": "max-age=86400"
+        }
+      })
+    );
+    await env?.SYNAPSE_STATE?.put(BROWSER_KV_KEY, body, { expirationTtl: 86400 });
+  } catch {
+    // ignore
+  }
+}
+
+async function hydrateBrowserEventsFromCache(env?: CloudflareEnv): Promise<void> {
+  try {
+    let events: Array<Record<string, unknown>> | null = null;
+    const fromKv = await env?.SYNAPSE_STATE?.get(BROWSER_KV_KEY, "json");
+    if (Array.isArray(fromKv)) {
+      events = fromKv as Array<Record<string, unknown>>;
+    } else {
+      const cached = await caches.default.match(BROWSER_CACHE_URL);
+      if (cached) {
+        const parsed = (await cached.json()) as Array<Record<string, unknown>>;
+        if (Array.isArray(parsed)) events = parsed;
+      }
+    }
+    if (!events?.length) return;
+    hydrateBrowserEvents(events as Parameters<typeof hydrateBrowserEvents>[0]);
   } catch {
     // ignore
   }
@@ -1076,7 +1287,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
       { id: "shopify_webhook_secret", label: "Shopify webhook HMAC secret", ok: webhookSecret, detail: webhookSecret ? "set" : "missing" },
       { id: "shopify_scopes", label: "Install scopes (lean)", ok: scopes.length > 0 && !scopes.includes("read_all_orders"), detail: scopes },
       { id: "oauth_callback", label: "OAuth callback host", ok: appUrlOk, detail: `${url.origin}/auth/shopify/callback` },
-      { id: "cdn_script", label: "Storefront CDN script", ok: true, detail: `${url.origin}/gcw-synapse.js?v=1.1.0` },
+      { id: "cdn_script", label: "Storefront CDN script", ok: true, detail: `${url.origin}/gcw-synapse.js?v=1.2.0` },
       { id: "browser_beacon", label: "Browser beacon", ok: true, detail: `${url.origin}/browser/beacon` },
       {
         id: "gtm_forward",
@@ -1120,12 +1331,43 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
     edgeEventsGenerated = 0;
     edgeEventsSuppressed = 0;
     edgeBrowserBeaconsAccepted = 0;
-    await clearChannelEventsCache();
+    await clearChannelEventsCache(env);
     return jsonResponse({
       ok: true,
       status: "reset",
       message: "Cleared in-memory health, browser parity, and demo-seed cache"
     });
+  }
+
+  if (
+    (request.method === "POST" || request.method === "GET") &&
+    (url.pathname === "/ops/wire" || url.pathname === "/ops/wire-shop")
+  ) {
+    const shopRaw =
+      url.searchParams.get("shop") ||
+      (request.method === "POST" ? undefined : "gcw-dev.myshopify.com") ||
+      "gcw-dev.myshopify.com";
+    let shop: string;
+    try {
+      shop = normalizeShopDomain(shopRaw.trim());
+    } catch (error) {
+      return jsonResponse(
+        { ok: false, error: error instanceof Error ? error.message : "Invalid shop" },
+        400
+      );
+    }
+    try {
+      const result = await wireShopToSynapse(shop, env, url.origin);
+      return jsonResponse(result, result.ok ? 200 : 500);
+    } catch (error) {
+      return jsonResponse(
+        {
+          ok: false,
+          error: error instanceof Error ? error.message : "Wire failed"
+        },
+        500
+      );
+    }
   }
 
   if (request.method === "GET" && url.pathname === "/runtime/summary") {
@@ -1504,6 +1746,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
 
   if (request.method === "GET" && url.pathname === "/compare/browser") {
     const limit = parseLimit(url.searchParams.get("limit"), 100);
+    await hydrateBrowserEventsFromCache(env);
     const browserParity = getBrowserParityReport(5);
     return jsonResponse({
       ok: true,
@@ -1523,6 +1766,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
       if (!eventName) {
         return jsonResponse({ ok: false, error: "event is required" }, 400);
       }
+      await hydrateBrowserEventsFromCache(env);
       const record = ingestBrowserEvent({
         source: "elevar",
         shop: typeof body.shop === "string" ? body.shop : undefined,
@@ -1537,6 +1781,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
             : undefined,
         observed_at: typeof body.observed_at === "string" ? body.observed_at : undefined
       });
+      await persistBrowserEventsToCache(env);
       return jsonResponse({ ok: true, key: record.key }, 202);
     } catch {
       return jsonResponse({ ok: false, error: "invalid_json" }, 400);
@@ -1557,6 +1802,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
 
   if (request.method === "GET" && url.pathname === "/launch/readiness") {
     const parity = getParityModel();
+    await hydrateBrowserEventsFromCache(env);
     const browserParity = getBrowserParityReport(5);
     const report = buildLaunchReadiness(parity, browserParity);
     return jsonResponse({
@@ -2148,6 +2394,7 @@ export default {
           ? (payload.marketing as { session_id?: string; landing_site?: string })
           : undefined;
 
+      await hydrateBrowserEventsFromCache(env);
       const ingested = ingestBrowserEvent({
         source: "synapse",
         shop,
@@ -2180,6 +2427,7 @@ export default {
 
       edgeBrowserBeaconsAccepted += 1;
       edgeEventsGenerated += 1;
+      await persistBrowserEventsToCache(env);
       await hydrateChannelEventsFromCache();
       recordSynapseBrowserChannel(eventName, eventId, shop);
       await persistChannelEventsToCache();

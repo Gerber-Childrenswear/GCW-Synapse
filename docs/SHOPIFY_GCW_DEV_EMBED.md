@@ -30,3 +30,11 @@ window.dataLayer?.filter(e => String(e.event||'').startsWith('dl_')).slice(-5)
 ```
 
 https://gcw-synapse-super.gcwsynapse.workers.dev/compare/browser
+
+## Ops wire (pixel + webhooks)
+
+```bash
+curl -X POST 'https://gcw-synapse-super.gcwsynapse.workers.dev/ops/wire?shop=gcw-dev.myshopify.com'
+```
+
+Uses Shopify client-credentials to ensure the app web pixel + order/refund webhooks point at the Worker.

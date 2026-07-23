@@ -1,10 +1,16 @@
 import type { SynapseDataLayerEvent } from "./types";
 import type { SynapseSession } from "./session";
 
-/** High-value funnel events always mirror to the Worker when a beacon URL is set. */
+/** High-value + core browse events always mirror to the Worker when a beacon URL is set. */
 const ALWAYS_BEACON = new Set([
+  "dl_user_data",
+  "dl_view_item",
+  "dl_view_item_list",
+  "dl_view_search_results",
+  "dl_select_item",
   "dl_add_to_cart",
   "dl_remove_from_cart",
+  "dl_view_cart",
   "dl_begin_checkout",
   "dl_add_shipping_info",
   "dl_add_payment_info",
@@ -101,20 +107,24 @@ export function sendBeacon(
   });
 
   try {
-    // Preferred: browser queues this off the critical path.
-    if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
-      const blob = new Blob([body], { type: "application/json" });
-      if (navigator.sendBeacon(beaconUrl, blob)) return;
+    // Prefer fetch+keepalive: sendBeacon with application/json blobs is unreliable
+    // across browsers/CORS and hides failures from ops.
+    if (typeof fetch !== "undefined") {
+      void fetch(beaconUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        mode: "cors",
+        keepalive: true,
+        credentials: "omit"
+      });
+      return;
     }
 
-    void fetch(beaconUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body,
-      mode: "cors",
-      keepalive: true,
-      credentials: "omit"
-    });
+    if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
+      const blob = new Blob([body], { type: "text/plain;charset=UTF-8" });
+      navigator.sendBeacon(beaconUrl, blob);
+    }
   } catch {
     // Non-blocking by design.
   }
