@@ -18,6 +18,9 @@ type Props = {
 
 const MONITOR_KEY = "synapse.platform.monitored";
 
+/** Platforms intentionally out of Synapse UI (no attribution tools / foreign pixel monitors). */
+const EXCLUDED_PLATFORM_IDS = new Set(["triple_whale", "stackadapt", "stack_adapt"]);
+
 type PlatformGroup = {
   id: string;
   label: string;
@@ -56,7 +59,11 @@ function loadMonitored(): Record<string, boolean> {
   try {
     const raw = localStorage.getItem(MONITOR_KEY);
     if (!raw) return {};
-    return JSON.parse(raw) as Record<string, boolean>;
+    const parsed = JSON.parse(raw) as Record<string, boolean>;
+    for (const id of EXCLUDED_PLATFORM_IDS) {
+      delete parsed[id];
+    }
+    return parsed;
   } catch {
     return {};
   }
@@ -357,7 +364,10 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
 
   const byId = useMemo(() => {
     const map = new Map<string, PlatformRow>();
-    for (const row of data?.platforms ?? []) map.set(row.id, row);
+    for (const row of data?.platforms ?? []) {
+      if (EXCLUDED_PLATFORM_IDS.has(row.id)) continue;
+      map.set(row.id, row);
+    }
     return map;
   }, [data]);
 
