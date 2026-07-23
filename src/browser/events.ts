@@ -30,9 +30,18 @@ function productKey(event: SynapseDataLayerEvent): string {
 
 function emit(config: SynapseConfig, event: SynapseDataLayerEvent): SynapseDataLayerEvent | null {
   const path = typeof location !== "undefined" ? location.pathname : "";
-  const dedupeKey = `${config.shop}|${event.event}|${path}|${productKey(event)}|${event.cart_total ?? ""}`;
-  // ATC/form+fetch often double-fire within ~1s; user_data can re-fire on context invalidate.
-  const ttl = event.event === "dl_user_data" ? 800 : 1600;
+  const products = productKey(event);
+  // ATC often fires from both form submit and /cart/add.js with slightly different id shapes.
+  const dedupeKey =
+    event.event === "dl_add_to_cart" || event.event === "dl_remove_from_cart"
+      ? `${config.shop}|${event.event}|${path}`
+      : `${config.shop}|${event.event}|${path}|${products}|${event.cart_total ?? ""}`;
+  const ttl =
+    event.event === "dl_user_data"
+      ? 800
+      : event.event === "dl_add_to_cart" || event.event === "dl_remove_from_cart"
+        ? 2200
+        : 1600;
   if (!shouldEmitOnce(dedupeKey, ttl)) {
     if (config.debug) {
       // eslint-disable-next-line no-console
