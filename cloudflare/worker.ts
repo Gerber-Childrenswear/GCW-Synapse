@@ -1709,15 +1709,20 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
     const scenario = resolveDemoSeedScenario(url.searchParams.get("scenario"));
     const samples = buildDemoSamples(scenario);
     const now = Date.now();
+    const seedBrowser = url.searchParams.get("browser") !== "0";
 
     // Healthy seed always starts clean so prior token/orphan pulses cannot keep Meta/TikTok red.
     if (scenario === "healthy") {
       resetChannelHealth();
+      resetBrowserEventsForTests();
       channelEventsHydrated = false;
       edgeChannelEvents.length = 0;
+      edgeBrowserEvents.length = 0;
       await clearChannelEventsCache(env);
+      await persistBrowserEventsToCache(env);
     } else {
       await hydrateChannelEventsFromCache(env);
+      await hydrateBrowserEventsFromCache(env);
     }
 
     let seeded = 0;
@@ -1754,15 +1759,70 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
       edgeChannelEvents.length = 500;
     }
     await persistChannelEventsToCache(env);
+
+    let browserSeeded = 0;
+    if (seedBrowser && scenario === "healthy") {
+      const shop = "gcw-dev.myshopify.com";
+      const dualEvents = [
+        "dl_view_item",
+        "dl_add_to_cart",
+        "dl_begin_checkout",
+        "dl_purchase"
+      ] as const;
+      for (const event of dualEvents) {
+        for (let i = 0; i < 5; i += 1) {
+          const syn = ingestBrowserEvent({
+            source: "synapse",
+            shop,
+            event,
+            event_id: `demo_syn_${event}_${i}`,
+            cart_total: event === "dl_view_item" ? undefined : "29.99"
+          });
+          const elv = ingestBrowserEvent({
+            source: "elevar",
+            shop,
+            event,
+            event_id: `demo_elv_${event}_${i}`,
+            cart_total: event === "dl_view_item" ? undefined : "29.99"
+          });
+          edgeBrowserEvents.unshift(
+            {
+              receivedAt: syn.observed_at,
+              source: "edge-browser-beacon",
+              shop,
+              event,
+              event_id: syn.event_id,
+              key: syn.key
+            },
+            {
+              receivedAt: elv.observed_at,
+              source: "edge-elevar-mirror",
+              shop,
+              event,
+              event_id: elv.event_id,
+              key: elv.key
+            }
+          );
+          browserSeeded += 2;
+        }
+      }
+      if (edgeBrowserEvents.length > 500) edgeBrowserEvents.length = 500;
+      await persistBrowserEventsToCache(env);
+    }
+
     return jsonResponse(
       {
         ok: true,
         seeded,
+        browser_seeded: browserSeeded,
         scenario,
         note:
           scenario === "healthy"
-            ? "Healthy Meta/TikTok/platform pulses with confirmed dedupe (prior health cleared)"
-            : "Broken diagnostic pulses recorded (token failure + orphan dedupe)"
+            ? "Healthy Meta/TikTok/platform pulses with confirmed dedupe + dual-run browser pairs (prior health cleared)"
+            : "Broken diagnostic pulses recorded (token failure + orphan dedupe)",
+        launch_hint: browserSeeded
+          ? "Check /launch/readiness — dual-run volume should leave waiting"
+          : undefined
       },
       202
     );
@@ -2186,10 +2246,36 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
   }
 
   if (request.method === "GET" && url.pathname === "/ops/shopify-install-status") {
+    const candidates = ["gcw-dev.myshopify.com", "gerberchildrenswear.myshopify.com"];
+    const apiKey = env.SHOPIFY_API_KEY?.trim();
+    const apiSecret = env.SHOPIFY_API_SECRET?.trim();
+    const installed_shops: string[] = [];
+    const shop_status: Array<{ shop: string; installed: boolean; detail?: string }> = [];
+
+    for (const shop of candidates) {
+      if (!apiKey || !apiSecret) {
+        shop_status.push({ shop, installed: false, detail: "missing_api_credentials" });
+        continue;
+      }
+      try {
+        await obtainShopifyClientCredentialsToken(shop, apiKey, apiSecret);
+        installed_shops.push(shop);
+        shop_status.push({ shop, installed: true });
+      } catch (error) {
+        shop_status.push({
+          shop,
+          installed: false,
+          detail: error instanceof Error ? error.message : "probe_failed"
+        });
+      }
+    }
+
     return jsonResponse({
       status: {
-        installed_shops: ["gcw-dev.myshopify.com", "gerberchildrenswear.myshopify.com"],
-        store_path: "cloudflare-worker-edge"
+        installed_shops,
+        shop_status,
+        store_path: "cloudflare-worker-edge",
+        note: "Installed = client-credentials probe succeeded (app installed + approved)."
       }
     });
   }

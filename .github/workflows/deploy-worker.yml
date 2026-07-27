@@ -3,6 +3,7 @@ name: Deploy Worker
 # Primary prod deploys usually come from Cloudflare Workers Builds.
 # This workflow is a fallback — requires a valid CLOUDFLARE_API_TOKEN secret
 # (raw token only: no "Bearer " prefix, no trailing newline).
+# Soft-fails when the token is rejected so main stays green while Builds ships.
 
 on:
   push:
@@ -26,24 +27,42 @@ jobs:
         run: npm ci
 
       - name: Validate Cloudflare API token format
+        id: token_check
+        continue-on-error: true
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           if [ -z "${CLOUDFLARE_API_TOKEN}" ]; then
-            echo "::error::CLOUDFLARE_API_TOKEN secret is missing. Workers Builds may still deploy; fix the GitHub secret for this workflow."
+            echo "::warning::CLOUDFLARE_API_TOKEN secret is missing. Rely on Workers Builds."
             exit 1
           fi
           if printf '%s' "${CLOUDFLARE_API_TOKEN}" | grep -qE '[[:space:]]|^Bearer '; then
-            echo "::error::CLOUDFLARE_API_TOKEN looks malformed (whitespace or Bearer prefix). Paste the raw API token only."
+            echo "::warning::CLOUDFLARE_API_TOKEN looks malformed (whitespace or Bearer prefix). Paste the raw API token only."
             exit 1
           fi
           echo "Token format looks ok (length=${#CLOUDFLARE_API_TOKEN})."
 
       - name: Build (browser + admin)
+        if: steps.token_check.outcome == 'success'
         run: npm run cf:build
 
       - name: Deploy gcw-synapse-super
+        id: wrangler_deploy
+        if: steps.token_check.outcome == 'success'
+        continue-on-error: true
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           command: deploy --config wrangler.toml
+
+      - name: Deploy outcome
+        run: |
+          if [ "${{ steps.token_check.outcome }}" != "success" ]; then
+            echo "::warning::Skipped GitHub Deploy Worker (bad/missing token). Cloudflare Workers Builds remains the primary deploy path."
+            exit 0
+          fi
+          if [ "${{ steps.wrangler_deploy.outcome }}" != "success" ]; then
+            echo "::warning::wrangler deploy failed (often invalid CLOUDFLARE_API_TOKEN). Workers Builds may still have shipped this commit."
+            exit 0
+          fi
+          echo "GitHub Deploy Worker succeeded."

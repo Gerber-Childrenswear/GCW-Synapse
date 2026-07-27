@@ -11,7 +11,7 @@ https://admin.shopify.com/store/gcw-dev/apps/7d011b70562512bd84b85bd3f9a6e68d
 
 1. **Online Store → Themes → Customize → App embeds**
 2. **GCW Synapse** ON → Save  
-3. Script URL: `https://gcw-synapse-super.gcwsynapse.workers.dev/gcw-synapse.js?v=1.3.0`  
+3. Script URL: `https://gcw-synapse-super.gcwsynapse.workers.dev/gcw-synapse.js?v=1.4.1`  
 4. Beacon: `https://gcw-synapse-super.gcwsynapse.workers.dev/browser/beacon`  
 5. Beacon sample rate: **100%** (dual-run)  
 6. Keep **Elevar** app embed ON for side-by-side (`docs/GCW_DEV_DUAL_RUN.md`)
