@@ -188,7 +188,8 @@ const EDGE_CHECKS: EdgeCheckDefinition[] = [
     label: "Webhook POST",
     path: "/webhooks/orders-create",
     method: "POST",
-    expectedStatuses: [202],
+    // 401 when HMAC secret configured / forward mode; 202 only in unsecured shadow fixtures.
+    expectedStatuses: [401, 202],
     group: "webhooks",
     body: JSON.stringify({ order_id: "health-check", event: "purchase" }),
     contentType: "application/json"

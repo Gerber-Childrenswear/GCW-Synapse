@@ -18,6 +18,8 @@ describe("adminAuth", () => {
 
   it("keeps storefront and webhook paths public", () => {
     assert.equal(isPublicUnauthenticatedPath("/gcw-synapse.js", "GET"), true);
+    assert.equal(isPublicUnauthenticatedPath("/gcw-synapse.js.map", "GET"), false);
+    assert.equal(isPublicUnauthenticatedPath("/compatibility/ids", "GET"), true);
     assert.equal(isPublicUnauthenticatedPath("/browser/beacon", "POST"), true);
     assert.equal(isPublicUnauthenticatedPath("/webhooks/shopify/orders/create", "POST"), true);
     assert.equal(isPublicUnauthenticatedPath("/ops/wire", "GET"), false);

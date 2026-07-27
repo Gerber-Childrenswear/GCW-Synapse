@@ -84,3 +84,17 @@ test("processPurchaseWebhookEdge shadows with session marketing", async () => {
   assert.equal(result.body.session_attached, true);
   assert.equal((result.body.marketing as { session_id?: string }).session_id, "sid_1");
 });
+
+test("processPurchaseWebhookEdge fail-closed in forward without webhook secret", async () => {
+  const raw = new TextEncoder().encode(JSON.stringify({ name: "#1", total_price: "1.00" }));
+  const result = await processPurchaseWebhookEdge({
+    env: { RUNTIME_MODE: "forward" },
+    rawBody: raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength),
+    hmacHeader: null,
+    shop: "gcw-dev.myshopify.com",
+    topic: "orders/paid"
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 401);
+  assert.equal(result.body.error, "webhook_secret_not_configured");
+});

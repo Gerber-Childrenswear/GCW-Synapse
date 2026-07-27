@@ -190,11 +190,14 @@ export async function processPurchaseWebhookEdge(options: {
   webhookId?: string | null;
 }): Promise<EdgeWebhookResult> {
   const secret = options.env.SHOPIFY_WEBHOOK_SECRET || options.env.SHOPIFY_API_SECRET || "";
+  const runtimeMode = (options.env.RUNTIME_MODE || "shadow_compare").toLowerCase();
   if (secret) {
     const valid = await verifyShopifyWebhookHmacEdge(options.rawBody, options.hmacHeader, secret);
     if (!valid) {
       return { ok: false, status: 401, body: { ok: false, error: "invalid_hmac" } };
     }
+  } else if (runtimeMode === "forward") {
+    return { ok: false, status: 401, body: { ok: false, error: "webhook_secret_not_configured" } };
   }
 
   let order: ShopifyOrder;
@@ -211,7 +214,6 @@ export async function processPurchaseWebhookEdge(options: {
   const marketing = extractSessionMarketing(order);
   const base = mapOrderToPurchaseEdge(order, eventId, options.env.SHOP_DEFAULT_CURRENCY || "USD");
   const payload = attachSessionMarketing(base, marketing);
-  const runtimeMode = (options.env.RUNTIME_MODE || "shadow_compare").toLowerCase();
 
   if (runtimeMode === "shadow_compare" || runtimeMode === "shadow") {
     return {

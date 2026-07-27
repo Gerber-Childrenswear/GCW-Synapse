@@ -9,7 +9,7 @@ export type AdminAuthEnv = {
 };
 
 const COOKIE_NAME = "synapse_gate";
-const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
+const SESSION_TTL_SECONDS = 60 * 60 * 12; // 12 hours
 /** Default password requested for the public admin / Shopify embed gate. */
 export const DEFAULT_ADMIN_UI_PASSWORD = "Sugi2.0";
 
@@ -19,6 +19,13 @@ export function resolveAdminPassword(env: AdminAuthEnv): string {
   const fromIngress = env.SYNAPSE_INGRESS_TOKEN?.trim();
   if (fromIngress) return fromIngress;
   return DEFAULT_ADMIN_UI_PASSWORD;
+}
+
+/** Session HMAC key — derived so raw password reuse alone is not enough if rotated separately later. */
+export function resolveSessionSigningKey(env: AdminAuthEnv & { SESSION_HMAC_SECRET?: string }): string {
+  const dedicated = env.SESSION_HMAC_SECRET?.trim();
+  if (dedicated) return dedicated;
+  return `synapse_session_v1:${resolveAdminPassword(env)}`;
 }
 
 export function timingSafeEqualString(a: string, b: string): boolean {
@@ -45,9 +52,12 @@ async function hmacHex(secret: string, message: string): Promise<string> {
   return [...new Uint8Array(signature)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export async function mintAdminSessionCookie(password: string): Promise<string> {
+export async function mintAdminSessionCookie(
+  password: string,
+  sessionKey = `synapse_session_v1:${password}`
+): Promise<string> {
   const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
-  const sig = await hmacHex(password, `synapse_gate_v1:${exp}`);
+  const sig = await hmacHex(sessionKey, `synapse_gate_v1:${exp}`);
   const value = `${exp}.${sig}`;
   // SameSite=None so Shopify admin iframe can keep the session.
   return `${COOKIE_NAME}=${value}; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=${SESSION_TTL_SECONDS}`;
@@ -67,14 +77,18 @@ function readCookie(request: Request, name: string): string | null {
   return null;
 }
 
-export async function sessionCookieValid(request: Request, password: string): Promise<boolean> {
+export async function sessionCookieValid(
+  request: Request,
+  password: string,
+  sessionKey = `synapse_session_v1:${password}`
+): Promise<boolean> {
   const raw = readCookie(request, COOKIE_NAME);
   if (!raw) return false;
   const [expRaw, sig] = raw.split(".");
   const exp = Number(expRaw);
   if (!expRaw || !sig || !Number.isFinite(exp)) return false;
   if (exp < Math.floor(Date.now() / 1000)) return false;
-  const expected = await hmacHex(password, `synapse_gate_v1:${exp}`);
+  const expected = await hmacHex(sessionKey, `synapse_gate_v1:${exp}`);
   return timingSafeEqualString(sig, expected);
 }
 
@@ -91,8 +105,12 @@ function basicAuthPassword(request: Request): string | null {
   }
 }
 
-export async function isAdminAuthorized(request: Request, env: AdminAuthEnv): Promise<boolean> {
+export async function isAdminAuthorized(
+  request: Request,
+  env: AdminAuthEnv & { SESSION_HMAC_SECRET?: string }
+): Promise<boolean> {
   const password = resolveAdminPassword(env);
+  const sessionKey = resolveSessionSigningKey(env);
   const token = request.headers.get("X-Synapse-Token")?.trim() ?? "";
   if (token && timingSafeEqualString(token, password)) return true;
 
@@ -102,7 +120,7 @@ export async function isAdminAuthorized(request: Request, env: AdminAuthEnv): Pr
   const basic = basicAuthPassword(request);
   if (basic && timingSafeEqualString(basic, password)) return true;
 
-  if (await sessionCookieValid(request, password)) return true;
+  if (await sessionCookieValid(request, password, sessionKey)) return true;
   return false;
 }
 
@@ -124,7 +142,11 @@ export function isPublicUnauthenticatedPath(pathname: string, method: string): b
   if (method === "POST" && (pathname === "/login" || pathname === "/auth/login")) return true;
   if (method === "POST" && pathname === "/auth/logout") return true;
   // Theme CDN bundle — must load without password on storefront.
-  if (method === "GET" && (pathname === "/gcw-synapse.js" || pathname === "/gcw-synapse.js.map")) {
+  if (method === "GET" && pathname === "/gcw-synapse.js") {
+    return true;
+  }
+  // Public pixel / measurement IDs only (no secrets) — used by GTM HTTP variables.
+  if (method === "GET" && pathname.startsWith("/compatibility/")) {
     return true;
   }
   return false;
