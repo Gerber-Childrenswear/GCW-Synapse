@@ -3,6 +3,7 @@ type CloudflareEnv = {
   SYNAPSE_STATE?: KVNamespace;
   SYNAPSE_ORIGIN_URL?: string;
   SYNAPSE_INGRESS_TOKEN?: string;
+  ADMIN_UI_PASSWORD?: string;
   PUBLIC_EVENT_ALLOWED_ORIGINS?: string;
   PUBLIC_EVENT_MAX_BODY_BYTES?: string;
   PUBLIC_EVENT_RATE_LIMIT_PER_MINUTE?: string;
@@ -78,10 +79,23 @@ import {
   ingestBrowserEvent,
   resetBrowserEventsForTests
 } from "../src/services/browserEvents";
-import { processPurchaseWebhookEdge } from "../src/services/edgeWebhook";
+import { resolveCurrencyCode } from "../src/services/currencyCode";
+import { processPurchaseWebhookEdge, verifyShopifyWebhookHmacEdge } from "../src/services/edgeWebhook";
 import { maybeAlertOnParity } from "../src/services/alerts";
 import { resolveGa4MeasurementId } from "../src/services/ga4Measurement";
 import { resolveCurrencyCode } from "../src/services/currencyCode";
+import {
+  clearAdminSessionCookie,
+  isAdminAuthorized,
+  isPublicUnauthenticatedPath,
+  loginPageHtml,
+  loginRedirect,
+  mintAdminSessionCookie,
+  resolveAdminPassword,
+  timingSafeEqualString,
+  unauthorizedJson,
+  wantsHtml
+} from "./adminAuth";
 
 const PROXY_PREFIXES = [
   "/auth/",
@@ -263,34 +277,7 @@ function isInternalRoute(pathname: string): boolean {
 }
 
 function isInternalRouteExempt(pathname: string, method: string): boolean {
-  if (pathname === "/health" && method === "GET") {
-    return true;
-  }
-
-  if (pathname === "/event" && (method === "POST" || method === "OPTIONS")) {
-    return true;
-  }
-
-  if (pathname === "/browser/beacon" && (method === "POST" || method === "OPTIONS")) {
-    return true;
-  }
-
-  // Shopify webhooks authenticate via HMAC, not ingress token.
-  if (method === "POST" && pathname.startsWith("/webhooks/")) {
-    return true;
-  }
-
-  // Public Shopify OAuth install/callback (must not require ingress token).
-  if (
-    method === "GET" &&
-    (pathname === "/install" ||
-      pathname === "/auth/shopify/install" ||
-      pathname === "/auth/shopify/callback")
-  ) {
-    return true;
-  }
-
-  return false;
+  return isPublicUnauthenticatedPath(pathname, method);
 }
 
 function shopHandleFromDomain(shop: string): string {
@@ -1978,8 +1965,18 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
           ? "orders/create"
           : "orders/paid");
 
-    // Refunds: accept + log (purchase forward path is primary for sGTM).
+    // Refunds: HMAC verify (same as purchase), then accept + log.
     if (topic.toLowerCase().includes("refund")) {
+      const secret = env.SHOPIFY_WEBHOOK_SECRET?.trim();
+      if (secret) {
+        const valid = await verifyShopifyWebhookHmacEdge(rawBody, hmacHeader, secret);
+        if (!valid) {
+          return jsonResponse({ ok: false, error: "invalid_hmac" }, 401);
+        }
+      } else if (env.RUNTIME_MODE === "forward") {
+        // Fail closed when forwarding is on but secret missing.
+        return jsonResponse({ ok: false, error: "webhook_secret_not_configured" }, 401);
+      }
       let payload: unknown = null;
       try {
         payload = JSON.parse(new TextDecoder().decode(rawBody));
@@ -2481,13 +2478,99 @@ export default {
   async fetch(request: Request, env: CloudflareEnv): Promise<Response> {
     const url = new URL(request.url);
 
-    if (isInternalRoute(url.pathname) && !isInternalRouteExempt(url.pathname, request.method)) {
-      const expectedToken = env.SYNAPSE_INGRESS_TOKEN;
-      const providedToken = request.headers.get("X-Synapse-Token");
-
-      if (expectedToken && providedToken !== expectedToken) {
-        return addSecurityHeaders(jsonResponse({ ok: false, error: "Unauthorized" }, 401));
+    // Password / token gate for admin UI + internal APIs (storefront + webhooks stay public).
+    if (!isPublicUnauthenticatedPath(url.pathname, request.method)) {
+      const authorized = await isAdminAuthorized(request, env);
+      if (!authorized) {
+        if (wantsHtml(request) || url.pathname === "/" || url.pathname === "/index.html") {
+          return addSecurityHeaders(loginRedirect(request));
+        }
+        return addSecurityHeaders(unauthorizedJson());
       }
+    }
+
+    // Login / logout (public)
+    if (
+      (url.pathname === "/login" || url.pathname === "/auth/login") &&
+      request.method === "GET"
+    ) {
+      const returnToRaw = url.searchParams.get("return_to") || "/";
+      const returnTo =
+        returnToRaw.startsWith("/") && !returnToRaw.startsWith("//") ? returnToRaw : "/";
+      const embedded =
+        url.searchParams.get("embedded") === "1" ||
+        returnTo.includes("embedded=1") ||
+        Boolean(url.searchParams.get("host"));
+      return addSecurityHeaders(
+        new Response(
+          loginPageHtml({ returnTo, embedded }),
+          {
+            status: 200,
+            headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }
+          }
+        )
+      );
+    }
+
+    if (
+      (url.pathname === "/login" || url.pathname === "/auth/login") &&
+      request.method === "POST"
+    ) {
+      const contentType = request.headers.get("content-type") || "";
+      let password = "";
+      let returnTo = "/";
+      if (contentType.includes("application/json")) {
+        try {
+          const body = (await request.json()) as Record<string, unknown>;
+          password = typeof body.password === "string" ? body.password : "";
+          returnTo = typeof body.return_to === "string" ? body.return_to : "/";
+        } catch {
+          password = "";
+        }
+      } else {
+        const form = await request.formData();
+        password = String(form.get("password") ?? "");
+        returnTo = String(form.get("return_to") ?? "/");
+      }
+      if (!returnTo.startsWith("/") || returnTo.startsWith("//")) returnTo = "/";
+
+      const expected = resolveAdminPassword(env);
+      if (!timingSafeEqualString(password, expected)) {
+        return addSecurityHeaders(
+          new Response(
+            loginPageHtml({
+              returnTo,
+              error: "Incorrect password",
+              embedded: returnTo.includes("embedded=1")
+            }),
+            {
+              status: 401,
+              headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }
+            }
+          )
+        );
+      }
+
+      const cookie = await mintAdminSessionCookie(expected);
+      return new Response(null, {
+        status: 302,
+        headers: {
+          Location: returnTo,
+          "Set-Cookie": cookie,
+          "Cache-Control": "no-store"
+        }
+      });
+    }
+
+    if (url.pathname === "/auth/logout" && request.method === "POST") {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "Set-Cookie": clearAdminSessionCookie(),
+          "Cache-Control": "no-store"
+        }
+      });
     }
 
     if (

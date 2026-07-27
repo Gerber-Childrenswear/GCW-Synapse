@@ -10,7 +10,7 @@
     "admin:build": "npm --prefix apps/admin run build",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.browser.json",
-    "test": "bash -c 'shopt -s globstar nullglob; tsx --test src/**/*.test.ts scripts/**/*.test.ts'",
+    "test": "bash -c 'shopt -s globstar nullglob; tsx --test src/**/*.test.ts scripts/**/*.test.ts cloudflare/**/*.test.ts'",
     "cf:build": "npm run build:browser && npm --prefix apps/admin ci && npm run admin:build",
     "cf:dev": "npm run cf:build && wrangler dev",
     "cf:deploy": "npm run cf:build && wrangler deploy",

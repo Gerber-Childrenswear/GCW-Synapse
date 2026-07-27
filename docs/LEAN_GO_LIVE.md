@@ -80,6 +80,8 @@ GA4 · Meta · Reddit · Bloomreach · etc.
 ```bash
 export CLOUDFLARE_API_TOKEN="<token>"
 export SYNAPSE_INGRESS_TOKEN="<strong-secret>"
+# Optional: override admin unlock password (default / wrangler var is Sugi2.0)
+# export ADMIN_UI_PASSWORD="Sugi2.0"
 npm run lean:deploy
 ```
 
