@@ -126,27 +126,28 @@ export async function isAdminAuthorized(
 
 /** Routes that must stay public (storefront + Shopify signed traffic). */
 export function isPublicUnauthenticatedPath(pathname: string, method: string): boolean {
-  if (pathname === "/health" && method === "GET") return true;
+  const read = method === "GET" || method === "HEAD";
+  if (pathname === "/health" && read) return true;
   if (pathname === "/event" && (method === "POST" || method === "OPTIONS")) return true;
   if (pathname === "/browser/beacon" && (method === "POST" || method === "OPTIONS")) return true;
   if (method === "POST" && pathname.startsWith("/webhooks/")) return true;
   if (
-    method === "GET" &&
+    read &&
     (pathname === "/install" ||
       pathname === "/auth/shopify/install" ||
       pathname === "/auth/shopify/callback")
   ) {
     return true;
   }
-  if (method === "GET" && (pathname === "/login" || pathname === "/auth/login")) return true;
+  if (read && (pathname === "/login" || pathname === "/auth/login")) return true;
   if (method === "POST" && (pathname === "/login" || pathname === "/auth/login")) return true;
   if (method === "POST" && pathname === "/auth/logout") return true;
   // Theme CDN bundle — must load without password on storefront.
-  if (method === "GET" && pathname === "/gcw-synapse.js") {
+  if (read && pathname === "/gcw-synapse.js") {
     return true;
   }
   // Public pixel / measurement IDs only (no secrets) — used by GTM HTTP variables.
-  if (method === "GET" && pathname.startsWith("/compatibility/")) {
+  if (read && pathname.startsWith("/compatibility/")) {
     return true;
   }
   return false;
