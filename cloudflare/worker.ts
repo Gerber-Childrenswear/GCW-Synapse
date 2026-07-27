@@ -102,17 +102,6 @@ const PROXY_PREFIXES = [
   "/compatibility/"
 ];
 
-const INTERNAL_ROUTE_PREFIXES = [
-  "/ops/",
-  "/api/",
-  "/compare/",
-  "/runtime/",
-  "/launch/",
-  "/webhooks/",
-  "/auth/",
-  "/compatibility/"
-];
-
 let workerBootMs: number | null = null;
 const edgeWebhookLog: unknown[] = [];
 const edgeShadowComparisons: unknown[] = [];
@@ -270,14 +259,6 @@ function checkEventRateLimit(request: Request, env: CloudflareEnv): { allowed: b
   }
 
   return { allowed: true };
-}
-
-function isInternalRoute(pathname: string): boolean {
-  return INTERNAL_ROUTE_PREFIXES.some((prefix) => pathname.startsWith(prefix));
-}
-
-function isInternalRouteExempt(pathname: string, method: string): boolean {
-  return isPublicUnauthenticatedPath(pathname, method);
 }
 
 function shopHandleFromDomain(shop: string): string {
