@@ -15,10 +15,27 @@
 - **GTM web + sGTM** own: all destination tags (Meta, GA4, Ads, Reddit CAPI, etc.).
 - **Elevar** is uninstalled after parity gates pass.
 
+## Prod install (blocked until app is on gerberchildrenswear)
+
+```bash
+# Status
+curl -s -H "X-Synapse-Token: $TOKEN" \
+  https://gcw-synapse-super.gcwsynapse.workers.dev/ops/shopify-install-status | jq
+
+# Install landing (owner)
+open "https://gcw-synapse-super.gcwsynapse.workers.dev/install?shop=gerberchildrenswear.myshopify.com"
+
+# After OAuth
+curl -s -X POST -H "X-Synapse-Token: $TOKEN" -H "Origin: https://gcw-synapse-super.gcwsynapse.workers.dev" \
+  "https://gcw-synapse-super.gcwsynapse.workers.dev/ops/wire?shop=gerberchildrenswear.myshopify.com" | jq
+```
+
+Or: `npm run cutover:status` (prints install links + marks `prod_installed` / `prod_wire` as TODO until green).
+
 ## Prod sequence
 
-1. Deploy Synapse app version already validated on gcw-dev (`shopify app deploy` + Worker `npm run cf:deploy`).
-2. Install / re-auth on prod shop; enable theme App embed **GCW Synapse**; activate web pixel (`beaconUrl` → Worker `/browser/beacon`).
+1. Deploy Synapse app version already validated on gcw-dev (`shopify app deploy` + Worker / Workers Builds).
+2. Install / re-auth on prod shop (links above); enable theme App embed **GCW Synapse**; activate web pixel (`beaconUrl` → Worker `/browser/beacon`).
 3. Dual-run with Elevar still on. Watch:
    - `/compare/browser` → `parity.matched_rate_pct` ≥ 95 on core funnel
    - `/launch/readiness` → `status: go`

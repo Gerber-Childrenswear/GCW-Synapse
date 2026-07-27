@@ -22,6 +22,14 @@ Web GTM stays `GTM-TKW58K8` on this storefront; sGTM is `GTM-N45F3JCC` via the l
 - Launch gate: https://gcw-synapse-super.gcwsynapse.workers.dev/launch/readiness  
 - Ops: https://gcw-synapse-super.gcwsynapse.workers.dev/ops/connection  
 
+## CLI smoke (no storefront required)
+
+```bash
+npm run simulate:dual-run:dev    # Synapse + Elevar-mirror funnel beacons
+npm run cutover:status:full      # install/wire + lean + simulate
+```
+
+Wiring smoke ≠ GTM Preview sign-off. Still browse password-unlocked gcw-dev with both embeds on.
 ## Theme script cache bust
 
 In **Theme → App embeds → GCW Synapse**, set script URL to:

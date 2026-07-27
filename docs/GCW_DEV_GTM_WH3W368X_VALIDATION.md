@@ -17,6 +17,8 @@ Use on **gcw-dev** before disabling Elevar. Do not touch prod web `GTM-TKW58K8`.
 
 ## Parity gates
 
+- [ ] `npm run simulate:dual-run:dev` → dual-run wiring smoke OK
+- [ ] `npm run cutover:status` → automated checks PASS (prod install may still be TODO)
 - [ ] `/compare/browser` → core funnel matched ≥ 95%
 - [ ] `/launch/readiness` → `status: go` (purchase + browser checks)
 - [ ] Platforms UI launch gate shows **GO**
