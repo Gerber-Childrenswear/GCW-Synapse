@@ -4,6 +4,7 @@ type CloudflareEnv = {
   SYNAPSE_ORIGIN_URL?: string;
   SYNAPSE_INGRESS_TOKEN?: string;
   ADMIN_UI_PASSWORD?: string;
+  SESSION_HMAC_SECRET?: string;
   PUBLIC_EVENT_ALLOWED_ORIGINS?: string;
   PUBLIC_EVENT_MAX_BODY_BYTES?: string;
   PUBLIC_EVENT_RATE_LIMIT_PER_MINUTE?: string;
@@ -83,7 +84,6 @@ import { resolveCurrencyCode } from "../src/services/currencyCode";
 import { processPurchaseWebhookEdge, verifyShopifyWebhookHmacEdge } from "../src/services/edgeWebhook";
 import { maybeAlertOnParity } from "../src/services/alerts";
 import { resolveGa4MeasurementId } from "../src/services/ga4Measurement";
-import { resolveCurrencyCode } from "../src/services/currencyCode";
 import {
   clearAdminSessionCookie,
   isAdminAuthorized,
@@ -92,10 +92,18 @@ import {
   loginRedirect,
   mintAdminSessionCookie,
   resolveAdminPassword,
+  resolveSessionSigningKey,
   timingSafeEqualString,
   unauthorizedJson,
   wantsHtml
 } from "./adminAuth";
+import {
+  checkLoginRateLimit,
+  escapeHtml,
+  isMutatingMethod,
+  mutationOriginAllowed,
+  redactSensitive
+} from "./securityHelpers";
 
 const PROXY_PREFIXES = [
   "/auth/",
@@ -273,7 +281,7 @@ function handleInstallLanding(url: URL, env: CloudflareEnv): Response {
     shop = normalizeShopDomain(shopRaw);
   } catch (error) {
     return htmlResponse(
-      `<h1>Invalid shop</h1><p>${error instanceof Error ? error.message : "Invalid shop"}</p>`,
+      `<h1>Invalid shop</h1><p>${escapeHtml(error instanceof Error ? error.message : "Invalid shop")}</p>`,
       400
     );
   }
@@ -324,10 +332,10 @@ function handleInstallLanding(url: URL, env: CloudflareEnv): Response {
 <body>
   <main>
     <h1>Install GCW Synapse</h1>
-    <p class="sub">Shop: <span class="mono">${shop}</span></p>
+    <p class="sub">Shop: <span class="mono">${escapeHtml(shop)}</span></p>
 
     <div class="warn">
-      <strong>Installed Partners app</strong> (client <span class="mono">${apiKey}</span>) —
+      <strong>Installed Partners app</strong> (client <span class="mono">${escapeHtml(apiKey)}</span>) —
       already on gcw-dev. Use <em>Open app</em> below if you need the admin UI.
       Re-auth only if scopes change.
     </div>
@@ -335,11 +343,11 @@ function handleInstallLanding(url: URL, env: CloudflareEnv): Response {
     <div class="card">
       <h2>Open / re-authorize</h2>
       <div class="actions">
-        <a class="btn btn-primary" href="https://admin.shopify.com/store/${handle}/apps/${apiKey}">Open app</a>
-        <a class="btn btn-secondary" href="${oauthInstall}">Re-authorize scopes</a>
-        <a class="btn btn-secondary" href="${embedUrl}">Enable theme App embed</a>
+        <a class="btn btn-primary" href="https://admin.shopify.com/store/${escapeHtml(handle)}/apps/${escapeHtml(apiKey)}">Open app</a>
+        <a class="btn btn-secondary" href="${escapeHtml(oauthInstall)}">Re-authorize scopes</a>
+        <a class="btn btn-secondary" href="${escapeHtml(embedUrl)}">Enable theme App embed</a>
       </div>
-      <p class="meta">Scopes: <span class="mono">${scopes}</span></p>
+      <p class="meta">Scopes: <span class="mono">${escapeHtml(scopes)}</span></p>
     </div>
 
     <div class="card">
@@ -350,15 +358,15 @@ function handleInstallLanding(url: URL, env: CloudflareEnv): Response {
         <li><strong>Settings → Manage and add custom pixels</strong></li>
         <li>Products, Orders (view), Customers (view), Online store / Themes</li>
       </ul>
-      <p class="meta"><a href="${usersUrl}">Open Users &amp; permissions</a></p>
+      <p class="meta"><a href="${escapeHtml(usersUrl)}">Open Users &amp; permissions</a></p>
     </div>
 
     <div class="card">
       <h2>After install</h2>
       <ol>
         <li>Confirm <strong>Customer events → App pixels</strong> shows GCW Synapse.</li>
-        <li>Enable the theme App embed: <a href="${embedUrl}">open App embeds</a>.</li>
-        <li>Beacon URL: <span class="mono">${url.origin}/browser/beacon</span></li>
+        <li>Enable the theme App embed: <a href="${escapeHtml(embedUrl)}">open App embeds</a>.</li>
+        <li>Beacon URL: <span class="mono">${escapeHtml(url.origin)}/browser/beacon</span></li>
       </ol>
     </div>
   </main>
@@ -432,7 +440,7 @@ async function verifyOAuthState(
   const [body, sig] = state.split(".");
   if (!body || !sig) return { ok: false, error: "Invalid state" };
   const expected = await hmacSha256Base64Url(secret, body);
-  if (expected !== sig) return { ok: false, error: "Invalid state signature" };
+  if (!timingSafeEqualString(expected, sig)) return { ok: false, error: "Invalid state signature" };
   try {
     const payload = JSON.parse(new TextDecoder().decode(fromBase64Url(body))) as {
       shop?: string;
@@ -455,7 +463,7 @@ async function verifyShopifyOAuthHmac(params: URLSearchParams, secret: string): 
     .map(([key, value]) => `${key}=${value}`)
     .join("&");
   const digest = await hmacSha256Hex(secret, message);
-  return digest === hmac;
+  return timingSafeEqualString(digest, hmac);
 }
 
 async function exchangeShopifyAccessToken(
@@ -791,7 +799,7 @@ async function handleShopifyOAuth(
   const state = url.searchParams.get("state") || "";
   const stateCheck = await verifyOAuthState(state, apiSecret, shop);
   if (!stateCheck.ok) {
-    return htmlResponse(`<h1>Install failed</h1><p>${stateCheck.error}</p>`, 400);
+    return htmlResponse(`<h1>Install failed</h1><p>${escapeHtml(stateCheck.error)}</p>`, 400);
   }
 
   const hmacOk = await verifyShopifyOAuthHmac(url.searchParams, apiSecret);
@@ -809,11 +817,11 @@ async function handleShopifyOAuth(
     const pixel = await ensureSynapseWebPixel(shop, token.access_token, appOrigin);
     const webhooks = await ensureSynapseWebhooks(shop, token.access_token, appOrigin);
     const pixelStatus = pixel.ok
-      ? `Web pixel ${String(pixel.detail.action)}d successfully.`
-      : `Web pixel activation issue: ${JSON.stringify(pixel.detail.errors || pixel.detail)}`;
+      ? `Web pixel ${escapeHtml(String(pixel.detail.action))}d successfully.`
+      : `Web pixel activation issue: ${escapeHtml(JSON.stringify(pixel.detail.errors || pixel.detail))}`;
     const webhookStatus = webhooks.ok
       ? "Purchase/refund webhooks registered."
-      : `Webhook issue: ${JSON.stringify(webhooks.detail)}`;
+      : `Webhook issue: ${escapeHtml(JSON.stringify(webhooks.detail))}`;
 
     const handle = shop.replace(/\.myshopify\.com$/i, "");
     const appHome = `${appOrigin}/?shop=${encodeURIComponent(shop)}&embedded=1`;
@@ -824,7 +832,7 @@ async function handleShopifyOAuth(
     return htmlResponse(`<!doctype html>
 <html><head>
   <meta charset="utf-8">
-  <meta http-equiv="refresh" content="2;url=${appHome}">
+  <meta http-equiv="refresh" content="2;url=${escapeHtml(appHome)}">
   <title>GCW Synapse installed</title>
   <style>
     body{font-family:IBM Plex Sans,Segoe UI,sans-serif;max-width:640px;margin:40px auto;padding:0 16px;color:#12241c;background:#f5f8f6}
@@ -835,21 +843,21 @@ async function handleShopifyOAuth(
 </head>
 <body>
   <h1 class="ok">GCW Synapse is live</h1>
-  <p><strong>Shop:</strong> ${shop}</p>
-  <p><strong>Scopes:</strong> ${token.scope || scopes}</p>
+  <p><strong>Shop:</strong> ${escapeHtml(shop)}</p>
+  <p><strong>Scopes:</strong> ${escapeHtml(token.scope || scopes)}</p>
   <p>${pixelStatus}</p>
   <p>${webhookStatus}</p>
   <p>Opening the platforms control panel…</p>
   <p>
-    <a class="btn" href="${adminApp}">Open app in Shopify admin</a>
-    <a class="btn secondary" href="${appHome}">Open platforms UI</a>
-    <a class="btn secondary" href="${embedEditor}">Enable theme embed</a>
-    <a class="btn secondary" href="${customerEvents}">Customer events</a>
+    <a class="btn" href="${escapeHtml(adminApp)}">Open app in Shopify admin</a>
+    <a class="btn secondary" href="${escapeHtml(appHome)}">Open platforms UI</a>
+    <a class="btn secondary" href="${escapeHtml(embedEditor)}">Enable theme embed</a>
+    <a class="btn secondary" href="${escapeHtml(customerEvents)}">Customer events</a>
   </p>
 </body></html>`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Install callback failed";
-    return htmlResponse(`<h1>Install failed</h1><p>${message}</p>`, 400);
+    return htmlResponse(`<h1>Install failed</h1><p>${escapeHtml(message)}</p>`, 400);
   }
 }
 
@@ -1182,15 +1190,22 @@ function shouldProxy(pathname: string): boolean {
   return PROXY_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
 
-function addCorsHeaders(response: Response, request: Request, originOverride?: string): Response {
+function addCorsHeaders(
+  response: Response,
+  request: Request,
+  originOverride?: string | null,
+  allowedOrigins?: string[]
+): Response {
   const headers = new Headers(response.headers);
   const origin = originOverride ?? request.headers.get("origin");
-
-  headers.set("Access-Control-Allow-Origin", origin ?? "*");
+  const allowlist = (allowedOrigins ?? []).map((value) => value.trim().toLowerCase());
+  if (origin && allowlist.includes(origin.trim().toLowerCase())) {
+    headers.set("Access-Control-Allow-Origin", origin);
+    headers.set("Vary", "Origin");
+  }
   headers.set("Access-Control-Allow-Methods", "POST, OPTIONS");
   headers.set("Access-Control-Allow-Headers", "Content-Type, X-Synapse-Token");
   headers.set("Access-Control-Max-Age", "86400");
-  headers.set("Vary", "Origin");
 
   return new Response(response.body, {
     status: response.status,
@@ -1528,22 +1543,33 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
   }
 
   if (url.pathname === "/event" && request.method === "OPTIONS") {
-    return addCorsHeaders(new Response(null, { status: 204 }), request);
+    const allowedOrigins = parseAllowedOrigins(env.PUBLIC_EVENT_ALLOWED_ORIGINS);
+    const origin = request.headers.get("origin");
+    if (!origin || !isAllowedOrigin(origin, allowedOrigins)) {
+      return jsonResponse({ ok: false, error: "Origin not allowed" }, 403);
+    }
+    return addCorsHeaders(new Response(null, { status: 204 }), request, origin, allowedOrigins);
   }
 
   if (url.pathname === "/event" && request.method === "POST") {
+    const allowedOrigins = parseAllowedOrigins(env.PUBLIC_EVENT_ALLOWED_ORIGINS);
+    const origin = request.headers.get("origin");
+    if (!origin || !isAllowedOrigin(origin, allowedOrigins)) {
+      return addCorsHeaders(jsonResponse({ ok: false, error: "Origin not allowed" }, 403), request, origin, allowedOrigins);
+    }
+
     let payload: unknown = null;
 
     try {
       payload = await request.json();
     } catch {
-      return addCorsHeaders(jsonResponse({ ok: false, error: "Invalid JSON payload" }, 400), request);
+      return addCorsHeaders(jsonResponse({ ok: false, error: "Invalid JSON payload" }, 400), request, origin, allowedOrigins);
     }
 
     const eventRecord = {
       receivedAt: new Date().toISOString(),
       source: "edge-event-endpoint",
-      payload
+      payload: redactSensitive(payload)
     };
 
     edgeWebhookLog.unshift(eventRecord);
@@ -1551,7 +1577,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
       type: "synapse_only",
       comparedAt: eventRecord.receivedAt,
       score: 100,
-      payload
+      payload: redactSensitive(payload)
     });
 
     if (edgeWebhookLog.length > 500) {
@@ -1566,7 +1592,9 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
 
     return addCorsHeaders(
       jsonResponse({ ok: true, accepted: true, eventId: edgeEventsGenerated, receivedAt: eventRecord.receivedAt }),
-      request
+      request,
+      origin,
+      allowedOrigins
     );
   }
 
@@ -1669,6 +1697,9 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
     const events = Array.isArray(body?.events) ? body.events : [];
     if (events.length === 0) {
       return jsonResponse({ ok: false, error: "events array is required" }, 400);
+    }
+    if (events.length > 50) {
+      return jsonResponse({ ok: false, error: "batch_too_large", max: 50 }, 413);
     }
 
     const accepted: Array<Record<string, unknown>> = [];
@@ -1948,13 +1979,13 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
 
     // Refunds: HMAC verify (same as purchase), then accept + log.
     if (topic.toLowerCase().includes("refund")) {
-      const secret = env.SHOPIFY_WEBHOOK_SECRET?.trim();
+      const secret = (env.SHOPIFY_WEBHOOK_SECRET || env.SHOPIFY_API_SECRET || "").trim();
       if (secret) {
         const valid = await verifyShopifyWebhookHmacEdge(rawBody, hmacHeader, secret);
         if (!valid) {
           return jsonResponse({ ok: false, error: "invalid_hmac" }, 401);
         }
-      } else if (env.RUNTIME_MODE === "forward") {
+      } else if ((env.RUNTIME_MODE || "").toLowerCase() === "forward") {
         // Fail closed when forwarding is on but secret missing.
         return jsonResponse({ ok: false, error: "webhook_secret_not_configured" }, 401);
       }
@@ -1970,7 +2001,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
         path: url.pathname,
         topic,
         shop,
-        payload
+        payload: redactSensitive(payload)
       });
       if (edgeWebhookLog.length > 500) edgeWebhookLog.length = 500;
       return jsonResponse({ ok: true, status: "refund_accepted", path: url.pathname }, 202);
@@ -1991,7 +2022,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
       path: url.pathname,
       topic,
       shop,
-      result: result.body
+      result: redactSensitive(result.body)
     });
     if (edgeWebhookLog.length > 500) edgeWebhookLog.length = 500;
 
@@ -2468,6 +2499,12 @@ export default {
         }
         return addSecurityHeaders(unauthorizedJson());
       }
+      // Cookie sessions use SameSite=None (Shopify iframe) — require Origin allowlist on mutations.
+      if (isMutatingMethod(request.method) && !mutationOriginAllowed(request, url.host)) {
+        return addSecurityHeaders(
+          jsonResponse({ ok: false, error: "csrf_origin_rejected" }, 403)
+        );
+      }
     }
 
     // Login / logout (public)
@@ -2497,6 +2534,27 @@ export default {
       (url.pathname === "/login" || url.pathname === "/auth/login") &&
       request.method === "POST"
     ) {
+      const loginIp = getClientIp(request);
+      const rate = checkLoginRateLimit(loginIp);
+      if (!rate.allowed) {
+        return addSecurityHeaders(
+          new Response(
+            loginPageHtml({
+              returnTo: "/",
+              error: "Too many attempts. Try again shortly."
+            }),
+            {
+              status: 429,
+              headers: {
+                "content-type": "text/html; charset=utf-8",
+                "cache-control": "no-store",
+                "Retry-After": String(rate.retryAfterSec)
+              }
+            }
+          )
+        );
+      }
+
       const contentType = request.headers.get("content-type") || "";
       let password = "";
       let returnTo = "/";
@@ -2532,7 +2590,7 @@ export default {
         );
       }
 
-      const cookie = await mintAdminSessionCookie(expected);
+      const cookie = await mintAdminSessionCookie(expected, resolveSessionSigningKey(env));
       return new Response(null, {
         status: 302,
         headers: {
@@ -2565,7 +2623,7 @@ export default {
         return addSecurityHeaders(jsonResponse({ ok: false, error: "Origin not allowed" }, 403));
       }
 
-      return addSecurityHeaders(addCorsHeaders(new Response(null, { status: 204 }), request, origin));
+      return addSecurityHeaders(addCorsHeaders(new Response(null, { status: 204 }), request, origin, allowedOrigins));
     }
 
     if (url.pathname === "/browser/beacon" && request.method === "POST") {
@@ -2574,14 +2632,14 @@ export default {
       // Allow no-origin (web pixel sandbox / keepalive) plus allowlisted storefronts.
       if (origin && !isAllowedOrigin(origin, allowedOrigins)) {
         return addSecurityHeaders(
-          addCorsHeaders(jsonResponse({ ok: false, error: "Origin not allowed" }, 403), request, origin)
+          addCorsHeaders(jsonResponse({ ok: false, error: "Origin not allowed" }, 403), request, origin, allowedOrigins)
         );
       }
 
       const rate = checkEventRateLimit(request, env);
       if (!rate.allowed) {
         return addSecurityHeaders(
-          addCorsHeaders(jsonResponse({ ok: false, error: "Rate limit exceeded" }, 429), request, origin ?? undefined)
+          addCorsHeaders(jsonResponse({ ok: false, error: "Rate limit exceeded" }, 429), request, origin ?? undefined, allowedOrigins)
         );
       }
 
@@ -2590,7 +2648,7 @@ export default {
       const rawBodyBytes = new TextEncoder().encode(rawBody).byteLength;
       if (rawBodyBytes > maxBodyBytes) {
         return addSecurityHeaders(
-          addCorsHeaders(jsonResponse({ ok: false, error: "Payload too large" }, 413), request, origin ?? undefined)
+          addCorsHeaders(jsonResponse({ ok: false, error: "Payload too large" }, 413), request, origin ?? undefined, allowedOrigins)
         );
       }
 
@@ -2599,14 +2657,14 @@ export default {
         payload = JSON.parse(rawBody) as Record<string, unknown>;
       } catch {
         return addSecurityHeaders(
-          addCorsHeaders(jsonResponse({ ok: false, error: "Invalid JSON payload" }, 400), request, origin ?? undefined)
+          addCorsHeaders(jsonResponse({ ok: false, error: "Invalid JSON payload" }, 400), request, origin ?? undefined, allowedOrigins)
         );
       }
 
       const eventName = typeof payload.event === "string" ? payload.event : "";
       if (!eventName || !ALLOWED_BROWSER_EVENTS.has(eventName)) {
         return addSecurityHeaders(
-          addCorsHeaders(jsonResponse({ ok: false, error: "invalid_event" }, 400), request, origin ?? undefined)
+          addCorsHeaders(jsonResponse({ ok: false, error: "invalid_event" }, 400), request, origin ?? undefined, allowedOrigins)
         );
       }
 
@@ -2631,7 +2689,8 @@ export default {
                 202
               ),
               request,
-              origin ?? undefined
+              origin ?? undefined,
+              allowedOrigins
             )
           );
         }
@@ -2664,7 +2723,8 @@ export default {
                 202
               ),
               request,
-              origin ?? undefined
+              origin ?? undefined,
+              allowedOrigins
             )
           );
         }
@@ -2688,7 +2748,7 @@ export default {
         event: eventName,
         event_id: eventId,
         key: ingested.key,
-        payload
+        payload: redactSensitive(payload)
       };
 
       edgeBrowserEvents.unshift(record);
@@ -2723,7 +2783,8 @@ export default {
             202
           ),
           request,
-          origin ?? undefined
+          origin ?? undefined,
+          allowedOrigins
         )
       );
     }
@@ -2732,7 +2793,7 @@ export default {
       const allowedOrigins = parseAllowedOrigins(env.PUBLIC_EVENT_ALLOWED_ORIGINS);
       const origin = request.headers.get("origin");
       if (!origin || !isAllowedOrigin(origin, allowedOrigins)) {
-        return addSecurityHeaders(addCorsHeaders(jsonResponse({ ok: false, error: "Origin not allowed" }, 403), request, origin ?? undefined));
+        return addSecurityHeaders(addCorsHeaders(jsonResponse({ ok: false, error: "Origin not allowed" }, 403), request, origin ?? undefined, allowedOrigins));
       }
 
       const rate = checkEventRateLimit(request, env);
@@ -2741,7 +2802,8 @@ export default {
           addCorsHeaders(
             jsonResponse({ ok: false, error: "Rate limit exceeded" }, 429),
             request,
-            origin
+            origin,
+            allowedOrigins
           )
         );
       }
@@ -2751,27 +2813,27 @@ export default {
       if (contentLengthRaw) {
         const contentLength = Number.parseInt(contentLengthRaw, 10);
         if (Number.isFinite(contentLength) && contentLength > maxBodyBytes) {
-          return addSecurityHeaders(addCorsHeaders(jsonResponse({ ok: false, error: "Payload too large" }, 413), request, origin));
+          return addSecurityHeaders(addCorsHeaders(jsonResponse({ ok: false, error: "Payload too large" }, 413), request, origin, allowedOrigins));
         }
       }
 
       const rawBody = await request.text();
       const rawBodyBytes = new TextEncoder().encode(rawBody).byteLength;
       if (rawBodyBytes > maxBodyBytes) {
-        return addSecurityHeaders(addCorsHeaders(jsonResponse({ ok: false, error: "Payload too large" }, 413), request, origin));
+        return addSecurityHeaders(addCorsHeaders(jsonResponse({ ok: false, error: "Payload too large" }, 413), request, origin, allowedOrigins));
       }
 
       let payload: unknown = null;
       try {
         payload = JSON.parse(rawBody);
       } catch {
-        return addSecurityHeaders(addCorsHeaders(jsonResponse({ ok: false, error: "Invalid JSON payload" }, 400), request, origin));
+        return addSecurityHeaders(addCorsHeaders(jsonResponse({ ok: false, error: "Invalid JSON payload" }, 400), request, origin, allowedOrigins));
       }
 
       const eventRecord = {
         receivedAt: new Date().toISOString(),
         source: "edge-event-endpoint",
-        payload
+        payload: redactSensitive(payload)
       };
 
       edgeWebhookLog.unshift(eventRecord);
@@ -2779,7 +2841,7 @@ export default {
         type: "synapse_only",
         comparedAt: eventRecord.receivedAt,
         score: 100,
-        payload
+        payload: redactSensitive(payload)
       });
 
       if (edgeWebhookLog.length > 500) {
@@ -2796,7 +2858,8 @@ export default {
         addCorsHeaders(
           jsonResponse({ ok: true, accepted: true, eventId: edgeEventsGenerated, receivedAt: eventRecord.receivedAt }),
           request,
-          origin
+          origin,
+          allowedOrigins
         )
       );
     }
