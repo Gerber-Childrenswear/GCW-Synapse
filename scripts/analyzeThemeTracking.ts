@@ -87,6 +87,11 @@ function main(): void {
   const hasBloomreachDataLayerHook = fs.existsSync(path.join(themeRoot, "snippets", "bloomreach-engagement.liquid"));
 
   const findings: string[] = [];
+  if (tripleWhaleEmbeds.some((e) => !e.disabled)) {
+    findings.push(
+      "Triple Whale app embed is enabled but out of scope — disable it so Synapse + GTM own tracking (avoid double-fire)."
+    );
+  }
   if (elevarEmbeds.some((e) => !e.disabled) && tripleWhaleEmbeds.some((e) => !e.disabled)) {
     findings.push("Elevar and Triple Whale app embeds are both enabled. This can double-fire client events.");
   }

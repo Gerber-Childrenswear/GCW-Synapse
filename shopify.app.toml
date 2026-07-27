@@ -1,7 +1,4 @@
-# Link this file to your existing Partners app (gcw-dev install).
-# 1. Partners → Apps → GCW Synapse → Client credentials → copy Client ID below.
-# 2. shopify app config link
-# 3. shopify app deploy
+# Link this file to the Partners app already installed on gcw-dev.
 
 name = "GCW Synapse"
 client_id = "7d011b70562512bd84b85bd3f9a6e68d"
@@ -9,7 +6,10 @@ application_url = "https://gcw-synapse-super.gcwsynapse.workers.dev"
 embedded = true
 
 [access_scopes]
-scopes = "read_products,read_orders,read_customers,read_themes,write_pixels,read_customer_events"
+# Lean install scopes (no protected scopes).
+# NOTE: do NOT include read_all_orders — that requires Shopify Partner
+# "Request access" approval and causes the install loop.
+scopes = "read_products,read_orders,read_checkouts,read_customers,read_customer_events,write_pixels,read_themes"
 
 [auth]
 redirect_urls = [
@@ -18,3 +18,19 @@ redirect_urls = [
 
 [build]
 automatically_update_urls_on_dev = true
+
+
+[webhooks]
+api_version = "2025-10"
+
+  [[webhooks.subscriptions]]
+  topics = ["orders/create"]
+  uri = "https://gcw-synapse-super.gcwsynapse.workers.dev/webhooks/shopify/orders/create"
+
+  [[webhooks.subscriptions]]
+  topics = ["orders/paid"]
+  uri = "https://gcw-synapse-super.gcwsynapse.workers.dev/webhooks/shopify/orders/paid"
+
+  [[webhooks.subscriptions]]
+  topics = ["refunds/create"]
+  uri = "https://gcw-synapse-super.gcwsynapse.workers.dev/webhooks/shopify/refunds/create"

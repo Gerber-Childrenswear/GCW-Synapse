@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import {
   getAdvisorAlerts,
   ApiRequestError,
+  getCompareUiModel,
   getEventSchemas,
+  getPlatformMatrix,
   getQaChecklist,
   getRuntimeStatus,
   getShadowComparisons,
@@ -16,15 +18,19 @@ import {
   type AdvisorChatMessage,
   type EndpointProbeResult,
   type EventSchema,
+  type PlatformMatrix,
   type QaChecklistItem,
   type RuntimeStatus,
   type ShadowStats,
   type ShopifyInstallStatus,
-  type SmokeRunResult
+  type SmokeRunResult,
+  type UiModel
 } from "./api";
-import "./app.css";
+import { PlatformsDashboard } from "./PlatformsDashboard";
+import { SynapseLogo } from "./SynapseLogo";
+import { getShopifyEmbedContext, type ShopifyEmbedContext } from "./shopifyEmbed";
 
-type NavTab = "runtime" | "advisor" | "events" | "webhooks" | "shadow" | "qa" | "edge";
+type NavTab = "platforms" | "runtime" | "advisor" | "events" | "webhooks" | "shadow" | "qa" | "edge";
 
 type LoadState = {
   loading: boolean;
@@ -32,6 +38,7 @@ type LoadState = {
 };
 
 const NAV_ITEMS: Array<{ id: NavTab; label: string; subtitle: string }> = [
+  { id: "platforms", label: "Platforms", subtitle: "Dedupe, causes, browser vs server" },
   { id: "runtime", label: "Runtime Status", subtitle: "System health and adapter status" },
   { id: "advisor", label: "Synapse Advisor", subtitle: "Local AI chat and proactive alerts" },
   { id: "events", label: "Event Schemas", subtitle: "Elevar replacement contracts" },
@@ -41,7 +48,7 @@ const NAV_ITEMS: Array<{ id: NavTab; label: string; subtitle: string }> = [
   { id: "edge", label: "Edge Ops", subtitle: "Toggles and route health checks" }
 ];
 
-const SIMPLE_NAV_IDS: NavTab[] = ["runtime", "edge", "qa"];
+const SIMPLE_NAV_IDS: NavTab[] = ["platforms", "runtime", "qa", "edge"];
 
 type FriendlyError = {
   title: string;
@@ -189,18 +196,59 @@ const EDGE_CHECKS: EdgeCheckDefinition[] = [
   { id: "ops-alerts", label: "Ops Alerts", path: "/ops/alerts", method: "GET", expectedStatuses: [200], group: "webhooks" },
   {
     id: "guard-auth",
-    label: "Auth Guardrail",
-    path: "/auth/shopify/install?shop=gerberchildrenswear.myshopify.com",
+    label: "Auth Install Redirect",
+    path: "/auth/shopify/install?shop=gcw-dev.myshopify.com",
     method: "GET",
-    expectedStatuses: [501],
+    expectedStatuses: [302],
+    group: "guardrails"
+  },
+  { id: "compare-platforms", label: "Compare Platforms", path: "/compare/platforms", method: "GET", expectedStatuses: [200], group: "runtime" },
+  {
+    id: "compare-browser",
+    label: "Compare Browser Dual-run",
+    path: "/compare/browser",
+    method: "GET",
+    expectedStatuses: [200],
+    group: "runtime"
+  },
+  {
+    id: "compare-ui-model",
+    label: "Compare UI Model",
+    path: "/compare/ui-model",
+    method: "GET",
+    expectedStatuses: [200],
+    group: "runtime"
+  },
+  {
+    id: "ops-connection",
+    label: "Ops Connection",
+    path: "/ops/connection",
+    method: "GET",
+    expectedStatuses: [200],
+    group: "webhooks"
+  },
+  {
+    id: "ops-wire",
+    label: "Ops Wire (gcw-dev)",
+    path: "/ops/wire?shop=gcw-dev.myshopify.com",
+    method: "GET",
+    expectedStatuses: [200],
+    group: "webhooks"
+  },
+  {
+    id: "compat-ids",
+    label: "Compatibility IDs",
+    path: "/compatibility/ids",
+    method: "GET",
+    expectedStatuses: [200],
     group: "guardrails"
   },
   {
     id: "guard-compat",
-    label: "Compatibility Guardrail",
+    label: "Compatibility GA4",
     path: "/compatibility/ga4-id",
     method: "GET",
-    expectedStatuses: [501],
+    expectedStatuses: [200],
     group: "guardrails"
   }
 ];
@@ -820,10 +868,11 @@ function AdvisorSection({
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<NavTab>("runtime");
+  const [activeTab, setActiveTab] = useState<NavTab>("platforms");
   const [state, setState] = useState<LoadState>({ loading: true, error: null });
   const [lastError, setLastError] = useState<unknown>(null);
   const [simpleMode, setSimpleMode] = useState(true);
+  const [embed] = useState<ShopifyEmbedContext>(() => getShopifyEmbedContext());
 
   const [runtime, setRuntime] = useState<RuntimeStatus | null>(null);
   const [schemas, setSchemas] = useState<EventSchema[]>([]);
@@ -833,6 +882,9 @@ export default function App() {
   const [checklist, setChecklist] = useState<QaChecklistItem[]>([]);
   const [smokeResult, setSmokeResult] = useState<SmokeRunResult | null>(null);
   const [shopifyStatus, setShopifyStatus] = useState<ShopifyInstallStatus | null>(null);
+  const [uiModel, setUiModel] = useState<UiModel | null>(null);
+  const [platformMatrix, setPlatformMatrix] = useState<PlatformMatrix | null>(null);
+  const [platformsLoading, setPlatformsLoading] = useState(false);
   const [advisorAlerts, setAdvisorAlerts] = useState<AdvisorAlertItem[]>([]);
   const [advisorMessages, setAdvisorMessages] = useState<AdvisorChatMessage[]>([]);
   const [advisorDraft, setAdvisorDraft] = useState("");
@@ -857,13 +909,33 @@ export default function App() {
 
   useEffect(() => {
     if (!visibleNavItems.some((item) => item.id === activeTab)) {
-      setActiveTab("runtime");
+      setActiveTab("platforms");
     }
   }, [visibleNavItems, activeTab]);
+
+  function loadPlatformsData(): void {
+    setPlatformsLoading(true);
+    Promise.all([getCompareUiModel(100), getPlatformMatrix()])
+      .then(([model, matrix]) => {
+        setUiModel(model);
+        setPlatformMatrix(matrix);
+      })
+      .catch((error: unknown) => {
+        const friendly = getFriendlyError(error);
+        setState((prev) => ({ ...prev, error: friendly.title }));
+        setLastError(error);
+      })
+      .finally(() => {
+        setPlatformsLoading(false);
+      });
+  }
 
   function loadControlPanelData(): void {
     setState({ loading: true, error: null });
     setLastError(null);
+
+    // Advisor is Node-only; soft-fail so platforms still load on the edge Worker.
+    const advisorPromise = getAdvisorAlerts().catch(() => [] as AdvisorAlertItem[]);
 
     Promise.all([
       getRuntimeStatus(),
@@ -873,9 +945,23 @@ export default function App() {
       getShadowComparisons(50),
       getQaChecklist(),
       getShopifyInstallStatus(),
-      getAdvisorAlerts()
+      advisorPromise,
+      getCompareUiModel(100),
+      getPlatformMatrix()
     ])
-      .then(([runtimeData, schemaData, webhookData, shadowData, comparisonData, checklistData, shopifyData, advisorData]) => {
+      .then(
+        ([
+          runtimeData,
+          schemaData,
+          webhookData,
+          shadowData,
+          comparisonData,
+          checklistData,
+          shopifyData,
+          advisorData,
+          model,
+          matrix
+        ]) => {
         setRuntime(runtimeData);
         setSchemas(schemaData);
         setWebhooks(webhookData);
@@ -884,6 +970,8 @@ export default function App() {
         setChecklist(checklistData);
         setShopifyStatus(shopifyData);
         setAdvisorAlerts(advisorData);
+        setUiModel(model);
+        setPlatformMatrix(matrix);
         setState({ loading: false, error: null });
         setLastError(null);
       })
@@ -1046,11 +1134,12 @@ export default function App() {
   }
 
   return (
-    <div className="shell">
+    <div className={`shell ${simpleMode ? "shell-simple" : ""} ${embed.embedded ? "shell-embedded" : ""}`}>
       <aside className="sidebar">
         <div className="brand">
-          <h1>SYNAPSE</h1>
-          <p>v0.2.0-merged</p>
+          <SynapseLogo variant="mark" className="brand-logo" title="SYNAPSE" />
+          <p className="brand-word">SYNAPSE</p>
+          <p className="brand-sub">{embed.shopHandle ? embed.shopHandle : "gcw control panel"}</p>
         </div>
 
         <nav>
@@ -1067,22 +1156,98 @@ export default function App() {
           ))}
         </nav>
 
-        <div className="sidebar-footer">Connected to GCW Production</div>
+        <div className="sidebar-footer">
+          {embed.embedded ? "Embedded in Shopify admin" : "Standalone Worker admin"}
+          {embed.adminAppUrl ? (
+            <>
+              <br />
+              <a className="sidebar-link" href={embed.adminAppUrl} target="_top" rel="noreferrer">
+                Open in Shopify
+              </a>
+            </>
+          ) : (
+            <>
+              <br />
+              <a className="sidebar-link" href={embed.installUrl}>
+                Install on shop
+              </a>
+            </>
+          )}
+        </div>
       </aside>
 
       <main className="content">
-        <QuickStartPanel
-          onGoRuntime={() => setActiveTab("runtime")}
-          onGoEdge={() => setActiveTab("edge")}
-          onGoQa={() => setActiveTab("qa")}
-          simpleMode={simpleMode}
-          onToggleSimpleMode={(checked) => setSimpleMode(checked)}
-        />
+        {embed.shop ? (
+          <div className="embed-banner">
+            <div>
+              <strong>Live on {embed.shop}</strong>
+              <p className="muted tiny">
+                Platforms, dedupe, and destination causes are the GCW Synapse app home.
+              </p>
+            </div>
+            <div className="embed-banner-actions">
+              {embed.adminAppUrl ? (
+                <a className="btn-mini" href={embed.adminAppUrl} target="_top" rel="noreferrer">
+                  Shopify app
+                </a>
+              ) : null}
+              <a className="btn-mini" href={embed.installUrl}>
+                Reinstall / scopes
+              </a>
+              <a
+                className="btn-mini"
+                href={
+                  embed.shopHandle
+                    ? `https://${embed.shop}/admin/themes/current/editor?context=apps&activateAppId=7d011b70562512bd84b85bd3f9a6e68d/gcw-synapse-app-block`
+                    : "/install"
+                }
+                target="_blank"
+                rel="noreferrer"
+              >
+                Theme embed
+              </a>
+            </div>
+          </div>
+        ) : (
+          <div className="embed-banner">
+            <div>
+              <strong>Open this app inside Shopify to go live on a shop</strong>
+              <p className="muted tiny">
+                Install on gcw-dev, then launch GCW Synapse from Apps — this platforms UI is the app home.
+              </p>
+            </div>
+            <div className="embed-banner-actions">
+              <a className="btn-mini primary" href="/install?shop=gcw-dev.myshopify.com">
+                Install gcw-dev
+              </a>
+              <a
+                className="btn-mini"
+                href="https://admin.shopify.com/store/gcw-dev/apps/7d011b70562512bd84b85bd3f9a6e68d"
+                target="_top"
+                rel="noreferrer"
+              >
+                Open Shopify app
+              </a>
+            </div>
+          </div>
+        )}
 
-        <header className="page-header">
-          <h1>GCW Synapse - Elevar Migration Control Panel</h1>
-          <p>{activeItem.subtitle}</p>
-        </header>
+        {activeTab !== "platforms" ? (
+          <QuickStartPanel
+            onGoRuntime={() => setActiveTab("platforms")}
+            onGoEdge={() => setActiveTab("edge")}
+            onGoQa={() => setActiveTab("qa")}
+            simpleMode={simpleMode}
+            onToggleSimpleMode={(checked) => setSimpleMode(checked)}
+          />
+        ) : null}
+
+        {activeTab !== "platforms" ? (
+          <header className="page-header">
+            <h1>GCW Synapse</h1>
+            <p>{activeItem.subtitle}</p>
+          </header>
+        ) : null}
 
         {state.error && lastError ? (
           <ErrorHelpPanel
@@ -1095,6 +1260,14 @@ export default function App() {
 
         {!state.loading ? (
           <>
+            {activeTab === "platforms" ? (
+              <PlatformsDashboard
+                uiModel={uiModel}
+                matrix={platformMatrix}
+                loading={platformsLoading}
+                onRefresh={loadPlatformsData}
+              />
+            ) : null}
             {activeTab === "runtime" ? <RuntimeSection runtime={runtime} shopifyStatus={shopifyStatus} /> : null}
             {activeTab === "advisor" ? (
               <AdvisorSection

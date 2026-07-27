@@ -7,7 +7,6 @@ export type VendorName =
   | "Reddit"
   | "StackAdapt"
   | "Bloomreach"
-  | "Triple Whale"
   | "Commission Junction"
   | "Server GTM";
 
@@ -41,8 +40,8 @@ const USER_CONTEXT_FIELDS: EventField[] = [
     type: "string",
     required: true,
     path: "user_properties.visitor_type",
-    description: "guest or logged_in",
-    example: "logged_in"
+    description: "Guest or Logged In (Elevar title case)",
+    example: "Logged In"
   },
   {
     name: "customer_id",
@@ -130,7 +129,6 @@ const EVENT_SCHEMAS: EventSchema[] = [
       "Reddit",
       "StackAdapt",
       "Bloomreach",
-      "Triple Whale",
       "Commission Junction",
       "Server GTM"
     ]
@@ -158,7 +156,7 @@ const EVENT_SCHEMAS: EventSchema[] = [
       },
       ...ITEM_FIELDS
     ],
-    vendors: ["GA4", "Facebook", "TikTok", "Pinterest", "Reddit", "StackAdapt", "Triple Whale", "Server GTM"]
+    vendors: ["GA4", "Facebook", "TikTok", "Pinterest", "Reddit", "StackAdapt", "Server GTM"]
   },
   {
     eventName: "dl_view_item_list",
@@ -175,7 +173,7 @@ const EVENT_SCHEMAS: EventSchema[] = [
       },
       ...ITEM_FIELDS
     ],
-    vendors: ["GA4", "Facebook", "TikTok", "Pinterest", "Triple Whale", "Server GTM"]
+    vendors: ["GA4", "Facebook", "TikTok", "Pinterest", "Server GTM"]
   },
   {
     eventName: "dl_view_search_results",
@@ -192,7 +190,7 @@ const EVENT_SCHEMAS: EventSchema[] = [
       },
       ...ITEM_FIELDS
     ],
-    vendors: ["GA4", "Facebook", "Bloomreach", "Triple Whale"]
+    vendors: ["GA4", "Facebook", "Bloomreach"]
   },
   {
     eventName: "dl_add_to_cart",
@@ -225,7 +223,7 @@ const EVENT_SCHEMAS: EventSchema[] = [
       },
       ...ITEM_FIELDS
     ],
-    vendors: ["GA4", "Facebook", "TikTok", "Pinterest", "Reddit", "Triple Whale", "Server GTM"]
+    vendors: ["GA4", "Facebook", "TikTok", "Pinterest", "Reddit", "Server GTM"]
   },
   {
     eventName: "dl_begin_checkout",
@@ -250,7 +248,7 @@ const EVENT_SCHEMAS: EventSchema[] = [
       },
       ...ITEM_FIELDS
     ],
-    vendors: ["GA4", "Facebook", "TikTok", "Pinterest", "Reddit", "Triple Whale", "Server GTM"]
+    vendors: ["GA4", "Facebook", "TikTok", "Pinterest", "Reddit", "Server GTM"]
   },
   {
     eventName: "dl_add_payment_info",
@@ -365,7 +363,6 @@ const EVENT_SCHEMAS: EventSchema[] = [
       "Reddit",
       "StackAdapt",
       "Bloomreach",
-      "Triple Whale",
       "Commission Junction",
       "Server GTM"
     ]
@@ -500,13 +497,6 @@ const QA_CHECKLIST: QaChecklistItem[] = [
     notes: null
   },
   {
-    id: "triple-whale",
-    category: "Vendors",
-    description: "Triple Whale purchase event includes order_id, revenue, and items",
-    status: "pending",
-    notes: null
-  },
-  {
     id: "cj-purchase",
     category: "Vendors",
     description: "CJ tag receives purchase with OID, AMOUNT, CURRENCY, ITEMS",
@@ -538,7 +528,6 @@ const CONTROL_PANEL_VENDORS: VendorName[] = [
   "Reddit",
   "StackAdapt",
   "Bloomreach",
-  "Triple Whale",
   "Commission Junction",
   "Server GTM"
 ];

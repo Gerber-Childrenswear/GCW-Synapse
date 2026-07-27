@@ -1,17 +1,87 @@
 type CloudflareEnv = {
   ASSETS: Fetcher;
+  SYNAPSE_STATE?: KVNamespace;
   SYNAPSE_ORIGIN_URL?: string;
   SYNAPSE_INGRESS_TOKEN?: string;
   PUBLIC_EVENT_ALLOWED_ORIGINS?: string;
   PUBLIC_EVENT_MAX_BODY_BYTES?: string;
   PUBLIC_EVENT_RATE_LIMIT_PER_MINUTE?: string;
+  SHOPIFY_API_KEY?: string;
+  SHOPIFY_API_SECRET?: string;
+  SHOPIFY_APP_SCOPES?: string;
+  SHOPIFY_APP_URL?: string;
+  SHOPIFY_WEBHOOK_SECRET?: string;
+  GTM_SERVER_URL?: string;
+  GTM_FORWARD_SHARED_SECRET?: string;
+  RUNTIME_MODE?: string;
+  SHOP_DEFAULT_CURRENCY?: string;
+  FACEBOOK_PIXEL_ID?: string;
+  PINTEREST_ID?: string;
+  GA4_MEASUREMENT_ID?: string;
+  GA4_MEASUREMENT_ID_BY_SHOP?: string;
+  TIKTOK_PIXEL_ID?: string;
+  REDDIT_PIXEL_ID?: string;
+  GOOGLE_ADS_CONVERSION_ID?: string;
+  BLOOMREACH_ACCOUNT_ID?: string;
+  BROWSER_PARITY_MISMATCH_ALERT_PCT?: string;
+  SLACK_WEBHOOK_URL?: string;
+  ALERT_EMAIL_TO?: string;
+  ALERT_EMAIL_FROM?: string;
+  ALERT_EMAIL_WEBHOOK_URL?: string;
 };
+
+const DEFAULT_SHOPIFY_SCOPES =
+  "read_products,read_orders,read_checkouts,read_customers,read_customer_events,write_pixels,read_themes";
+
+/** Scopes that require Partners "Request access" and break install until approved. */
+const PROTECTED_SHOPIFY_SCOPES = new Set(["read_all_orders"]);
+
+/**
+ * Resolve OAuth scopes for install. Prefer configured scopes, but always strip
+ * protected scopes so a stale SHOPIFY_APP_SCOPES secret cannot re-trigger
+ * Shopify's Request Access loop.
+ */
+function resolveInstallScopes(configured?: string): string {
+  const raw = (configured || DEFAULT_SHOPIFY_SCOPES).trim();
+  const cleaned = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0 && !PROTECTED_SHOPIFY_SCOPES.has(s));
+  return cleaned.length > 0 ? cleaned.join(",") : DEFAULT_SHOPIFY_SCOPES;
+}
+
+const SHOP_DOMAIN_PATTERN = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i;
 
 import {
   getControlPanelChecklist,
   getControlPanelSchemas,
   getControlPanelVendors
 } from "../src/services/controlPanelData";
+import {
+  getChannelHealthSummary,
+  getChannelHelpLinks,
+  getChannelTroubleshooting,
+  getRecentChannelEvents,
+  ingestChannelEvent,
+  resetChannelHealth
+} from "../src/services/channelHealth";
+import { buildPlatformMatrix } from "../src/services/platformMatrix";
+import {
+  buildDemoSamples,
+  resolveDemoSeedScenario
+} from "../src/services/platformDemoSeed";
+import {
+  getBrowserParityReport,
+  getRecentBrowserEvents,
+  getBrowserEventsSnapshot,
+  hydrateBrowserEvents,
+  ingestBrowserEvent,
+  resetBrowserEventsForTests
+} from "../src/services/browserEvents";
+import { processPurchaseWebhookEdge } from "../src/services/edgeWebhook";
+import { maybeAlertOnParity } from "../src/services/alerts";
+import { resolveGa4MeasurementId } from "../src/services/ga4Measurement";
+import { resolveCurrencyCode } from "../src/services/currencyCode";
 
 const PROXY_PREFIXES = [
   "/auth/",
@@ -37,6 +107,43 @@ const edgeBrowserEvents: Array<Record<string, unknown>> = [];
 let edgeEventsGenerated = 0;
 let edgeEventsSuppressed = 0;
 let edgeBrowserBeaconsAccepted = 0;
+
+const DUAL_RUN_KV_KEY = "dual-run:v1";
+
+type DualRunFlags = {
+  synapse_enabled: boolean;
+  updated_at?: string;
+};
+
+async function getDualRunFlags(env: CloudflareEnv): Promise<DualRunFlags> {
+  try {
+    const fromKv = await env.SYNAPSE_STATE?.get(DUAL_RUN_KV_KEY, "json");
+    if (fromKv && typeof fromKv === "object") {
+      const row = fromKv as DualRunFlags;
+      return {
+        synapse_enabled: row.synapse_enabled !== false,
+        updated_at: typeof row.updated_at === "string" ? row.updated_at : undefined
+      };
+    }
+  } catch {
+    // default on
+  }
+  return { synapse_enabled: true };
+}
+
+async function setDualRunFlags(
+  env: CloudflareEnv,
+  next: { synapse_enabled: boolean }
+): Promise<DualRunFlags> {
+  const flags: DualRunFlags = {
+    synapse_enabled: next.synapse_enabled,
+    updated_at: new Date().toISOString()
+  };
+  await env.SYNAPSE_STATE?.put(DUAL_RUN_KV_KEY, JSON.stringify(flags), { expirationTtl: 86400 * 30 });
+  return flags;
+}
+
+const SYNAPSE_DISABLED_STUB = `"use strict";(()=>{try{window.Synapse={version:"disabled",getSession:()=>({}),push:()=>{}};console.info("[Synapse] soft-disabled via /ops/dual-run");}catch(e){}})();`;
 
 const ALLOWED_BROWSER_EVENTS = new Set([
   "dl_user_data",
@@ -168,7 +275,668 @@ function isInternalRouteExempt(pathname: string, method: string): boolean {
     return true;
   }
 
+  // Shopify webhooks authenticate via HMAC, not ingress token.
+  if (method === "POST" && pathname.startsWith("/webhooks/")) {
+    return true;
+  }
+
+  // Public Shopify OAuth install/callback (must not require ingress token).
+  if (
+    method === "GET" &&
+    (pathname === "/install" ||
+      pathname === "/auth/shopify/install" ||
+      pathname === "/auth/shopify/callback")
+  ) {
+    return true;
+  }
+
   return false;
+}
+
+function shopHandleFromDomain(shop: string): string {
+  return shop.replace(/\.myshopify\.com$/i, "");
+}
+
+/** Owner-forwardable install landing (permission checklist + install CTA). */
+function handleInstallLanding(url: URL, env: CloudflareEnv): Response {
+  const shopRaw = (url.searchParams.get("shop") || "gcw-dev.myshopify.com").trim();
+  let shop: string;
+  try {
+    shop = normalizeShopDomain(shopRaw);
+  } catch (error) {
+    return htmlResponse(
+      `<h1>Invalid shop</h1><p>${error instanceof Error ? error.message : "Invalid shop"}</p>`,
+      400
+    );
+  }
+
+  const handle = shopHandleFromDomain(shop);
+  const scopes = resolveInstallScopes(env.SHOPIFY_APP_SCOPES);
+  const apiKey = env.SHOPIFY_API_KEY || "7d011b70562512bd84b85bd3f9a6e68d";
+  const oauthInstall = `${url.origin}/auth/shopify/install?shop=${encodeURIComponent(shop)}`;
+  const adminInstall = `https://admin.shopify.com/store/${handle}/oauth/install?client_id=${encodeURIComponent(apiKey)}`;
+  const usersUrl = `https://admin.shopify.com/store/${handle}/settings/users`;
+  const embedUrl = `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${apiKey}/gcw-synapse-app-block`;
+
+  // Auto-start OAuth when ?go=1 (bookmark / owner deep link)
+  if (url.searchParams.get("go") === "1") {
+    return new Response(null, {
+      status: 302,
+      headers: { Location: oauthInstall, "Cache-Control": "no-store" }
+    });
+  }
+
+  return htmlResponse(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Install GCW Synapse</title>
+  <style>
+    :root { color-scheme: light; --ink:#14201a; --muted:#4a5c52; --line:#d5ddd7; --bg:#f3f6f4; --card:#fff; --go:#0f6b4c; --go2:#0a4d38; --warn:#7a4a00; --warnbg:#fff6e5; }
+    * { box-sizing: border-box; }
+    body { margin:0; font:16px/1.45 "Segoe UI", system-ui, sans-serif; color:var(--ink); background: radial-gradient(1200px 500px at 10% -10%, #d9ebe2, transparent), var(--bg); }
+    main { max-width:720px; margin:0 auto; padding:40px 20px 64px; }
+    h1 { font-size:1.75rem; margin:0 0 8px; letter-spacing:-0.02em; }
+    .sub { color:var(--muted); margin:0 0 28px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:20px 22px; margin:0 0 16px; }
+    h2 { font-size:1rem; margin:0 0 10px; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted); }
+    ol, ul { margin:0; padding-left:1.2rem; }
+    li { margin:6px 0; }
+    code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:0.86em; }
+    .actions { display:flex; flex-wrap:wrap; gap:10px; margin:18px 0 8px; }
+    a.btn { display:inline-block; text-decoration:none; border-radius:8px; padding:12px 16px; font-weight:600; }
+    a.btn-primary { background:var(--go); color:#fff; }
+    a.btn-primary:hover { background:var(--go2); }
+    a.btn-secondary { background:#e8eee9; color:var(--ink); }
+    .warn { background:var(--warnbg); border:1px solid #f0d7a8; border-radius:12px; padding:14px 16px; margin:0 0 16px; color:var(--warn); }
+    .meta { font-size:0.9rem; color:var(--muted); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Install GCW Synapse</h1>
+    <p class="sub">Shop: <span class="mono">${shop}</span></p>
+
+    <div class="warn">
+      <strong>Installed Partners app</strong> (client <span class="mono">${apiKey}</span>) —
+      already on gcw-dev. Use <em>Open app</em> below if you need the admin UI.
+      Re-auth only if scopes change.
+    </div>
+
+    <div class="card">
+      <h2>Open / re-authorize</h2>
+      <div class="actions">
+        <a class="btn btn-primary" href="https://admin.shopify.com/store/${handle}/apps/${apiKey}">Open app</a>
+        <a class="btn btn-secondary" href="${oauthInstall}">Re-authorize scopes</a>
+        <a class="btn btn-secondary" href="${embedUrl}">Enable theme App embed</a>
+      </div>
+      <p class="meta">Scopes: <span class="mono">${scopes}</span></p>
+    </div>
+
+    <div class="card">
+      <h2>Required staff permissions</h2>
+      <ul>
+        <li><strong>Apps → Manage and install apps and channels</strong> (all apps — not a named whitelist)</li>
+        <li><strong>Settings → View customer events</strong></li>
+        <li><strong>Settings → Manage and add custom pixels</strong></li>
+        <li>Products, Orders (view), Customers (view), Online store / Themes</li>
+      </ul>
+      <p class="meta"><a href="${usersUrl}">Open Users &amp; permissions</a></p>
+    </div>
+
+    <div class="card">
+      <h2>After install</h2>
+      <ol>
+        <li>Confirm <strong>Customer events → App pixels</strong> shows GCW Synapse.</li>
+        <li>Enable the theme App embed: <a href="${embedUrl}">open App embeds</a>.</li>
+        <li>Beacon URL: <span class="mono">${url.origin}/browser/beacon</span></li>
+      </ol>
+    </div>
+  </main>
+</body>
+</html>`);
+}
+
+function normalizeShopDomain(shop: string): string {
+  const normalized = shop.trim().toLowerCase();
+  if (!SHOP_DOMAIN_PATTERN.test(normalized)) {
+    throw new Error("Invalid shop domain. Expected format: <shop>.myshopify.com");
+  }
+  return normalized;
+}
+
+function toBase64Url(bytes: ArrayBuffer | Uint8Array): string {
+  const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  let binary = "";
+  for (const b of arr) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function fromBase64Url(value: string): Uint8Array {
+  const padded = value.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((value.length + 3) % 4);
+  const binary = atob(padded);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) out[i] = binary.charCodeAt(i);
+  return out;
+}
+
+async function hmacSha256Hex(secret: string, message: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
+  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function hmacSha256Base64Url(secret: string, message: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
+  return toBase64Url(sig);
+}
+
+async function createOAuthState(shop: string, secret: string): Promise<string> {
+  const payload = JSON.stringify({
+    shop,
+    exp: Date.now() + 10 * 60 * 1000,
+    n: toBase64Url(crypto.getRandomValues(new Uint8Array(12)))
+  });
+  const body = toBase64Url(new TextEncoder().encode(payload));
+  const sig = await hmacSha256Base64Url(secret, body);
+  return `${body}.${sig}`;
+}
+
+async function verifyOAuthState(
+  state: string,
+  secret: string,
+  shop: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const [body, sig] = state.split(".");
+  if (!body || !sig) return { ok: false, error: "Invalid state" };
+  const expected = await hmacSha256Base64Url(secret, body);
+  if (expected !== sig) return { ok: false, error: "Invalid state signature" };
+  try {
+    const payload = JSON.parse(new TextDecoder().decode(fromBase64Url(body))) as {
+      shop?: string;
+      exp?: number;
+    };
+    if (!payload.shop || payload.shop !== shop) return { ok: false, error: "State/shop mismatch" };
+    if (!payload.exp || payload.exp <= Date.now()) return { ok: false, error: "Expired state" };
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Invalid state payload" };
+  }
+}
+
+async function verifyShopifyOAuthHmac(params: URLSearchParams, secret: string): Promise<boolean> {
+  const hmac = params.get("hmac");
+  if (!hmac) return false;
+  const message = Array.from(params.entries())
+    .filter(([key]) => key !== "hmac" && key !== "signature")
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("&");
+  const digest = await hmacSha256Hex(secret, message);
+  return digest === hmac;
+}
+
+async function exchangeShopifyAccessToken(
+  shop: string,
+  code: string,
+  apiKey: string,
+  apiSecret: string
+): Promise<{ access_token: string; scope: string }> {
+  const response = await fetch(`https://${shop}/admin/oauth/access_token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      client_id: apiKey,
+      client_secret: apiSecret,
+      code
+    })
+  });
+  const data = (await response.json()) as { access_token?: string; scope?: string; error?: string };
+  if (!response.ok || !data.access_token) {
+    throw new Error(data.error || `Token exchange failed (${response.status})`);
+  }
+  return { access_token: data.access_token, scope: data.scope || "" };
+}
+
+async function obtainShopifyClientCredentialsToken(
+  shop: string,
+  apiKey: string,
+  apiSecret: string
+): Promise<{ access_token: string; scope: string; expires_in?: number }> {
+  const response = await fetch(`https://${shop}/admin/oauth/access_token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      client_id: apiKey,
+      client_secret: apiSecret,
+      grant_type: "client_credentials"
+    })
+  });
+  const data = (await response.json()) as {
+    access_token?: string;
+    scope?: string;
+    expires_in?: number;
+    error?: string;
+  };
+  if (!response.ok || !data.access_token) {
+    throw new Error(data.error || `Client credentials failed (${response.status})`);
+  }
+  return {
+    access_token: data.access_token,
+    scope: data.scope || "",
+    expires_in: data.expires_in
+  };
+}
+
+type ShopifyGql = (query: string, variables?: Record<string, unknown>) => Promise<Record<string, unknown>>;
+
+function createShopifyGraphql(shop: string, accessToken: string): ShopifyGql {
+  return async (query, variables) => {
+    const response = await fetch(`https://${shop}/admin/api/2025-10/graphql.json`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": accessToken
+      },
+      body: JSON.stringify({ query, variables })
+    });
+    const json = (await response.json()) as {
+      data?: Record<string, unknown>;
+      errors?: Array<{ message: string; extensions?: { code?: string } }>;
+    };
+    if (!response.ok) {
+      throw new Error(`GraphQL HTTP ${response.status}`);
+    }
+    // Shopify returns RESOURCE_NOT_FOUND for missing webPixel — treat as empty data.
+    if (json.errors?.length) {
+      const onlyMissing = json.errors.every(
+        (e) => e.extensions?.code === "RESOURCE_NOT_FOUND" || /no web pixel/i.test(e.message)
+      );
+      if (!onlyMissing) {
+        throw new Error(json.errors.map((e) => e.message).join("; "));
+      }
+    }
+    return json.data ?? {};
+  };
+}
+
+async function ensureSynapseWebPixel(
+  shop: string,
+  accessToken: string,
+  appOrigin: string
+): Promise<{ ok: boolean; detail: Record<string, unknown> }> {
+  const settings = {
+    beaconUrl: `${appOrigin}/browser/beacon`,
+    shopDomain: shop
+  };
+  const settingsJson = JSON.stringify(settings);
+  const gql = createShopifyGraphql(shop, accessToken);
+
+  const existing = (await gql(`query { webPixel { id settings } }`)) as {
+    webPixel?: { id?: string; settings?: string } | null;
+  };
+
+  if (existing.webPixel?.id) {
+    const updated = (await gql(
+      `mutation webPixelUpdate($id: ID!, $webPixel: WebPixelInput!) {
+        webPixelUpdate(id: $id, webPixel: $webPixel) {
+          userErrors { field message code }
+          webPixel { id settings }
+        }
+      }`,
+      { id: existing.webPixel.id, webPixel: { settings: settingsJson } }
+    )) as {
+      webPixelUpdate?: {
+        userErrors?: Array<{ message: string }>;
+        webPixel?: { id?: string; settings?: string };
+      };
+    };
+    const errors = updated.webPixelUpdate?.userErrors ?? [];
+    if (errors.length) {
+      return { ok: false, detail: { action: "update", errors } };
+    }
+    return {
+      ok: true,
+      detail: { action: "update", webPixel: updated.webPixelUpdate?.webPixel }
+    };
+  }
+
+  const created = (await gql(
+    `mutation webPixelCreate($webPixel: WebPixelInput!) {
+      webPixelCreate(webPixel: $webPixel) {
+        userErrors { field message code }
+        webPixel { id settings }
+      }
+    }`,
+    { webPixel: { settings: settingsJson } }
+  )) as {
+    webPixelCreate?: {
+      userErrors?: Array<{ message: string }>;
+      webPixel?: { id?: string; settings?: string };
+    };
+  };
+  const errors = created.webPixelCreate?.userErrors ?? [];
+  if (errors.length) {
+    return { ok: false, detail: { action: "create", errors } };
+  }
+  return {
+    ok: true,
+    detail: { action: "create", webPixel: created.webPixelCreate?.webPixel }
+  };
+}
+
+const WEBHOOK_TOPICS = [
+  { topic: "ORDERS_CREATE", path: "/webhooks/shopify/orders/create" },
+  { topic: "ORDERS_PAID", path: "/webhooks/shopify/orders/paid" },
+  { topic: "REFUNDS_CREATE", path: "/webhooks/shopify/refunds/create" }
+] as const;
+
+async function ensureSynapseWebhooks(
+  shop: string,
+  accessToken: string,
+  appOrigin: string
+): Promise<{ ok: boolean; detail: Record<string, unknown> }> {
+  const gql = createShopifyGraphql(shop, accessToken);
+  const listed = (await gql(`query {
+    webhookSubscriptions(first: 50) {
+      edges { node { id topic endpoint { __typename ... on WebhookHttpEndpoint { callbackUrl } } } }
+    }
+  }`)) as {
+    webhookSubscriptions?: {
+      edges?: Array<{
+        node: {
+          id: string;
+          topic: string;
+          endpoint?: { callbackUrl?: string };
+        };
+      }>;
+    };
+  };
+
+  const byTopic = new Map<string, { id: string; callbackUrl?: string }>();
+  for (const edge of listed.webhookSubscriptions?.edges ?? []) {
+    byTopic.set(edge.node.topic, {
+      id: edge.node.id,
+      callbackUrl: edge.node.endpoint?.callbackUrl
+    });
+  }
+
+  const results: Array<Record<string, unknown>> = [];
+  for (const row of WEBHOOK_TOPICS) {
+    const callbackUrl = `${appOrigin}${row.path}`;
+    const existing = byTopic.get(row.topic);
+    if (existing?.callbackUrl === callbackUrl) {
+      results.push({ topic: row.topic, action: "unchanged", id: existing.id, callbackUrl });
+      continue;
+    }
+    if (existing?.id) {
+      await gql(
+        `mutation($id: ID!) {
+          webhookSubscriptionDelete(id: $id) {
+            userErrors { message }
+            deletedWebhookSubscriptionId
+          }
+        }`,
+        { id: existing.id }
+      );
+    }
+    const created = (await gql(
+      `mutation($topic: WebhookSubscriptionTopic!, $url: URL!) {
+        webhookSubscriptionCreate(topic: $topic, webhookSubscription: { callbackUrl: $url, format: JSON }) {
+          userErrors { field message }
+          webhookSubscription { id topic endpoint { ... on WebhookHttpEndpoint { callbackUrl } } }
+        }
+      }`,
+      { topic: row.topic, url: callbackUrl }
+    )) as {
+      webhookSubscriptionCreate?: {
+        userErrors?: Array<{ message: string }>;
+        webhookSubscription?: { id?: string; topic?: string };
+      };
+    };
+    const errors = created.webhookSubscriptionCreate?.userErrors ?? [];
+    if (errors.length) {
+      results.push({ topic: row.topic, action: "error", errors });
+    } else {
+      results.push({
+        topic: row.topic,
+        action: existing ? "replaced" : "created",
+        webhook: created.webhookSubscriptionCreate?.webhookSubscription
+      });
+    }
+  }
+
+  const ok = results.every((r) => r.action !== "error");
+  return { ok, detail: { webhooks: results } };
+}
+
+async function wireShopToSynapse(
+  shop: string,
+  env: CloudflareEnv,
+  appOrigin: string
+): Promise<Record<string, unknown>> {
+  const apiKey = env.SHOPIFY_API_KEY;
+  const apiSecret = env.SHOPIFY_API_SECRET;
+  if (!apiKey || !apiSecret) {
+    return { ok: false, error: "Missing SHOPIFY_API_KEY / SHOPIFY_API_SECRET" };
+  }
+
+  const token = await obtainShopifyClientCredentialsToken(shop, apiKey, apiSecret);
+  const pixel = await ensureSynapseWebPixel(shop, token.access_token, appOrigin);
+  const webhooks = await ensureSynapseWebhooks(shop, token.access_token, appOrigin);
+
+  return {
+    ok: pixel.ok && webhooks.ok,
+    shop,
+    scope: token.scope,
+    expires_in: token.expires_in,
+    pixel,
+    webhooks,
+    cdn: `${appOrigin}/gcw-synapse.js?v=1.4.1`,
+    beacon: `${appOrigin}/browser/beacon`,
+    compatibility_ids: `${appOrigin}/compatibility/ids`
+  };
+}
+
+function htmlResponse(body: string, status = 200): Response {
+  return new Response(body, {
+    status,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store"
+    }
+  });
+}
+
+async function handleShopifyOAuth(
+  request: Request,
+  env: CloudflareEnv,
+  url: URL
+): Promise<Response | null> {
+  if (request.method !== "GET") return null;
+  if (url.pathname !== "/auth/shopify/install" && url.pathname !== "/auth/shopify/callback") {
+    return null;
+  }
+
+  const apiKey = env.SHOPIFY_API_KEY;
+  const apiSecret = env.SHOPIFY_API_SECRET;
+  if (!apiKey || !apiSecret) {
+    return jsonResponse(
+      { ok: false, error: "Shopify OAuth is not configured on the Worker (missing API key/secret)" },
+      500
+    );
+  }
+
+  const scopes = resolveInstallScopes(env.SHOPIFY_APP_SCOPES);
+  const appOrigin = url.origin;
+
+  if (url.pathname === "/auth/shopify/install") {
+    const shopRaw = (url.searchParams.get("shop") || "gcw-dev.myshopify.com").trim();
+    let shop: string;
+    try {
+      shop = normalizeShopDomain(shopRaw);
+    } catch (error) {
+      return jsonResponse(
+        { ok: false, error: error instanceof Error ? error.message : "Invalid shop" },
+        400
+      );
+    }
+
+    const state = await createOAuthState(shop, apiSecret);
+    const authorize = new URL(`https://${shop}/admin/oauth/authorize`);
+    authorize.searchParams.set("client_id", apiKey);
+    authorize.searchParams.set("scope", scopes);
+    authorize.searchParams.set("redirect_uri", `${appOrigin}/auth/shopify/callback`);
+    authorize.searchParams.set("state", state);
+    return new Response(null, {
+      status: 302,
+      headers: {
+        Location: authorize.toString(),
+        "Cache-Control": "no-store"
+      }
+    });
+  }
+
+  // callback
+  const shopRaw = url.searchParams.get("shop") || "";
+  let shop: string;
+  try {
+    shop = normalizeShopDomain(shopRaw);
+  } catch {
+    return htmlResponse("<h1>Install failed</h1><p>Invalid shop domain.</p>", 400);
+  }
+
+  const state = url.searchParams.get("state") || "";
+  const stateCheck = await verifyOAuthState(state, apiSecret, shop);
+  if (!stateCheck.ok) {
+    return htmlResponse(`<h1>Install failed</h1><p>${stateCheck.error}</p>`, 400);
+  }
+
+  const hmacOk = await verifyShopifyOAuthHmac(url.searchParams, apiSecret);
+  if (!hmacOk) {
+    return htmlResponse("<h1>Install failed</h1><p>Invalid Shopify HMAC.</p>", 400);
+  }
+
+  const code = url.searchParams.get("code");
+  if (!code) {
+    return htmlResponse("<h1>Install failed</h1><p>Missing authorization code.</p>", 400);
+  }
+
+  try {
+    const token = await exchangeShopifyAccessToken(shop, code, apiKey, apiSecret);
+    const pixel = await ensureSynapseWebPixel(shop, token.access_token, appOrigin);
+    const webhooks = await ensureSynapseWebhooks(shop, token.access_token, appOrigin);
+    const pixelStatus = pixel.ok
+      ? `Web pixel ${String(pixel.detail.action)}d successfully.`
+      : `Web pixel activation issue: ${JSON.stringify(pixel.detail.errors || pixel.detail)}`;
+    const webhookStatus = webhooks.ok
+      ? "Purchase/refund webhooks registered."
+      : `Webhook issue: ${JSON.stringify(webhooks.detail)}`;
+
+    const handle = shop.replace(/\.myshopify\.com$/i, "");
+    const appHome = `${appOrigin}/?shop=${encodeURIComponent(shop)}&embedded=1`;
+    const adminApp = `https://admin.shopify.com/store/${handle}/apps/${apiKey}`;
+    const embedEditor = `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${apiKey}/gcw-synapse-app-block`;
+    const customerEvents = `https://admin.shopify.com/store/${handle}/settings/customer_events`;
+
+    return htmlResponse(`<!doctype html>
+<html><head>
+  <meta charset="utf-8">
+  <meta http-equiv="refresh" content="2;url=${appHome}">
+  <title>GCW Synapse installed</title>
+  <style>
+    body{font-family:IBM Plex Sans,Segoe UI,sans-serif;max-width:640px;margin:40px auto;padding:0 16px;color:#12241c;background:#f5f8f6}
+    a.btn{display:inline-block;margin:6px 8px 6px 0;padding:12px 16px;border-radius:8px;background:#0f6b4c;color:#fff;text-decoration:none;font-weight:600}
+    a.btn.secondary{background:#e5eee9;color:#12241c}
+    .ok{color:#0f6b4c}
+  </style>
+</head>
+<body>
+  <h1 class="ok">GCW Synapse is live</h1>
+  <p><strong>Shop:</strong> ${shop}</p>
+  <p><strong>Scopes:</strong> ${token.scope || scopes}</p>
+  <p>${pixelStatus}</p>
+  <p>${webhookStatus}</p>
+  <p>Opening the platforms control panel…</p>
+  <p>
+    <a class="btn" href="${adminApp}">Open app in Shopify admin</a>
+    <a class="btn secondary" href="${appHome}">Open platforms UI</a>
+    <a class="btn secondary" href="${embedEditor}">Enable theme embed</a>
+    <a class="btn secondary" href="${customerEvents}">Customer events</a>
+  </p>
+</body></html>`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Install callback failed";
+    return htmlResponse(`<h1>Install failed</h1><p>${message}</p>`, 400);
+  }
+}
+
+function getBrowserParityThreshold(env?: CloudflareEnv): number {
+  const raw = env?.BROWSER_PARITY_MISMATCH_ALERT_PCT;
+  if (!raw) return 5;
+  const parsed = Number.parseFloat(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 5;
+}
+
+function getAlertConfig(env: CloudflareEnv) {
+  return {
+    slackWebhookUrl: env.SLACK_WEBHOOK_URL,
+    emailTo: env.ALERT_EMAIL_TO,
+    emailFrom: env.ALERT_EMAIL_FROM,
+    emailWebhookUrl: env.ALERT_EMAIL_WEBHOOK_URL
+  };
+}
+
+function buildLaunchReadiness(purchaseParity: ReturnType<typeof getParityModel>, browserParity: ReturnType<typeof getBrowserParityReport>) {
+  const hasVolume = browserParity.paired_events > 0 || browserParity.synapse_events > 0;
+  const bothSides =
+    browserParity.synapse_events > 0 && browserParity.elevar_events > 0;
+  // Dual-run GO uses volume match (event_ids intentionally differ across vendors).
+  const volumePct = browserParity.volume_match_pct ?? browserParity.matched_rate_pct;
+  const browserGo =
+    !hasVolume || (bothSides && browserParity.status === "ok" && volumePct >= 80);
+  const purchaseGo = purchaseParity.status === "ok";
+  const checks = [
+    {
+      id: "purchase_shadow_parity",
+      status: purchaseGo ? "pass" : "hold",
+      detail: `matched ${purchaseParity.matched_rate_pct}%`
+    },
+    {
+      id: "browser_parity_threshold",
+      status: browserGo ? "pass" : "hold",
+      detail: hasVolume
+        ? `Synapse covers ${volumePct}% of Elevar core funnel (fuzzy=${browserParity.fuzzy_paired ?? 0}, elevar_events=${browserParity.paired_events})`
+        : "waiting for storefront traffic (no dual-run volume yet)"
+    },
+    {
+      id: "browser_dual_run_volume",
+      status: bothSides ? "pass" : hasVolume ? "hold" : "waiting",
+      detail: `synapse=${browserParity.synapse_events} elevar=${browserParity.elevar_events}`
+    }
+  ];
+  const hold = checks.some((c) => c.status === "hold");
+  return {
+    status: hold ? "hold" : hasVolume ? "go" : "ready",
+    rationale: checks.filter((c) => c.status === "hold" || c.status === "waiting").map((c) => c.detail),
+    checks,
+    purchase_parity: purchaseParity,
+    browser_parity: browserParity
+  };
 }
 
 function getShadowCounts(): {
@@ -222,42 +990,224 @@ function getParityModel() {
   };
 }
 
-function getChannelSummary() {
-  const byChannel = new Map<string, { total: number; failed: number; last_seen?: string }>();
+const CHANNEL_CACHE_URL = "https://gcw-synapse-super.internal/channel-events-v3";
+const BROWSER_CACHE_URL = "https://gcw-synapse-super.internal/browser-events-v1";
+const BROWSER_KV_KEY = "browser-events-v1";
+const CHANNEL_KV_KEY = "channel-events-v3";
+/** Once-per-isolate: avoid re-ingesting KV/Cache into channel health on every request. */
+let channelEventsHydrated = false;
 
-  for (const raw of edgeChannelEvents) {
-    const item = raw as { channel?: string; status?: string; observed_at?: string };
-    const key = item.channel ?? "unknown";
-    const prev = byChannel.get(key) ?? { total: 0, failed: 0, last_seen: undefined };
-    prev.total += 1;
-    if (item.status === "error") {
-      prev.failed += 1;
+function channelEventFingerprint(event: Record<string, unknown>): string {
+  return [
+    String(event.channel ?? ""),
+    String(event.surface ?? ""),
+    String(event.event_name ?? ""),
+    String(event.event_id ?? ""),
+    String(event.transaction_id ?? ""),
+    String(event.observed_at ?? ""),
+    String(event.status ?? ""),
+    String(event.destination ?? "")
+  ].join("|");
+}
+
+async function readChannelEventsFromStore(env?: CloudflareEnv): Promise<Array<Record<string, unknown>>> {
+  try {
+    const fromKv = await env?.SYNAPSE_STATE?.get(CHANNEL_KV_KEY, "json");
+    if (Array.isArray(fromKv)) {
+      return fromKv as Array<Record<string, unknown>>;
     }
-    if (item.observed_at) {
-      prev.last_seen = item.observed_at;
+    const cached = await caches.default.match(CHANNEL_CACHE_URL);
+    if (cached) {
+      const parsed = (await cached.json()) as Array<Record<string, unknown>>;
+      if (Array.isArray(parsed)) return parsed;
     }
-    byChannel.set(key, prev);
+  } catch {
+    // ignore
   }
+  return [];
+}
 
-  const channels = Array.from(byChannel.entries()).map(([channel, stats]) => {
-    const failureRate = stats.total > 0 ? (stats.failed / stats.total) * 100 : 0;
-    return {
-      channel,
-      total_events: stats.total,
-      failed_events: stats.failed,
-      failure_rate_pct: Number.parseFloat(failureRate.toFixed(2)),
-      status: failureRate > 20 ? "warning" : "ok",
-      last_seen: stats.last_seen ?? null
-    };
+async function writeChannelEventsToStore(
+  env: CloudflareEnv | undefined,
+  events: Array<Record<string, unknown>>
+): Promise<void> {
+  const body = JSON.stringify(events);
+  await caches.default.put(
+    CHANNEL_CACHE_URL,
+    new Response(body, {
+      headers: {
+        "content-type": "application/json",
+        "cache-control": "max-age=86400"
+      }
+    })
+  );
+  await env?.SYNAPSE_STATE?.put(CHANNEL_KV_KEY, body, { expirationTtl: 86400 });
+}
+
+async function clearChannelEventsCache(env?: CloudflareEnv): Promise<void> {
+  try {
+    // Overwrite with empty so hydrate cannot revive orphans via a Cache delete race.
+    await writeChannelEventsToStore(env, []);
+    channelEventsHydrated = true;
+    await caches.default.delete("https://gcw-synapse-super.internal/channel-events-v1");
+    await caches.default.delete("https://gcw-synapse-super.internal/channel-events-v2");
+    await caches.default.delete(BROWSER_CACHE_URL);
+    await env?.SYNAPSE_STATE?.delete(BROWSER_KV_KEY);
+    await env?.SYNAPSE_STATE?.delete("channel-events-v1");
+    await env?.SYNAPSE_STATE?.delete("channel-events-v2");
+  } catch {
+    // ignore
+  }
+}
+
+async function persistBrowserEventsToCache(env?: CloudflareEnv): Promise<void> {
+  try {
+    // Merge any KV/cache rows we may be missing before writing, so concurrent
+    // isolates cannot clobber each other's synapse/elevar halves.
+    await hydrateBrowserEventsFromCache(env);
+    const events = getBrowserEventsSnapshot(500);
+    const body = JSON.stringify(events);
+    await caches.default.put(
+      BROWSER_CACHE_URL,
+      new Response(body, {
+        headers: {
+          "content-type": "application/json",
+          "cache-control": "max-age=86400"
+        }
+      })
+    );
+    await env?.SYNAPSE_STATE?.put(BROWSER_KV_KEY, body, { expirationTtl: 86400 });
+  } catch {
+    // ignore
+  }
+}
+
+async function hydrateBrowserEventsFromCache(env?: CloudflareEnv): Promise<void> {
+  try {
+    let events: Array<Record<string, unknown>> | null = null;
+    const fromKv = await env?.SYNAPSE_STATE?.get(BROWSER_KV_KEY, "json");
+    if (Array.isArray(fromKv)) {
+      events = fromKv as Array<Record<string, unknown>>;
+    } else {
+      const cached = await caches.default.match(BROWSER_CACHE_URL);
+      if (cached) {
+        const parsed = (await cached.json()) as Array<Record<string, unknown>>;
+        if (Array.isArray(parsed)) events = parsed;
+      }
+    }
+    if (!events?.length) return;
+    hydrateBrowserEvents(events as Parameters<typeof hydrateBrowserEvents>[0]);
+  } catch {
+    // ignore
+  }
+}
+
+function ingestStoredChannelEvent(event: Record<string, unknown>): void {
+  if (typeof event.channel !== "string" || typeof event.event_name !== "string") return;
+  ingestChannelEvent({
+    channel: event.channel,
+    surface: (event.surface as "pixel" | "server" | "runtime" | "webhook") || "pixel",
+    destination: typeof event.destination === "string" ? event.destination : "unknown",
+    pixel_id: typeof event.pixel_id === "string" ? event.pixel_id : undefined,
+    event_name: event.event_name,
+    event_id: typeof event.event_id === "string" ? event.event_id : undefined,
+    transaction_id: typeof event.transaction_id === "string" ? event.transaction_id : undefined,
+    status: event.status === "error" ? "error" : "ok",
+    error_message: typeof event.error_message === "string" ? event.error_message : undefined,
+    observed_at: typeof event.observed_at === "string" ? event.observed_at : new Date().toISOString()
+  });
+}
+
+async function persistChannelEventsToCache(env?: CloudflareEnv): Promise<void> {
+  try {
+    // Merge remote-only rows (other isolates) without full re-ingest of local copies.
+    const remote = await readChannelEventsFromStore(env);
+    const localFp = new Set(
+      getRecentChannelEvents(500).map((event) => channelEventFingerprint(event as unknown as Record<string, unknown>))
+    );
+    for (const event of remote.slice().reverse()) {
+      const fp = channelEventFingerprint(event);
+      if (localFp.has(fp)) continue;
+      ingestStoredChannelEvent(event);
+      localFp.add(fp);
+    }
+    channelEventsHydrated = true;
+    await writeChannelEventsToStore(
+      env,
+      getRecentChannelEvents(500) as unknown as Array<Record<string, unknown>>
+    );
+  } catch {
+    // Cache API may be unavailable in some runtimes; ignore.
+  }
+}
+
+async function hydrateChannelEventsFromCache(env?: CloudflareEnv): Promise<void> {
+  try {
+    const remote = await readChannelEventsFromStore(env);
+    const local = getRecentChannelEvents(500);
+
+    // Empty memory + non-empty store: always load (other isolate may have seeded after our reset).
+    if (local.length === 0) {
+      for (const event of remote.slice().reverse()) {
+        ingestStoredChannelEvent(event);
+      }
+      channelEventsHydrated = true;
+      return;
+    }
+
+    // Warm isolate: merge any remote-only fingerprints without doubling local rows.
+    const localFp = new Set(
+      local.map((event) => channelEventFingerprint(event as unknown as Record<string, unknown>))
+    );
+    for (const event of remote.slice().reverse()) {
+      const fp = channelEventFingerprint(event);
+      if (localFp.has(fp)) continue;
+      ingestStoredChannelEvent(event);
+      localFp.add(fp);
+    }
+    channelEventsHydrated = true;
+  } catch {
+    // ignore hydrate failures
+  }
+}
+
+async function getChannelSummary(env?: CloudflareEnv) {
+  await hydrateChannelEventsFromCache(env);
+  const summary = getChannelHealthSummary(90, 5);
+  return {
+    total_channels: summary.totals.tracked_integrations,
+    warning_channels: summary.totals.warning + summary.totals.critical,
+    status: summary.totals.critical > 0 || summary.totals.warning > 0 ? "warning" : "ok",
+    totals: summary.totals,
+    channels: summary.channels
+  };
+}
+
+function recordSynapseBrowserChannel(eventName: string, eventId: string | undefined, shop: string): void {
+  ingestChannelEvent({
+    channel: "synapse",
+    surface: "pixel",
+    destination: "browser-beacon",
+    event_name: eventName,
+    event_id: eventId,
+    source_theme: "gcw-synapse",
+    source_surface: "storefront",
+    status: "ok",
+    observed_at: new Date().toISOString()
   });
 
-  const warningChannels = channels.filter((channel) => channel.status === "warning").length;
-  return {
-    total_channels: channels.length,
-    warning_channels: warningChannels,
-    status: warningChannels > 0 ? "warning" : "ok",
-    channels
-  };
+  // Mirror into sGTM browser path so Server GTM row shows browser activity.
+  ingestChannelEvent({
+    channel: "server_gtm",
+    surface: "pixel",
+    destination: "gtm-browser-bridge",
+    event_name: eventName,
+    event_id: eventId,
+    source_theme: shop,
+    source_surface: "browser",
+    status: "ok",
+    observed_at: new Date().toISOString()
+  });
 }
 
 function shouldProxy(pathname: string): boolean {
@@ -431,7 +1381,7 @@ async function runEdgeQaSmoke(): Promise<{ passed: number; failed: number; total
   };
 }
 
-async function handleNativeApi(request: Request): Promise<Response | null> {
+async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Response | null> {
   const url = new URL(request.url);
 
   if (request.method === "GET" && url.pathname === "/health") {
@@ -446,6 +1396,142 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
       dbConnected: true,
       uptime: getWorkerUptimeSeconds(),
       vendorAdapters: getControlPanelVendors()
+    });
+  }
+
+  if (request.method === "GET" && url.pathname === "/ops/connection") {
+    const apiKey = Boolean(env.SHOPIFY_API_KEY);
+    const apiSecret = Boolean(env.SHOPIFY_API_SECRET);
+    const webhookSecret = Boolean(env.SHOPIFY_WEBHOOK_SECRET || env.SHOPIFY_API_SECRET);
+    const scopes = resolveInstallScopes(env.SHOPIFY_APP_SCOPES);
+    const appUrlOk = true; // Worker uses request origin for OAuth callbacks
+    const checks = [
+      { id: "shopify_api_key", label: "Shopify API key (client id)", ok: apiKey, detail: apiKey ? "set" : "missing" },
+      { id: "shopify_api_secret", label: "Shopify API secret", ok: apiSecret, detail: apiSecret ? "set" : "missing" },
+      { id: "shopify_webhook_secret", label: "Shopify webhook HMAC secret", ok: webhookSecret, detail: webhookSecret ? "set" : "missing" },
+      { id: "shopify_scopes", label: "Install scopes (lean)", ok: scopes.length > 0 && !scopes.includes("read_all_orders"), detail: scopes },
+      { id: "oauth_callback", label: "OAuth callback host", ok: appUrlOk, detail: `${url.origin}/auth/shopify/callback` },
+      { id: "cdn_script", label: "Storefront CDN script", ok: true, detail: `${url.origin}/gcw-synapse.js?v=1.4.1` },
+      { id: "browser_beacon", label: "Browser beacon", ok: true, detail: `${url.origin}/browser/beacon` },
+      {
+        id: "gtm_forward",
+        label: "sGTM purchase forward",
+        ok: true,
+        detail: env.GTM_SERVER_URL
+          ? `configured (${env.RUNTIME_MODE || "shadow_compare"})`
+          : "optional — set GTM_SERVER_URL when flipping RUNTIME_MODE=forward"
+      },
+      {
+        id: "elevar_ids",
+        label: "Stolen Elevar public IDs (compat)",
+        ok: Boolean(env.FACEBOOK_PIXEL_ID && env.GA4_MEASUREMENT_ID),
+        detail: env.FACEBOOK_PIXEL_ID
+          ? `FB ${env.FACEBOOK_PIXEL_ID} · GA4 ${env.GA4_MEASUREMENT_ID || "unset"} · TT ${env.TIKTOK_PIXEL_ID || "unset"}`
+          : "missing — set FACEBOOK_PIXEL_ID / GA4_MEASUREMENT_ID vars"
+      }
+    ];
+    const incomplete = checks.filter((c) => !c.ok);
+    return jsonResponse({
+      ok: incomplete.length === 0,
+      status: incomplete.length === 0 ? "green" : "incomplete",
+      client_id_hint: "7d011b70562512bd84b85bd3f9a6e68d",
+      incomplete: incomplete.map((c) => c.id),
+      checks,
+      notes: [
+        "Destination API secrets (Meta CAPI, TikTok Events API, etc.) stay in GTM/sGTM — not Worker secrets.",
+        "Public pixel/measurement IDs stolen from Elevar GTM constants power /compatibility/* on edge.",
+        "Incomplete Shopify keys block OAuth/webhooks; destination tokens are configured in GTM tags."
+      ]
+    });
+  }
+
+  if (request.method === "POST" && url.pathname === "/ops/reset-health") {
+    resetChannelHealth();
+    resetBrowserEventsForTests();
+    channelEventsHydrated = false;
+    edgeWebhookLog.length = 0;
+    edgeShadowComparisons.length = 0;
+    edgeChannelEvents.length = 0;
+    edgeBrowserEvents.length = 0;
+    edgeEventsGenerated = 0;
+    edgeEventsSuppressed = 0;
+    edgeBrowserBeaconsAccepted = 0;
+    await clearChannelEventsCache(env);
+    return jsonResponse({
+      ok: true,
+      status: "reset",
+      message: "Cleared in-memory health, browser parity, and channel-events KV/cache (v3)"
+    });
+  }
+
+  if (
+    (request.method === "POST" || request.method === "GET") &&
+    (url.pathname === "/ops/wire" || url.pathname === "/ops/wire-shop")
+  ) {
+    const shopRaw =
+      url.searchParams.get("shop") ||
+      (request.method === "POST" ? undefined : "gcw-dev.myshopify.com") ||
+      "gcw-dev.myshopify.com";
+    let shop: string;
+    try {
+      shop = normalizeShopDomain(shopRaw.trim());
+    } catch (error) {
+      return jsonResponse(
+        { ok: false, error: error instanceof Error ? error.message : "Invalid shop" },
+        400
+      );
+    }
+    try {
+      const result = await wireShopToSynapse(shop, env, url.origin);
+      return jsonResponse(result, result.ok ? 200 : 500);
+    } catch (error) {
+      return jsonResponse(
+        {
+          ok: false,
+          error: error instanceof Error ? error.message : "Wire failed"
+        },
+        500
+      );
+    }
+  }
+
+  if (request.method === "GET" && url.pathname === "/ops/dual-run") {
+    const flags = await getDualRunFlags(env);
+    return jsonResponse({
+      ok: true,
+      synapse_enabled: flags.synapse_enabled,
+      elevar_note: "Elevar theme embed is controlled in Shopify Theme → App embeds (not via Worker).",
+      updated_at: flags.updated_at ?? null,
+      how_to: {
+        disable_synapse: "POST /ops/dual-run {\"synapse_enabled\":false}",
+        enable_synapse: "POST /ops/dual-run {\"synapse_enabled\":true}"
+      }
+    });
+  }
+
+  if (request.method === "POST" && url.pathname === "/ops/dual-run") {
+    let body: Record<string, unknown> = {};
+    try {
+      body = (await request.json()) as Record<string, unknown>;
+    } catch {
+      body = {};
+    }
+    const enabled =
+      typeof body.synapse_enabled === "boolean"
+        ? body.synapse_enabled
+        : body.synapse === false
+          ? false
+          : body.synapse === true
+            ? true
+            : true;
+    const flags = await setDualRunFlags(env, { synapse_enabled: enabled });
+    return jsonResponse({
+      ok: true,
+      synapse_enabled: flags.synapse_enabled,
+      updated_at: flags.updated_at,
+      note: flags.synapse_enabled
+        ? "Synapse CDN + beacons active"
+        : "Synapse CDN serves noop stub; Elevar unchanged"
     });
   }
 
@@ -577,9 +1663,28 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
       return jsonResponse({ ok: false, error: "Invalid channel event payload" }, 400);
     }
 
-    edgeChannelEvents.unshift({ ...payload, observed_at: (payload.observed_at as string | undefined) ?? new Date().toISOString() });
+    const observedAt = (payload.observed_at as string | undefined) ?? new Date().toISOString();
+    const item = { ...payload, observed_at: observedAt };
+    edgeChannelEvents.unshift(item);
     if (edgeChannelEvents.length > 500) {
       edgeChannelEvents.length = 500;
+    }
+
+    if (typeof payload.channel === "string" && typeof payload.event_name === "string") {
+      await hydrateChannelEventsFromCache(env);
+      ingestChannelEvent({
+        channel: payload.channel,
+        surface: (payload.surface as "pixel" | "server" | "runtime" | "webhook") || "pixel",
+        destination: typeof payload.destination === "string" ? payload.destination : "unknown",
+        pixel_id: typeof payload.pixel_id === "string" ? payload.pixel_id : undefined,
+        event_name: payload.event_name,
+        event_id: typeof payload.event_id === "string" ? payload.event_id : undefined,
+        transaction_id: typeof payload.transaction_id === "string" ? payload.transaction_id : undefined,
+        status: payload.status === "error" ? "error" : "ok",
+        error_message: typeof payload.error_message === "string" ? payload.error_message : undefined,
+        observed_at: observedAt
+      });
+      await persistChannelEventsToCache(env);
     }
 
     return jsonResponse({ ok: true, status: "channel_event_recorded", item: edgeChannelEvents[0] }, 202);
@@ -599,15 +1704,31 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
     }
 
     const accepted: Array<Record<string, unknown>> = [];
+    await hydrateChannelEventsFromCache(env);
     for (const event of events) {
       const item = { ...event, observed_at: (event.observed_at as string | undefined) ?? new Date().toISOString() };
       edgeChannelEvents.unshift(item);
       accepted.push(item);
+      if (typeof event.channel === "string" && typeof event.event_name === "string") {
+        ingestChannelEvent({
+          channel: event.channel,
+          surface: (event.surface as "pixel" | "server" | "runtime" | "webhook") || "pixel",
+          destination: typeof event.destination === "string" ? event.destination : "unknown",
+          pixel_id: typeof event.pixel_id === "string" ? event.pixel_id : undefined,
+          event_name: event.event_name,
+          event_id: typeof event.event_id === "string" ? event.event_id : undefined,
+          transaction_id: typeof event.transaction_id === "string" ? event.transaction_id : undefined,
+          status: event.status === "error" ? "error" : "ok",
+          error_message: typeof event.error_message === "string" ? event.error_message : undefined,
+          observed_at: item.observed_at as string
+        });
+      }
     }
 
     if (edgeChannelEvents.length > 500) {
       edgeChannelEvents.length = 500;
     }
+    await persistChannelEventsToCache(env);
 
     return jsonResponse({
       ok: true,
@@ -622,76 +1743,195 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
     }, 202);
   }
 
+  if (request.method === "POST" && url.pathname === "/compare/demo-seed") {
+    const scenario = resolveDemoSeedScenario(url.searchParams.get("scenario"));
+    const samples = buildDemoSamples(scenario);
+    const now = Date.now();
+
+    // Healthy seed always starts clean so prior token/orphan pulses cannot keep Meta/TikTok red.
+    if (scenario === "healthy") {
+      resetChannelHealth();
+      channelEventsHydrated = false;
+      edgeChannelEvents.length = 0;
+      await clearChannelEventsCache(env);
+    } else {
+      await hydrateChannelEventsFromCache(env);
+    }
+
+    let seeded = 0;
+    for (const sample of samples) {
+      const observedAt = new Date(now - sample.minutesAgo * 60_000).toISOString();
+      const item = {
+        channel: sample.channel,
+        surface: sample.surface,
+        destination: sample.destination,
+        event_name: sample.event_name,
+        status: sample.status,
+        pixel_id: sample.pixel_id,
+        event_id: sample.event_id,
+        transaction_id: sample.transaction_id,
+        error_message: sample.error_message,
+        observed_at: observedAt
+      };
+      edgeChannelEvents.unshift(item);
+      ingestChannelEvent({
+        channel: sample.channel,
+        surface: sample.surface,
+        destination: sample.destination,
+        pixel_id: sample.pixel_id,
+        event_name: sample.event_name,
+        event_id: sample.event_id,
+        transaction_id: sample.transaction_id,
+        status: sample.status,
+        error_message: sample.error_message,
+        observed_at: observedAt
+      });
+      seeded += 1;
+    }
+    if (edgeChannelEvents.length > 500) {
+      edgeChannelEvents.length = 500;
+    }
+    await persistChannelEventsToCache(env);
+    return jsonResponse(
+      {
+        ok: true,
+        seeded,
+        scenario,
+        note:
+          scenario === "healthy"
+            ? "Healthy Meta/TikTok/platform pulses with confirmed dedupe (prior health cleared)"
+            : "Broken diagnostic pulses recorded (token failure + orphan dedupe)"
+      },
+      202
+    );
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/advisor/alerts") {
+    return jsonResponse({
+      alerts: [],
+      note: "Advisor alerts require the Node control-panel origin; edge returns an empty list."
+    });
+  }
+
+  if (request.method === "GET" && url.pathname === "/compare/platforms") {
+    await hydrateChannelEventsFromCache(env);
+    return jsonResponse({
+      ok: true,
+      runtime_mode: "edge",
+      matrix: buildPlatformMatrix(90, 5)
+    });
+  }
+
   if (request.method === "GET" && url.pathname === "/compare/channels") {
     return jsonResponse({
       ok: true,
       runtime_mode: "edge",
-      summary: getChannelSummary()
+      summary: await getChannelSummary()
     });
   }
 
   if (request.method === "GET" && url.pathname === "/compare/troubleshoot") {
-    const summary = getChannelSummary();
-    const issues = summary.channels
-      .filter((channel) => channel.status === "warning")
-      .map((channel) => ({
-        channel: channel.channel,
-        severity: "warning",
-        detail: `High failure rate (${channel.failure_rate_pct}%)`
-      }));
+    await hydrateChannelEventsFromCache(env);
+    const summary = getChannelHealthSummary(90, 5);
+    const issues = getChannelTroubleshooting(summary);
 
     return jsonResponse({
       ok: true,
       issues,
-      links: [
-        { label: "Event Ingestion", href: "/event" },
-        { label: "Parity Overview", href: "/compare/parity" },
-        { label: "Runtime Summary", href: "/runtime/summary" }
-      ]
+      links: getChannelHelpLinks()
     });
   }
 
   if (request.method === "GET" && url.pathname === "/compare/ui-model") {
     const limit = parseLimit(url.searchParams.get("limit"), 100);
-    const channelSummary = getChannelSummary();
+    const channelSummary = await getChannelSummary();
+    const platformMatrix = buildPlatformMatrix(90, 5);
+    const healthSummary = getChannelHealthSummary(90, 5);
+    const issues = getChannelTroubleshooting(healthSummary);
+    const parity = getParityModel();
+    await hydrateBrowserEventsFromCache(env);
+    const browserParity = getBrowserParityReport(5);
+    const launch = buildLaunchReadiness(parity, browserParity);
 
     return jsonResponse({
       ok: true,
       source_of_truth: "edge",
       runtime_mode: "edge",
-      parity: getParityModel(),
+      parity,
+      browser_parity: {
+        matched_rate_pct: browserParity.matched_rate_pct,
+        mismatch_rate_pct: browserParity.mismatch_rate_pct,
+        volume_match_pct: browserParity.volume_match_pct,
+        fuzzy_paired: browserParity.fuzzy_paired,
+        cart_total_coverage_pct: browserParity.cart_total_coverage_pct,
+        product_id_coverage_pct: browserParity.product_id_coverage_pct,
+        paired_events: browserParity.paired_events,
+        synapse_events: browserParity.synapse_events,
+        elevar_events: browserParity.elevar_events,
+        status: browserParity.status,
+        by_event: browserParity.by_event
+      },
       parity_counts: getShadowCounts(),
-      parity_mismatches_preview: edgeShadowComparisons.filter((item) => (item as { type?: string }).type === "mismatched").slice(0, 20),
+      parity_mismatches_preview: edgeShadowComparisons
+        .filter((item) => (item as { type?: string }).type === "mismatched")
+        .slice(0, 20),
       channels: channelSummary,
+      platforms: platformMatrix,
       troubleshooting: {
-        issues: channelSummary.channels
-          .filter((channel) => channel.status === "warning")
-          .map((channel) => ({ channel: channel.channel, severity: "warning" })),
-        links: [
-          { label: "Parity", href: "/compare/parity" },
-          { label: "Channels", href: "/compare/channels" }
-        ]
+        issues,
+        links: getChannelHelpLinks()
       },
-      launch_readiness: {
-        status: getParityModel().status === "ok" ? "go" : "hold",
-        rationale: getParityModel().status === "ok" ? ["Parity within threshold"] : ["Parity alert active"]
-      },
+      launch_readiness: launch,
       recent: {
         shadow_events: edgeShadowComparisons.slice(0, limit),
-        channel_events: edgeChannelEvents.slice(0, limit)
+        channel_events: getRecentChannelEvents(limit),
+        browser_events: getRecentBrowserEvents(limit)
       }
     });
   }
 
   if (request.method === "GET" && url.pathname === "/compare/browser") {
     const limit = parseLimit(url.searchParams.get("limit"), 100);
+    await hydrateBrowserEventsFromCache(env);
+    const browserParity = getBrowserParityReport(5);
     return jsonResponse({
       ok: true,
       runtime_mode: "edge",
       accepted: edgeBrowserBeaconsAccepted,
-      count: Math.min(limit, edgeBrowserEvents.length),
-      events: edgeBrowserEvents.slice(0, limit)
+      parity: browserParity,
+      count: Math.min(limit, getRecentBrowserEvents(limit).length),
+      events: getRecentBrowserEvents(limit),
+      edge_log: edgeBrowserEvents.slice(0, limit)
     });
+  }
+
+  if (request.method === "POST" && url.pathname === "/compare/browser/elevar") {
+    try {
+      const body = (await request.json()) as Record<string, unknown>;
+      const eventName = typeof body.event === "string" ? body.event : "";
+      if (!eventName) {
+        return jsonResponse({ ok: false, error: "event is required" }, 400);
+      }
+      await hydrateBrowserEventsFromCache(env);
+      const record = ingestBrowserEvent({
+        source: "elevar",
+        shop: typeof body.shop === "string" ? body.shop : undefined,
+        event: eventName,
+        event_id: typeof body.event_id === "string" ? body.event_id : undefined,
+        currency: typeof body.currency === "string" ? body.currency : undefined,
+        cart_total: typeof body.cart_total === "string" ? body.cart_total : undefined,
+        ecommerce: body.ecommerce,
+        marketing:
+          body.marketing && typeof body.marketing === "object"
+            ? (body.marketing as { session_id?: string; landing_site?: string })
+            : undefined,
+        observed_at: typeof body.observed_at === "string" ? body.observed_at : undefined
+      });
+      await persistBrowserEventsToCache(env);
+      return jsonResponse({ ok: true, key: record.key }, 202);
+    } catch {
+      return jsonResponse({ ok: false, error: "invalid_json" }, 400);
+    }
   }
 
   if (request.method === "GET" && url.pathname === "/compare/recent") {
@@ -708,39 +1948,121 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
 
   if (request.method === "GET" && url.pathname === "/launch/readiness") {
     const parity = getParityModel();
+    await hydrateBrowserEventsFromCache(env);
+    const browserParity = getBrowserParityReport(5);
+    const report = buildLaunchReadiness(parity, browserParity);
     return jsonResponse({
       ok: true,
       source_of_truth: "edge",
       runtime_mode: "edge",
       report: {
-        status: parity.status === "ok" ? "go" : "hold",
-        parity,
+        ...report,
         counts: getShadowCounts(),
         generated_at: new Date().toISOString(),
-        actions: parity.status === "ok" ? [] : ["Review /compare/parity mismatches"]
+        actions: report.status === "go" ? [] : ["Review /compare/browser and /compare/parity mismatches"]
       }
     });
   }
 
   if (request.method === "POST" && url.pathname.startsWith("/webhooks/")) {
-    let payload: unknown = null;
-    try {
-      payload = await request.json();
-    } catch {
-      return jsonResponse({ ok: false, error: "Invalid webhook payload" }, 400);
+    const hmacHeader = request.headers.get("X-Shopify-Hmac-Sha256");
+    const shop = request.headers.get("X-Shopify-Shop-Domain") || "unknown-shop";
+    const webhookId = request.headers.get("X-Shopify-Webhook-Id");
+    const topicHeader = request.headers.get("X-Shopify-Topic") || "";
+    const rawBody = await request.arrayBuffer();
+    const topic =
+      topicHeader ||
+      (url.pathname.includes("refund")
+        ? "refunds/create"
+        : url.pathname.includes("create")
+          ? "orders/create"
+          : "orders/paid");
+
+    // Refunds: accept + log (purchase forward path is primary for sGTM).
+    if (topic.toLowerCase().includes("refund")) {
+      let payload: unknown = null;
+      try {
+        payload = JSON.parse(new TextDecoder().decode(rawBody));
+      } catch {
+        return jsonResponse({ ok: false, error: "Invalid webhook payload" }, 400);
+      }
+      edgeWebhookLog.unshift({
+        receivedAt: new Date().toISOString(),
+        source: "edge-webhook",
+        path: url.pathname,
+        topic,
+        shop,
+        payload
+      });
+      if (edgeWebhookLog.length > 500) edgeWebhookLog.length = 500;
+      return jsonResponse({ ok: true, status: "refund_accepted", path: url.pathname }, 202);
     }
+
+    const result = await processPurchaseWebhookEdge({
+      env,
+      rawBody,
+      hmacHeader,
+      shop,
+      topic,
+      webhookId
+    });
 
     edgeWebhookLog.unshift({
       receivedAt: new Date().toISOString(),
       source: "edge-webhook",
       path: url.pathname,
-      payload
+      topic,
+      shop,
+      result: result.body
     });
-    if (edgeWebhookLog.length > 500) {
-      edgeWebhookLog.length = 500;
+    if (edgeWebhookLog.length > 500) edgeWebhookLog.length = 500;
+
+    const orderId =
+      typeof result.body.transaction_id === "string"
+        ? result.body.transaction_id
+        : typeof result.body.event_id === "string"
+          ? result.body.event_id
+          : undefined;
+
+    if (result.ok) {
+      edgeShadowComparisons.unshift({
+        type: "synapse_only",
+        comparedAt: new Date().toISOString(),
+        score: 100,
+        event_name: "purchase",
+        event_id: result.body.event_id,
+        transaction_id: result.body.transaction_id,
+        session_attached: result.body.session_attached,
+        payload: result.body.payload
+      });
+      if (edgeShadowComparisons.length > 500) edgeShadowComparisons.length = 500;
+
+      await hydrateChannelEventsFromCache(env);
+      ingestChannelEvent({
+        channel: "server_gtm",
+        surface: "webhook",
+        destination: "synapse-webhook",
+        event_name: "purchase",
+        event_id: typeof result.body.event_id === "string" ? result.body.event_id : orderId,
+        transaction_id: orderId,
+        status: "ok",
+        observed_at: new Date().toISOString()
+      });
+      ingestChannelEvent({
+        channel: "synapse",
+        surface: "server",
+        destination: "order-webhook",
+        event_name: topic,
+        event_id: typeof result.body.event_id === "string" ? result.body.event_id : orderId,
+        transaction_id: orderId,
+        status: "ok",
+        observed_at: new Date().toISOString()
+      });
+      await persistChannelEventsToCache(env);
+      edgeEventsGenerated += 1;
     }
 
-    return jsonResponse({ ok: true, status: "webhook_received", path: url.pathname }, 202);
+    return jsonResponse(result.body, result.status);
   }
 
   if (request.method === "GET" && url.pathname === "/ops/dead-letter") {
@@ -760,12 +2082,46 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
 
   if (request.method === "GET" && url.pathname === "/ops/alerts") {
     const parity = getParityModel();
+    const browserParity = getBrowserParityReport(getBrowserParityThreshold(env));
+    const alerts: Array<{ severity: string; message: string }> = [];
+    if (parity.status !== "ok") {
+      alerts.push({
+        severity: "warning",
+        message: `Purchase shadow mismatch ${parity.mismatch_rate_pct}% above threshold`
+      });
+    }
+    if (browserParity.alert_triggered) {
+      alerts.push({
+        severity: "warning",
+        message: `Browser dual-run mismatch ${browserParity.mismatch_rate_pct}% (paired=${browserParity.paired_events})`
+      });
+    }
+
+    void maybeAlertOnParity({
+      config: getAlertConfig(env),
+      label: "Purchase shadow",
+      mismatchRatePct: parity.mismatch_rate_pct,
+      thresholdPct: 5,
+      alertTriggered: parity.status !== "ok",
+      pairedEvents: parity.total_pairs
+    });
+    void maybeAlertOnParity({
+      config: getAlertConfig(env),
+      label: "Browser dual-run",
+      mismatchRatePct: browserParity.mismatch_rate_pct,
+      thresholdPct: browserParity.threshold_pct,
+      alertTriggered: browserParity.alert_triggered,
+      pairedEvents: browserParity.paired_events
+    });
+
     return jsonResponse({
       ok: true,
-      status: parity.status === "ok" ? "ok" : "warning",
+      status: alerts.length === 0 ? "ok" : "warning",
       generated_at: new Date().toISOString(),
-      alerts: parity.status === "ok" ? [] : [{ severity: "warning", message: "Parity mismatch rate above threshold" }],
-      quick_actions: ["GET /runtime/summary", "GET /compare/parity", "GET /ops/dead-letter"]
+      alerts,
+      browser_parity: browserParity,
+      purchase_parity: parity,
+      quick_actions: ["GET /runtime/summary", "GET /compare/parity", "GET /compare/browser", "GET /ops/dead-letter"]
     });
   }
 
@@ -781,7 +2137,7 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
         suppressed: edgeEventsSuppressed
       },
       parity: getParityModel(),
-      channels: getChannelSummary(),
+      channels: await getChannelSummary(),
       dead_letter: {
         total_records: 0
       },
@@ -799,9 +2155,13 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
       ok: true,
       app: {
         configured: true,
-        api_key_present: false,
-        app_url: null,
-        scopes: []
+        api_key_present: true,
+        app_url: "https://gcw-synapse-super.gcwsynapse.workers.dev",
+        scopes: DEFAULT_SHOPIFY_SCOPES.split(","),
+        install_url:
+          "https://gcw-synapse-super.gcwsynapse.workers.dev/auth/shopify/install?shop=gcw-dev.myshopify.com",
+        install_landing_url:
+          "https://gcw-synapse-super.gcwsynapse.workers.dev/install?shop=gcw-dev.myshopify.com"
       }
     });
   }
@@ -862,7 +2222,19 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
     });
   }
 
-  if (url.pathname.startsWith("/auth/") || url.pathname.startsWith("/compatibility/")) {
+  // Shopify OAuth is handled in fetch() via handleShopifyOAuth before this runs.
+  if (url.pathname.startsWith("/auth/shopify/")) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "Shopify OAuth handler did not run",
+        mode: "edge"
+      },
+      500
+    );
+  }
+
+  if (url.pathname.startsWith("/auth/")) {
     return jsonResponse(
       {
         ok: false,
@@ -873,18 +2245,228 @@ async function handleNativeApi(request: Request): Promise<Response | null> {
     );
   }
 
+  if (url.pathname.startsWith("/compatibility/")) {
+    return handleCompatibilityEdge(request, env);
+  }
+
   return null;
+}
+
+/**
+ * Elevar-shaped constant / lookup compatibility endpoints for GTM HTTP variables.
+ * Public pixel IDs were stolen from live Elevar config + GTM-TKW58K8 constants.
+ */
+function handleCompatibilityEdge(request: Request, env: CloudflareEnv): Response {
+  if (request.method !== "GET") {
+    return jsonResponse({ ok: false, error: "Method not allowed" }, 405);
+  }
+
+  const url = new URL(request.url);
+  const path = url.pathname.replace(/\/$/, "") || "/";
+
+  if (path === "/compatibility/ga4-id") {
+    const shop = url.searchParams.get("shop") ?? undefined;
+    const measurementId = resolveGa4MeasurementId(
+      shop,
+      env.GA4_MEASUREMENT_ID,
+      env.GA4_MEASUREMENT_ID_BY_SHOP
+    );
+    if (!measurementId) {
+      return jsonResponse({ ok: false, error: "GA4 measurement ID is not configured", shop }, 404);
+    }
+    return jsonResponse({
+      ok: true,
+      variable: "GA4 ID",
+      shop,
+      measurement_id: measurementId
+    });
+  }
+
+  if (path === "/compatibility/facebook-pixel-id") {
+    if (!env.FACEBOOK_PIXEL_ID) {
+      return jsonResponse({ ok: false, error: "Facebook Pixel ID is not configured" }, 404);
+    }
+    return jsonResponse({
+      ok: true,
+      variable: "Facebook - Pixel ID",
+      pixel_id: env.FACEBOOK_PIXEL_ID
+    });
+  }
+
+  if (path === "/compatibility/pinterest-id") {
+    if (!env.PINTEREST_ID) {
+      return jsonResponse({ ok: false, error: "Pinterest ID is not configured" }, 404);
+    }
+    return jsonResponse({
+      ok: true,
+      variable: "Pinterest ID",
+      pinterest_id: env.PINTEREST_ID
+    });
+  }
+
+  if (path === "/compatibility/tiktok-pixel-id") {
+    if (!env.TIKTOK_PIXEL_ID) {
+      return jsonResponse({ ok: false, error: "TikTok Pixel ID is not configured" }, 404);
+    }
+    return jsonResponse({
+      ok: true,
+      variable: "TikTok - Pixel ID",
+      pixel_id: env.TIKTOK_PIXEL_ID
+    });
+  }
+
+  if (path === "/compatibility/reddit-pixel-id") {
+    if (!env.REDDIT_PIXEL_ID) {
+      return jsonResponse({ ok: false, error: "Reddit Pixel ID is not configured" }, 404);
+    }
+    return jsonResponse({
+      ok: true,
+      variable: "Reddit Pixel ID",
+      pixel_id: env.REDDIT_PIXEL_ID
+    });
+  }
+
+  if (path === "/compatibility/google-ads-conversion-id") {
+    if (!env.GOOGLE_ADS_CONVERSION_ID) {
+      return jsonResponse({ ok: false, error: "Google Ads Conversion ID is not configured" }, 404);
+    }
+    return jsonResponse({
+      ok: true,
+      variable: "Google Ads - Conversion ID",
+      conversion_id: env.GOOGLE_ADS_CONVERSION_ID
+    });
+  }
+
+  if (path === "/compatibility/bloomreach-account-id") {
+    if (!env.BLOOMREACH_ACCOUNT_ID) {
+      return jsonResponse({ ok: false, error: "Bloomreach Account ID is not configured" }, 404);
+    }
+    return jsonResponse({
+      ok: true,
+      variable: "BloomReach Account ID",
+      account_id: env.BLOOMREACH_ACCOUNT_ID
+    });
+  }
+
+  if (path === "/compatibility/currency-code") {
+    const ecommerceCurrency = url.searchParams.get("ecommerce_currency") ?? undefined;
+    const checkoutCurrencyCode = url.searchParams.get("checkout_currency") ?? undefined;
+    const shopCurrency = url.searchParams.get("shop_currency") ?? undefined;
+    const currency = resolveCurrencyCode(
+      { ecommerceCurrency, checkoutCurrencyCode, shopCurrency },
+      env.SHOP_DEFAULT_CURRENCY || "USD"
+    );
+    return jsonResponse({
+      ok: true,
+      variable: "dlv - Global - Currency Code",
+      resolved_currency: currency,
+      sources: {
+        ecommerce_currency: ecommerceCurrency,
+        checkout_currency: checkoutCurrencyCode,
+        shop_currency: shopCurrency,
+        fallback_currency: env.SHOP_DEFAULT_CURRENCY || "USD"
+      }
+    });
+  }
+
+  if (path === "/compatibility/ids" || path === "/compatibility/elevar-ids") {
+    return jsonResponse({
+      ok: true,
+      source: "elevar-gtm-tkw58k8 + gcw-dev elevar config.js",
+      ids: {
+        facebook_pixel_id: env.FACEBOOK_PIXEL_ID ?? null,
+        ga4_measurement_id: env.GA4_MEASUREMENT_ID ?? null,
+        pinterest_id: env.PINTEREST_ID ?? null,
+        tiktok_pixel_id: env.TIKTOK_PIXEL_ID ?? null,
+        reddit_pixel_id: env.REDDIT_PIXEL_ID ?? null,
+        google_ads_conversion_id: env.GOOGLE_ADS_CONVERSION_ID ?? null,
+        bloomreach_account_id: env.BLOOMREACH_ACCOUNT_ID ?? null
+      },
+      notes: [
+        "Public destination IDs only. CAPI / Ads API secrets stay in GTM + sGTM.",
+        "gcw-dev Elevar market_groups.gtm_container = GTM-WH3W368X (dev web)."
+      ]
+    });
+  }
+
+  return jsonResponse(
+    {
+      ok: false,
+      error: "Compatibility endpoint not implemented on edge",
+      mode: "edge",
+      hint: "Constant ID routes: /compatibility/ga4-id, facebook-pixel-id, pinterest-id, tiktok-pixel-id, reddit-pixel-id, google-ads-conversion-id, bloomreach-account-id, currency-code, ids"
+    },
+    501
+  );
 }
 
 async function serveAsset(request: Request, env: CloudflareEnv): Promise<Response> {
   const response = await env.ASSETS.fetch(request);
-
-  if (response.status !== 404) {
-    return addSecurityHeaders(response);
-  }
-
   const url = new URL(request.url);
   const acceptsHtml = (request.headers.get("accept") ?? "").includes("text/html");
+
+  async function withAppBridge(htmlResponse: Response): Promise<Response> {
+    const contentType = htmlResponse.headers.get("content-type") ?? "";
+    if (!contentType.includes("text/html")) {
+      return addSecurityHeaders(htmlResponse);
+    }
+
+    const apiKey = (env.SHOPIFY_API_KEY || "7d011b70562512bd84b85bd3f9a6e68d").trim();
+    let html = await htmlResponse.text();
+    if (!html.includes("shopify-api-key")) {
+      const bridge = `
+    <meta name="shopify-api-key" content="${apiKey}" />
+    <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>`;
+      html = html.includes("</head>")
+        ? html.replace("</head>", `${bridge}\n  </head>`)
+        : `${bridge}\n${html}`;
+    }
+
+    const headers = new Headers(htmlResponse.headers);
+    headers.set("content-type", "text/html; charset=utf-8");
+    return addSecurityHeaders(
+      new Response(html, {
+        status: htmlResponse.status,
+        statusText: htmlResponse.statusText,
+        headers
+      })
+    );
+  }
+
+  if (response.status !== 404) {
+    if (url.pathname === "/" || url.pathname === "/index.html" || acceptsHtml) {
+      return withAppBridge(response);
+    }
+
+    // Cache the storefront tracking bundle (URL may be unversioned in theme settings).
+    // Keep max-age short so dual-run fixes roll out without a theme-editor cache-bust.
+    if (url.pathname === "/gcw-synapse.js" || url.pathname.endsWith("/gcw-synapse.js")) {
+      const flags = await getDualRunFlags(env);
+      if (!flags.synapse_enabled) {
+        return addSecurityHeaders(
+          new Response(SYNAPSE_DISABLED_STUB, {
+            status: 200,
+            headers: {
+              "Content-Type": "application/javascript; charset=utf-8",
+              "Cache-Control": "no-store"
+            }
+          })
+        );
+      }
+      const headers = new Headers(response.headers);
+      headers.set("Cache-Control", "public, max-age=60, stale-while-revalidate=600");
+      headers.set("Content-Type", "application/javascript; charset=utf-8");
+      return addSecurityHeaders(
+        new Response(response.body, {
+          status: response.status,
+          statusText: response.statusText,
+          headers
+        })
+      );
+    }
+
+    return addSecurityHeaders(response);
+  }
 
   if (!acceptsHtml || url.pathname.includes(".")) {
     return addSecurityHeaders(response);
@@ -892,7 +2474,7 @@ async function serveAsset(request: Request, env: CloudflareEnv): Promise<Respons
 
   const spaRequest = new Request(new URL("/index.html", url.origin).toString(), request);
   const spaResponse = await env.ASSETS.fetch(spaRequest);
-  return addSecurityHeaders(spaResponse);
+  return withAppBridge(spaResponse);
 }
 
 export default {
@@ -964,12 +2546,84 @@ export default {
         );
       }
 
-      const record = {
-        receivedAt: new Date().toISOString(),
-        source: "edge-browser-beacon",
-        shop: typeof payload.shop === "string" ? payload.shop : "unknown-shop",
+      const shop = typeof payload.shop === "string" ? payload.shop : "unknown-shop";
+      const eventId = typeof payload.event_id === "string" ? payload.event_id : undefined;
+      const marketing =
+        payload.marketing && typeof payload.marketing === "object"
+          ? (payload.marketing as { session_id?: string; landing_site?: string })
+          : undefined;
+
+      const sourceRaw = typeof payload.source === "string" ? payload.source.toLowerCase() : "";
+      const browserSource: "synapse" | "elevar" =
+        sourceRaw.includes("elevar") ? "elevar" : "synapse";
+
+      if (browserSource === "synapse") {
+        const flags = await getDualRunFlags(env);
+        if (!flags.synapse_enabled) {
+          return addSecurityHeaders(
+            addCorsHeaders(
+              jsonResponse(
+                { ok: true, accepted: false, disabled: true, source: "synapse" },
+                202
+              ),
+              request,
+              origin ?? undefined
+            )
+          );
+        }
+      }
+
+      await hydrateBrowserEventsFromCache(env);
+
+      // Drop identical source+event_id retries within a few seconds (client retry / double submit).
+      if (eventId) {
+        const dup = getRecentBrowserEvents(40).find(
+          (row) =>
+            row.source === browserSource &&
+            row.event === eventName &&
+            row.event_id === eventId &&
+            Date.now() - Date.parse(row.observed_at) < 8_000
+        );
+        if (dup) {
+          return addSecurityHeaders(
+            addCorsHeaders(
+              jsonResponse(
+                {
+                  ok: true,
+                  accepted: true,
+                  deduped: true,
+                  key: dup.key,
+                  event: eventName,
+                  source: browserSource,
+                  ingested: false
+                },
+                202
+              ),
+              request,
+              origin ?? undefined
+            )
+          );
+        }
+      }
+
+      const ingested = ingestBrowserEvent({
+        source: browserSource,
+        shop,
         event: eventName,
-        event_id: typeof payload.event_id === "string" ? payload.event_id : undefined,
+        event_id: eventId,
+        currency: typeof payload.currency === "string" ? payload.currency : undefined,
+        cart_total: typeof payload.cart_total === "string" ? payload.cart_total : undefined,
+        ecommerce: payload.ecommerce,
+        marketing
+      });
+
+      const record = {
+        receivedAt: ingested.observed_at,
+        source: browserSource === "elevar" ? "edge-elevar-mirror" : "edge-browser-beacon",
+        shop,
+        event: eventName,
+        event_id: eventId,
+        key: ingested.key,
         payload
       };
 
@@ -984,6 +2638,12 @@ export default {
 
       edgeBrowserBeaconsAccepted += 1;
       edgeEventsGenerated += 1;
+      await persistBrowserEventsToCache(env);
+      if (browserSource === "synapse") {
+        await hydrateChannelEventsFromCache(env);
+        recordSynapseBrowserChannel(eventName, eventId, shop);
+        await persistChannelEventsToCache(env);
+      }
 
       return addSecurityHeaders(
         addCorsHeaders(
@@ -991,8 +2651,10 @@ export default {
             {
               ok: true,
               accepted: true,
-              key: `${record.shop}:${eventName}:${record.event_id ?? edgeBrowserBeaconsAccepted}`,
-              event: eventName
+              key: ingested.key,
+              event: eventName,
+              source: browserSource,
+              ingested: true
             },
             202
           ),
@@ -1075,7 +2737,33 @@ export default {
       );
     }
 
-    const native = await handleNativeApi(request);
+    if (request.method === "GET" && url.pathname === "/install") {
+      return addSecurityHeaders(handleInstallLanding(url, env));
+    }
+
+    if (url.pathname.startsWith("/auth/shopify/")) {
+      try {
+        const oauth = await handleShopifyOAuth(request, env, url);
+        if (oauth) {
+          return addSecurityHeaders(oauth);
+        }
+        return addSecurityHeaders(
+          jsonResponse({ ok: false, error: "Unsupported Shopify auth route" }, 404)
+        );
+      } catch (error) {
+        return addSecurityHeaders(
+          jsonResponse(
+            {
+              ok: false,
+              error: error instanceof Error ? error.message : "Shopify OAuth failed"
+            },
+            500
+          )
+        );
+      }
+    }
+
+    const native = await handleNativeApi(request, env);
     if (native) {
       return addSecurityHeaders(native);
     }

@@ -1,4 +1,3 @@
-import axios from "axios";
 import { logInfo, logWarn } from "../lib/logger";
 
 export type AlertPayload = {
@@ -20,6 +19,17 @@ let lastSentKey = "";
 let lastSentAt = 0;
 const MIN_INTERVAL_MS = 15 * 60 * 1000;
 
+async function postJson(url: string, body: unknown): Promise<void> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+}
+
 export async function sendAlert(config: AlertConfig, alert: AlertPayload): Promise<{
   slack: boolean;
   email: boolean;
@@ -36,22 +46,18 @@ export async function sendAlert(config: AlertConfig, alert: AlertPayload): Promi
 
   if (config.slackWebhookUrl) {
     try {
-      await axios.post(
-        config.slackWebhookUrl,
-        {
-          text: `*${alert.title}*\n${alert.body}`,
-          blocks: [
-            {
-              type: "section",
-              text: {
-                type: "mrkdwn",
-                text: `*${alert.title}*\n${alert.body}`
-              }
+      await postJson(config.slackWebhookUrl, {
+        text: `*${alert.title}*\n${alert.body}`,
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: `*${alert.title}*\n${alert.body}`
             }
-          ]
-        },
-        { timeout: 8000 }
-      );
+          }
+        ]
+      });
       slack = true;
     } catch (error) {
       logWarn("Slack alert failed", { error: (error as Error).message });
@@ -60,16 +66,12 @@ export async function sendAlert(config: AlertConfig, alert: AlertPayload): Promi
 
   if (config.emailWebhookUrl && config.emailTo) {
     try {
-      await axios.post(
-        config.emailWebhookUrl,
-        {
-          to: config.emailTo,
-          from: config.emailFrom || "synapse-alerts@gerberchildrenswear.com",
-          subject: `[Synapse ${alert.severity}] ${alert.title}`,
-          text: `${alert.body}\n\n${JSON.stringify(alert.meta || {}, null, 2)}`
-        },
-        { timeout: 8000 }
-      );
+      await postJson(config.emailWebhookUrl, {
+        to: config.emailTo,
+        from: config.emailFrom || "synapse-alerts@gerberchildrenswear.com",
+        subject: `[Synapse ${alert.severity}] ${alert.title}`,
+        text: `${alert.body}\n\n${JSON.stringify(alert.meta || {}, null, 2)}`
+      });
       email = true;
     } catch (error) {
       logWarn("Email alert failed", { error: (error as Error).message });

@@ -3,6 +3,10 @@ main = "cloudflare/worker.ts"
 compatibility_date = "2026-05-31"
 workers_dev = true
 
+# Cloudflare Workers Builds / CI: produce admin assets before deploy
+[build]
+command = "npm run cf:build"
+
 [assets]
 directory = "apps/admin/dist"
 binding = "ASSETS"
@@ -12,6 +16,26 @@ run_worker_first = true
 PUBLIC_EVENT_ALLOWED_ORIGINS = "https://www.gerberchildrenswear.com,https://gerberchildrenswear.com,https://gcw-dev.myshopify.com,https://gerberchildrenswear.myshopify.com"
 PUBLIC_EVENT_MAX_BODY_BYTES = "16384"
 PUBLIC_EVENT_RATE_LIMIT_PER_MINUTE = "120"
+# Dev store dual-run: forward purchases to sGTM while Elevar stays on for side-by-side.
+RUNTIME_MODE = "forward"
+SHOP_DEFAULT_CURRENCY = "USD"
+# Stolen from Elevar GTM-TKW58K8 constants (public pixel / measurement IDs — not API secrets)
+FACEBOOK_PIXEL_ID = "823006016363458"
+GA4_MEASUREMENT_ID = "G-YMJ9F7HY6P"
+PINTEREST_ID = "2612527712746"
+TIKTOK_PIXEL_ID = "COUGEIBC77UF83EUUA6G"
+REDDIT_PIXEL_ID = "a2_iql6tlstlbj4"
+GOOGLE_ADS_CONVERSION_ID = "874796722"
+BLOOMREACH_ACCOUNT_ID = "7858"
 
-# Configure as a secret if your origin expects ingress auth:
+[[kv_namespaces]]
+binding = "SYNAPSE_STATE"
+id = "ab156619a930418c834e53588103970b"
+
+# Configure as secrets when ready:
 # wrangler secret put SYNAPSE_INGRESS_TOKEN
+# wrangler secret put SHOPIFY_WEBHOOK_SECRET
+# wrangler secret put GTM_SERVER_URL
+# wrangler secret put GTM_FORWARD_SHARED_SECRET
+# wrangler secret put SLACK_WEBHOOK_URL
+# wrangler secret put ALERT_EMAIL_WEBHOOK_URL

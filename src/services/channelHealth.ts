@@ -1,3 +1,5 @@
+import { diagnoseErrorMessage } from "./platformDiagnostics";
+
 type ChannelSurface = "pixel" | "server" | "runtime" | "webhook";
 
 type EventStatus = "ok" | "error";
@@ -76,31 +78,64 @@ const recentChannelEvents: ChannelEventInput[] = [];
 const docsByChannel: Record<string, string[]> = {
   facebook: [
     "https://developers.facebook.com/docs/meta-pixel/implementation/",
-    "https://developers.facebook.com/docs/marketing-api/conversions-api/"
+    "https://developers.facebook.com/docs/marketing-api/conversions-api/",
+    "https://developers.facebook.com/docs/marketing-api/conversions-api/parameters/fbp-and-fbc"
   ],
   meta: [
     "https://developers.facebook.com/docs/meta-pixel/implementation/",
-    "https://developers.facebook.com/docs/marketing-api/conversions-api/"
+    "https://developers.facebook.com/docs/marketing-api/conversions-api/",
+    "https://developers.facebook.com/docs/marketing-api/conversions-api/deduplicate-pixel-and-server-events"
   ],
   google: [
     "https://support.google.com/analytics/answer/13762151",
-    "https://support.google.com/google-ads/answer/7548399"
+    "https://support.google.com/google-ads/answer/7548399",
+    "https://developers.google.com/tag-platform/tag-manager/server-side"
+  ],
+  google_ads: [
+    "https://support.google.com/google-ads/answer/7548399",
+    "https://support.google.com/google-ads/answer/13258081",
+    "https://developers.google.com/tag-platform/tag-manager/server-side/ads-conversion"
   ],
   ga4: [
     "https://developers.google.com/analytics/devguides/collection/ga4",
-    "https://support.google.com/analytics/answer/13881457"
+    "https://support.google.com/analytics/answer/13881457",
+    "https://developers.google.com/analytics/devguides/collection/protocol/ga4"
   ],
   pinterest: [
     "https://help.pinterest.com/en/business/article/install-the-pinterest-tag",
-    "https://developers.pinterest.com/docs/conversions/conversion-api/"
+    "https://developers.pinterest.com/docs/conversions/conversion-api/",
+    "https://help.pinterest.com/en/business/article/pinterest-tag-event-parameters"
   ],
   tiktok: [
     "https://ads.tiktok.com/help/article/tiktok-pixel",
-    "https://ads.tiktok.com/help/article/events-api"
+    "https://ads.tiktok.com/help/article/events-api",
+    "https://business-api.tiktok.com/portal/docs?id=1740858498630657"
   ],
   reddit: [
     "https://business.reddithelp.com/s/article/Install-the-Reddit-Pixel-on-your-website",
-    "https://business.reddithelp.com/s/article/Conversions-API"
+    "https://business.reddithelp.com/s/article/Conversions-API",
+    "https://ads-api.reddit.com/docs/v3/operations/Create%20Conversion%20Event"
+  ],
+  bloomreach: [
+    "https://documentation.bloomreach.com/engagement/docs/tracking",
+    "https://documentation.bloomreach.com/engagement/docs/gtm-integration",
+    "https://documentation.bloomreach.com/engagement/reference/track-event"
+  ],
+  cj: [
+    "https://developers.cj.com/",
+    "https://signin.cj.com/loginHelp"
+  ],
+  server_gtm: [
+    "https://developers.google.com/tag-platform/tag-manager/server-side",
+    "https://developers.google.com/tag-platform/tag-manager/server-side/manual-setup-guide"
+  ],
+  synapse: [
+    "https://shopify.dev/docs/api/web-pixels-api",
+    "https://shopify.dev/docs/apps/build/marketing-analytics/build-web-pixels"
+  ],
+  gtm: [
+    "https://developers.google.com/tag-platform/tag-manager/server-side",
+    "https://support.google.com/tagmanager/answer/2792690"
   ]
 };
 
@@ -290,25 +325,59 @@ export function getChannelTroubleshooting(summary: ChannelHealthSummary): Troubl
       continue;
     }
 
+    const diagnosed = diagnoseErrorMessage(item.channel, item.last_error_message, {
+      browserOnly: item.surface === "pixel" || item.surface === "runtime" ? item.total_events > 0 : false,
+      serverOnly: item.surface === "server" || item.surface === "webhook" ? false : false
+    });
+
     const recommendations: string[] = [];
+    const channel = item.channel.toLowerCase();
+    const surface = item.surface;
+
+    for (const cause of diagnosed) {
+      recommendations.push(`${cause.title}: ${cause.fix}`);
+    }
 
     if (item.minutes_since_last_event > 90) {
-      recommendations.push("Check trigger conditions and recent traffic for this channel/pixel.");
-      recommendations.push("Verify the webhook and pixel event names match expected values in GTM.");
+      recommendations.push("Check trigger conditions and recent storefront/checkout traffic for this destination.");
+      recommendations.push("In GTM Preview, confirm the tag still fires on Synapse `dl_*` (not only Elevar).");
+      if (surface === "pixel" || surface === "runtime") {
+        recommendations.push("Verify the browser pixel/tag is loaded (network tab) and not blocked by consent or adblock.");
+      }
+      if (surface === "server" || surface === "webhook") {
+        recommendations.push("Verify Synapse webhook → sGTM forward is 2xx and the server tag is published.");
+      }
     }
 
-    if (item.failure_rate_pct > 0) {
-      recommendations.push("Inspect latest error payloads and endpoint responses for this destination.");
-      recommendations.push("Validate API keys/tokens and destination-specific required fields.");
+    if (item.failure_rate_pct > 0 && !item.last_error_message) {
+      recommendations.push("Inspect latest error payloads and destination HTTP responses.");
+      recommendations.push("Validate API tokens, pixel IDs, and required event parameters against vendor docs.");
     }
+
+    if (channel.includes("meta") || channel.includes("facebook")) {
+      recommendations.push("Confirm Pixel + CAPI share event_name + event_id for dedupe (Meta Conversions API docs).");
+    }
+    if (channel.includes("ga4")) {
+      recommendations.push("Ensure client/server purchase share the same transaction_id.");
+    }
+
+    const primary = diagnosed[0];
+    const links = [
+      ...diagnosed.map((d) => d.doc_url),
+      ...linksForChannel(item.channel)
+    ].filter((url, idx, arr) => arr.indexOf(url) === idx);
 
     issues.push({
       key: item.key,
-      severity: item.status === "critical" ? "critical" : "warning",
-      title: `${item.channel} ${item.surface} integration needs attention`,
-      details: `Failure rate ${item.failure_rate_pct}% with last activity ${item.minutes_since_last_event} minutes ago.`,
-      recommendations,
-      links: linksForChannel(item.channel)
+      severity: item.status === "critical" || primary?.severity === "critical" ? "critical" : "warning",
+      title: primary
+        ? `${item.channel}: ${primary.title}`
+        : `${item.channel} ${item.surface} integration needs attention`,
+      details: primary
+        ? `${primary.cause}${item.last_error_message ? ` Evidence: ${item.last_error_message}.` : ""} Failure rate ${item.failure_rate_pct}% · last activity ${item.minutes_since_last_event}m ago.`
+        : `Failure rate ${item.failure_rate_pct}% with last activity ${item.minutes_since_last_event} minutes ago.`,
+      recommendations: [...new Set(recommendations)],
+      links
     });
   }
 
@@ -327,4 +396,9 @@ export function getChannelHelpLinks(): Record<string, string[]> {
 export function resetChannelHealthForTests(): void {
   channelState.clear();
   recentChannelEvents.length = 0;
+}
+
+/** Clears in-memory channel health (also used by edge ops reset). */
+export function resetChannelHealth(): void {
+  resetChannelHealthForTests();
 }

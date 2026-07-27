@@ -3,11 +3,20 @@
     "gcw-synapse-app-block": {
       "name": "GCW Synapse",
       "settings": {
-        "synapse_endpoint": {
-          "label": "Synapse endpoint"
+        "enabled": {
+          "label": "Enable Synapse data layer"
         },
-        "ingress_token": {
-          "label": "Ingress token (optional)"
+        "debug": {
+          "label": "Debug logging"
+        },
+        "beacon_sample_rate_pct": {
+          "label": "Beacon sample rate (views)"
+        },
+        "beacon_url": {
+          "label": "Browser beacon URL"
+        },
+        "script_url": {
+          "label": "Data layer script URL"
         }
       }
     }

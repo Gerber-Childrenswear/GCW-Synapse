@@ -30,7 +30,9 @@ const envSchema = z.object({
   SHOPIFY_APP_URL: z.string().url().optional(),
   SHOPIFY_APP_SCOPES: z
     .string()
-    .default("read_products,read_orders,read_customers,read_themes,write_pixels,read_customer_events"),
+    .default(
+      "read_products,read_orders,read_checkouts,read_customers,read_customer_events,write_pixels,read_themes"
+    ),
   SHOPIFY_AUTH_CALLBACK_PATH: z.string().default("/auth/shopify/callback"),
   SHOPIFY_TOKEN_STORE_PATH: z.string().optional(),
   GTM_SERVER_URL: z.string().url().optional(),
@@ -52,6 +54,10 @@ const envSchema = z.object({
   PINTEREST_ID: z.string().min(1).optional(),
   GA4_MEASUREMENT_ID: z.string().regex(/^G-[A-Z0-9]+$/i).optional(),
   GA4_MEASUREMENT_ID_BY_SHOP: z.string().optional(),
+  TIKTOK_PIXEL_ID: z.string().min(1).optional(),
+  REDDIT_PIXEL_ID: z.string().min(1).optional(),
+  GOOGLE_ADS_CONVERSION_ID: z.string().min(1).optional(),
+  BLOOMREACH_ACCOUNT_ID: z.string().min(1).optional(),
   SHADOW_COMPARE_MAX_RECORDS: z.coerce.number().int().positive().default(5000),
   SHADOW_COMPARE_MISMATCH_ALERT_PCT: z.coerce.number().min(0).max(100).default(5),
   SHADOW_COMPARE_STORE_PATH: z.string().optional(),

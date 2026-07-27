@@ -1,12 +1,14 @@
 {% comment %}
-  GCW Synapse app embed — Elevar-compatible dataLayer for storefront pages.
-  Theme settings → App embeds → GCW Synapse.
+  GCW Synapse app embed — lean Elevar-compatible dataLayer.
+  Script loads deferred from Worker CDN (not inline) to stay under Shopify 10KB limit
+  and keep first paint free of the tracking bundle.
 {% endcomment %}
 <script>
   window.SynapseConfig = Object.assign({}, window.SynapseConfig || {}, {
     shop: {{ shop.permanent_domain | json }},
     currency: {{ cart.currency.iso_code | default: shop.currency | json }},
     beaconUrl: {{ block.settings.beacon_url | default: "https://gcw-synapse-super.gcwsynapse.workers.dev/browser/beacon" | json }},
+    beaconSampleRate: ({{ block.settings.beacon_sample_rate_pct | default: 100 }} / 100),
     debug: {{ block.settings.debug | json }},
     enabled: {{ block.settings.enabled | json }},
     customer: {
@@ -17,6 +19,15 @@
       phone: {% if customer %}{{ customer.phone | json }}{% else %}null{% endif %},
       orderCount: {% if customer %}{{ customer.orders_count | json }}{% else %}0{% endif %},
       totalSpent: {% if customer %}{{ customer.total_spent | money_without_currency | json }}{% else %}"0.0"{% endif %}
+      {%- if customer and customer.default_address -%}
+      ,address1: {{ customer.default_address.address1 | json }}
+      ,city: {{ customer.default_address.city | json }}
+      ,province: {{ customer.default_address.province | json }}
+      ,provinceCode: {{ customer.default_address.province_code | json }}
+      ,zip: {{ customer.default_address.zip | json }}
+      ,country: {{ customer.default_address.country | json }}
+      ,countryCode: {{ customer.default_address.country_code | json }}
+      {%- endif -%}
     },
     page: {
       type: {{ request.page_type | json }},
@@ -28,7 +39,7 @@
       total: {{ cart.total_price | money_without_currency | json }},
       itemCount: {{ cart.item_count | json }},
       items: [
-        {%- for item in cart.items -%}
+        {%- for item in cart.items limit: 20 -%}
           {
             id: {{ item.sku | default: item.variant_id | json }},
             name: {{ item.product.title | json }},
@@ -39,8 +50,8 @@
             quantity: {{ item.quantity | json }},
             product_id: {{ item.product_id | json }},
             variant_id: {{ item.variant_id | json }},
-            compare_at_price: {% if item.variant.compare_at_price %}{{ item.variant.compare_at_price | money_without_currency | json }}{% else %}"0.0"{% endif %},
-            image: {{ item.image | image_url: width: 200 | json }},
+            compare_at_price: {% if item.original_price %}{{ item.original_price | money_without_currency | json }}{% else %}"0.0"{% endif %},
+            image: {{ item.image | image_url: width: 200 | prepend: "https:" | json }},
             url: {{ item.url | json }}
           }{%- unless forloop.last -%},{%- endunless -%}
         {%- endfor -%}
@@ -59,7 +70,7 @@
         title: {{ product.selected_or_first_available_variant.title | json }},
         price: {{ product.selected_or_first_available_variant.price | money_without_currency | json }},
         compareAtPrice: {% if product.selected_or_first_available_variant.compare_at_price %}{{ product.selected_or_first_available_variant.compare_at_price | money_without_currency | json }}{% else %}"0.0"{% endif %},
-        image: {% if product.selected_or_first_available_variant.featured_image %}{{ product.selected_or_first_available_variant.featured_image | image_url: width: 400 | json }}{% elsif product.featured_image %}{{ product.featured_image | image_url: width: 400 | json }}{% else %}""{% endif %}
+        image: {% if product.selected_or_first_available_variant.image %}{{ product.selected_or_first_available_variant.image | image_url: width: 400 | prepend: "https:" | json }}{% elsif product.featured_image %}{{ product.featured_image | image_url: width: 400 | prepend: "https:" | json }}{% else %}null{% endif %}
       }
     }
     {%- endif -%}
@@ -69,7 +80,7 @@
       title: {{ collection.title | json }},
       path: {{ collection.url | json }},
       products: [
-        {%- for p in collection.products limit: 24 -%}
+        {%- for p in collection.products limit: 12 -%}
           {
             id: {{ p.selected_or_first_available_variant.sku | default: p.selected_or_first_available_variant.id | json }},
             name: {{ p.title | json }},
@@ -79,9 +90,10 @@
             price: {{ p.selected_or_first_available_variant.price | money_without_currency | json }},
             product_id: {{ p.id | json }},
             variant_id: {{ p.selected_or_first_available_variant.id | json }},
-            compare_at_price: {% if p.selected_or_first_available_variant.compare_at_price %}{{ p.selected_or_first_available_variant.compare_at_price | money_without_currency | json }}{% else %}"0.0"{% endif %},
             position: {{ forloop.index | json }},
-            list: {{ collection.url | json }}
+            list: {{ collection.url | json }},
+            image: {% if p.featured_image %}{{ p.featured_image | image_url: width: 200 | prepend: "https:" | json }}{% else %}null{% endif %},
+            url: {{ p.url | json }}
           }{%- unless forloop.last -%},{%- endunless -%}
         {%- endfor -%}
       ]
@@ -91,8 +103,10 @@
     ,search: {
       terms: {{ search.terms | json }},
       products: [
+        {%- assign synapse_search_sep = "" -%}
         {%- for p in search.results limit: 24 -%}
           {%- if p.object_type == "product" -%}
+          {{ synapse_search_sep }}
           {
             id: {{ p.selected_or_first_available_variant.sku | default: p.selected_or_first_available_variant.id | json }},
             name: {{ p.title | json }},
@@ -102,27 +116,42 @@
             price: {{ p.selected_or_first_available_variant.price | money_without_currency | json }},
             product_id: {{ p.id | json }},
             variant_id: {{ p.selected_or_first_available_variant.id | json }},
-            compare_at_price: {% if p.selected_or_first_available_variant.compare_at_price %}{{ p.selected_or_first_available_variant.compare_at_price | money_without_currency | json }}{% else %}"0.0"{% endif %},
             position: {{ forloop.index | json }},
-            list: "search results"
-          }{%- unless forloop.last -%},{%- endunless -%}
+            list: "search results",
+            url: {{ p.url | json }}
+          }
+          {%- assign synapse_search_sep = "," -%}
           {%- endif -%}
         {%- endfor -%}
       ]
     }
     {%- endif -%}
   });
-
-  // Keep lean /event endpoint globals for transitional callers.
-  window.GCW_SYNAPSE_ENDPOINT = {{ block.settings.synapse_endpoint | json }};
-  window.GCW_SYNAPSE_INGRESS_TOKEN = {{ block.settings.ingress_token | json }};
 </script>
+<script>
+  // Checkout web-pixel → storefront dataLayer bridge (Elevar apples-to-apples for GTM).
+  window.addEventListener("message", function (event) {
+    var data = event && event.data;
+    if (!data || data.source !== "gcw-synapse-pixel" || !data.event) return;
+    window.dataLayer = window.dataLayer || [];
+    window.dataLayer.push({ ecommerce: null });
+    window.dataLayer.push({
+      event: data.event,
+      event_id: data.event_id,
+      cart_total: data.cart_total,
+      user_properties: data.user_properties,
+      marketing: data.marketing,
+      ecommerce: data.ecommerce,
+      _synapse: true
+    });
+  });
+</script>
+<script src="{{ block.settings.script_url }}" defer fetchpriority="low"></script>
 
 {% schema %}
 {
   "name": "GCW Synapse",
   "target": "body",
-  "javascript": "gcw-synapse.js",
   "settings": [
     {
       "type": "checkbox",
@@ -137,6 +166,17 @@
       "default": false
     },
     {
+      "type": "range",
+      "id": "beacon_sample_rate_pct",
+      "min": 0,
+      "max": 100,
+      "step": 5,
+      "unit": "%",
+      "label": "Beacon sample rate (views)",
+      "default": 100,
+      "info": "During dual-run keep at 100%. GTM still gets 100% of dl_* via dataLayer; beacons feed Worker parity. Core browse + funnel events always send regardless."
+    },
+    {
       "type": "text",
       "id": "beacon_url",
       "label": "Browser beacon URL",
@@ -144,15 +184,9 @@
     },
     {
       "type": "text",
-      "id": "synapse_endpoint",
-      "label": "Legacy /event endpoint (optional)",
-      "default": "https://gcw-synapse-super.gcwsynapse.workers.dev/event"
-    },
-    {
-      "type": "text",
-      "id": "ingress_token",
-      "label": "Ingress token (optional)",
-      "default": ""
+      "id": "script_url",
+      "label": "Data layer script URL",
+      "default": "https://gcw-synapse-super.gcwsynapse.workers.dev/gcw-synapse.js?v=1.4.1"
     }
   ]
 }

@@ -16,7 +16,8 @@ export type SynapseProduct = {
 };
 
 export type SynapseUserProperties = {
-  visitor_type: "logged_in" | "guest";
+  /** Elevar GTM contract uses title case: "Logged In" | "Guest". */
+  visitor_type: "Logged In" | "Guest";
   customer_id?: string;
   customer_email?: string;
   customer_first_name?: string;
@@ -24,12 +25,21 @@ export type SynapseUserProperties = {
   customer_phone?: string;
   customer_order_count?: string;
   customer_total_spent?: string;
+  customer_address_1?: string;
+  customer_city?: string;
+  customer_province?: string;
+  customer_province_code?: string;
+  customer_zip?: string;
+  customer_country?: string;
+  customer_country_code?: string;
 };
 
 export type SynapseConfig = {
   shop: string;
   currency: string;
   beaconUrl?: string;
+  /** Fraction of non-funnel events mirrored to Worker (0–1). Default 1 during dual-run. GTM uses dataLayer either way. */
+  beaconSampleRate?: number;
   debug?: boolean;
   enabled?: boolean;
   customer?: {
@@ -40,6 +50,13 @@ export type SynapseConfig = {
     phone?: string | null;
     orderCount?: number;
     totalSpent?: string;
+    address1?: string | null;
+    city?: string | null;
+    province?: string | null;
+    provinceCode?: string | null;
+    zip?: string | null;
+    country?: string | null;
+    countryCode?: string | null;
   };
   page?: {
     type?: string;
@@ -87,6 +104,12 @@ export type SynapseDataLayerEvent = {
   user_properties?: SynapseUserProperties;
   marketing?: {
     landing_site?: string;
+    user_id?: string;
+    utm_source?: string;
+    utm_medium?: string;
+    utm_campaign?: string;
+    utm_content?: string;
+    utm_term?: string;
   };
   ecommerce?: Record<string, unknown>;
   [key: string]: unknown;

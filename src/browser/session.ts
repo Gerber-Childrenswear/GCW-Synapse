@@ -85,25 +85,40 @@ export function getOrCreateSession(): SynapseSession {
 }
 
 /** Persist session markers onto the Shopify cart so order webhooks can enrich purchase. */
-export async function syncCartAttributes(session: SynapseSession): Promise<void> {
+export function syncCartAttributes(session: SynapseSession): void {
   if (typeof fetch === "undefined") return;
-  try {
-    await fetch("/cart/update.js", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        attributes: {
-          synapse_session_id: session.session_id,
-          synapse_landing_site: session.landing_site,
-          synapse_utm_source: session.utm_source ?? "",
-          synapse_utm_medium: session.utm_medium ?? "",
-          synapse_utm_campaign: session.utm_campaign ?? ""
-        }
-      }),
-      credentials: "same-origin",
-      keepalive: true
-    });
-  } catch {
-    // Cart API may be unavailable on some pages.
+
+  const run = () => {
+    try {
+      void fetch("/cart/update.js", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          attributes: {
+            synapse_session_id: session.session_id,
+            synapse_landing_site: session.landing_site,
+            synapse_utm_source: session.utm_source ?? "",
+            synapse_utm_medium: session.utm_medium ?? "",
+            synapse_utm_campaign: session.utm_campaign ?? "",
+            synapse_utm_content: session.utm_content ?? "",
+            synapse_utm_term: session.utm_term ?? ""
+          }
+        }),
+        credentials: "same-origin",
+        keepalive: true
+      });
+    } catch {
+      // Cart API may be unavailable on some pages.
+    }
+  };
+
+  // Never compete with first paint / LCP.
+  const ric = (window as Window & {
+    requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+  }).requestIdleCallback;
+  if (typeof ric === "function") {
+    ric(run, { timeout: 4000 });
+  } else {
+    setTimeout(run, 1500);
   }
 }

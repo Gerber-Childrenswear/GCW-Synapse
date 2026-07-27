@@ -228,3 +228,193 @@ export async function sendAdvisorMessage(input: {
 }): Promise<AdvisorChatResponse> {
   return requestJson<AdvisorChatResponse>("/api/advisor/chat", "POST", input);
 }
+
+export type SurfacePulse = {
+  status: "firing" | "silent" | "error" | "idle";
+  total_events: number;
+  error_events: number;
+  failure_rate_pct: number;
+  last_event_at: string | null;
+  minutes_since_last_event: number | null;
+  event_counts: Record<string, number>;
+  destinations: string[];
+  last_error_message?: string | null;
+};
+
+export type TroubleshootingIssue = {
+  key: string;
+  severity: "warning" | "critical";
+  title: string;
+  details: string;
+  recommendations: string[];
+  links: string[];
+};
+
+export type DiagnosedCause = {
+  code: string;
+  title: string;
+  severity: "warning" | "critical";
+  cause: string;
+  fix: string;
+  doc_url: string;
+  doc_label: string;
+  evidence?: string;
+};
+
+export type DedupeStats = {
+  key_field: "event_id" | "transaction_id" | "either";
+  status: "confirmed" | "partial" | "missing" | "idle";
+  confirmed: number;
+  browser_only: number;
+  server_only: number;
+  browser_keys: number;
+  server_keys: number;
+  confirmation_pct: number | null;
+  sample_confirmed: string[];
+  sample_browser_only: string[];
+  sample_server_only: string[];
+};
+
+export type EventCoverage = {
+  name: string;
+  browser: number;
+  server: number;
+  status: "both" | "browser_only" | "server_only" | "missing";
+};
+
+export type PlatformRow = {
+  id: string;
+  label: string;
+  group?: string;
+  browser: SurfacePulse;
+  server: SurfacePulse;
+  match_pct: number | null;
+  paired_events: number;
+  status: "healthy" | "warning" | "critical" | "idle";
+  expected_events: string[];
+  event_coverage?: EventCoverage[];
+  coverage_pct?: number | null;
+  dedupe?: DedupeStats;
+  docs: string[];
+  issues: TroubleshootingIssue[];
+  causes?: DiagnosedCause[];
+  tips: string[];
+};
+
+export type PlatformMatrix = {
+  generated_at: string;
+  totals: {
+    platforms: number;
+    healthy: number;
+    warning: number;
+    critical: number;
+    idle: number;
+    avg_match_pct: number | null;
+    avg_dedupe_pct?: number | null;
+    dedupe_confirmed_platforms?: number;
+    monitored_with_traffic?: number;
+    open_causes?: number;
+    critical_causes?: number;
+  };
+  platforms: PlatformRow[];
+  troubleshooting: TroubleshootingIssue[];
+  top_causes?: DiagnosedCause[];
+  links: Record<string, string[]>;
+};
+
+export type ChannelHealthItem = {
+  key: string;
+  channel: string;
+  surface: string;
+  destination: string;
+  pixel_id?: string;
+  status: string;
+  failure_rate_pct: number;
+  minutes_since_last_event: number;
+  total_events: number;
+  error_events: number;
+  last_event_at: string;
+  event_counts: Record<string, number>;
+};
+
+export type RecentChannelEvent = {
+  channel?: string;
+  surface?: string;
+  destination?: string;
+  event_name?: string;
+  status?: string;
+  observed_at?: string;
+  error_message?: string;
+};
+
+export type UiModel = {
+  ok: boolean;
+  runtime_mode?: string;
+  parity?: {
+    matched_rate_pct?: number;
+    mismatch_rate_pct?: number;
+    status?: string;
+    total_pairs?: number;
+  };
+  browser_parity?: {
+    matched_rate_pct?: number;
+    mismatch_rate_pct?: number;
+    volume_match_pct?: number;
+    fuzzy_paired?: number;
+    cart_total_coverage_pct?: number;
+    product_id_coverage_pct?: number;
+    paired_events?: number;
+    synapse_events?: number;
+    elevar_events?: number;
+    status?: string;
+    by_event?: Array<{ event: string; synapse: number; elevar: number }>;
+  };
+  platforms?: PlatformMatrix;
+  channels?: {
+    total_channels?: number;
+    warning_channels?: number;
+    status?: string;
+    totals?: {
+      tracked_integrations?: number;
+      healthy?: number;
+      warning?: number;
+      critical?: number;
+    };
+    channels?: ChannelHealthItem[];
+  };
+  troubleshooting?: {
+    issues?: TroubleshootingIssue[];
+    links?: Record<string, string[]> | Array<{ label: string; href: string }>;
+  };
+  launch_readiness?: {
+    status?: string;
+    rationale?: string[];
+    checks?: Array<{ id?: string; status?: string; detail?: string }>;
+  };
+  recent?: {
+    channel_events?: RecentChannelEvent[];
+    browser_events?: unknown[];
+    shadow_comparisons?: unknown[];
+  };
+};
+
+export async function getOpsConnection(): Promise<Record<string, unknown>> {
+  return requestJson<Record<string, unknown>>("/ops/connection", "GET");
+}
+
+export async function wireShop(shop = "gcw-dev.myshopify.com"): Promise<Record<string, unknown>> {
+  return requestJson<Record<string, unknown>>(`/ops/wire?shop=${encodeURIComponent(shop)}`, "POST");
+}
+
+export async function seedDemoPlatformTraffic(): Promise<{ ok: boolean; seeded: number }> {
+  return requestJson<{ ok: boolean; seeded: number }>("/compare/demo-seed?scenario=healthy", "POST");
+}
+
+export async function getPlatformMatrix(): Promise<PlatformMatrix> {
+  const data = await request<{ ok: boolean; matrix: PlatformMatrix }>("/compare/platforms");
+  return data.matrix;
+}
+
+export async function getCompareUiModel(limit = 100): Promise<UiModel> {
+  return request<UiModel>(`/compare/ui-model?limit=${limit}`);
+}

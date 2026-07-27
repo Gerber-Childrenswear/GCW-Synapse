@@ -2,6 +2,7 @@ import "./types";
 import { getOrCreateSession, syncCartAttributes } from "./session";
 import { pushDataLayerEvent } from "./push";
 import { attachObservers } from "./observers";
+import { attachElevarMirror } from "./elevarMirror";
 import {
   emitUserData,
   emitViewItem,
@@ -11,7 +12,13 @@ import {
 } from "./events";
 import type { SynapseConfig, SynapseDataLayerEvent } from "./types";
 
-const VERSION = "1.0.0";
+const VERSION = "1.4.1";
+
+function isPasswordGatePage(config: SynapseConfig): boolean {
+  const type = (config.page?.type || "").toLowerCase();
+  const path = (config.page?.path || (typeof location !== "undefined" ? location.pathname : "")).toLowerCase();
+  return type === "password" || path === "/password" || path.endsWith("/password");
+}
 
 function boot(): void {
   const config = window.SynapseConfig;
@@ -19,8 +26,17 @@ function boot(): void {
     return;
   }
 
+  // Storefront password wall — avoid noisy dual-run beacons until unlocked.
+  if (isPasswordGatePage(config)) {
+    if (config.debug) {
+      // eslint-disable-next-line no-console
+      console.info("[Synapse] skip boot on password page");
+    }
+    return;
+  }
+
   const session = getOrCreateSession();
-  void syncCartAttributes(session);
+  syncCartAttributes(session);
 
   window.SynapseInvalidateContext = () => {
     emitUserData(config);
@@ -33,6 +49,9 @@ function boot(): void {
       pushDataLayerEvent(event, { shop: config.shop, debug: Boolean(config.debug) });
     }
   };
+
+  // Dual-run: mirror Elevar (non-Synapse) dl_* into Worker before we emit.
+  attachElevarMirror(config);
 
   // Base page event first (Elevar contract).
   emitUserData(config);

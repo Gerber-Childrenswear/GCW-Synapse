@@ -22,8 +22,8 @@ Synapse owns the **browser data layer**, **checkout web pixel**, and **server pu
 1. `npm run build:browser`
 2. `shopify app deploy` (releases theme + web pixel extensions)
 3. On **gcw-dev**: Theme settings → App embeds → enable **Synapse Data Layer**
-4. Create/activate web pixel settings (`beaconUrl`, `shopDomain=gcw-dev.myshopify.com`)
-5. Re-authorize app scopes: `read_orders,read_products,read_customers,write_pixels,read_customer_events`
+4. Re-install / re-authorize the app on the shop so new scopes are granted (see `shopify.app.toml`)
+5. Activate the **app** web pixel via Admin API `webPixelCreate` (App pixels do not appear under “Add custom pixel”). Settings: `beaconUrl`, `shopDomain=gcw-dev.myshopify.com`
 6. Keep Elevar on for dual-run; mirror Elevar browser events to `POST /compare/browser/elevar` (token) if needed
 7. Watch `/app/summary` → browser parity + activity table + GO/HOLD checks
 8. When browser + purchase gates are green, disable Elevar on gcw-dev and validate `GTM-WH3W368X` still fires
@@ -37,11 +37,20 @@ Optional env:
 - `ALERT_EMAIL_TO` + `ALERT_EMAIL_WEBHOOK_URL` (+ optional `ALERT_EMAIL_FROM`)
 
 Parity alerts fire (rate-limited) when purchase or browser mismatch exceeds threshold.
+Hit `GET /ops/alerts` to evaluate and dispatch.
+
+## Ownership & cutover
+
+- Stolen Elevar IDs / event toggles: [`docs/ELEVAR_STOLEN_CONFIG.md`](./ELEVAR_STOLEN_CONFIG.md)
+- Ownership matrix: [`docs/OWNERSHIP_MATRIX.md`](./OWNERSHIP_MATRIX.md)
+- Dev cutover: [`docs/GCW_DEV_GTM_CUTOVER.md`](./GCW_DEV_GTM_CUTOVER.md)
+- Prod playbook: [`docs/PROD_ELEVAR_CUTOVER_PLAYBOOK.md`](./PROD_ELEVAR_CUTOVER_PLAYBOOK.md)
 
 ## Build notes
 
 ```bash
-npm run build:browser   # esbuild → theme asset
+npm run build:browser   # esbuild → theme asset + Worker CDN public/
 npm test
 npm run typecheck
+npm run cf:deploy
 ```

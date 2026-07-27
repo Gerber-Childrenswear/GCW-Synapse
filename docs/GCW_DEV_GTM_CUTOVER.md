@@ -4,12 +4,14 @@
 **Do not touch prod web:** `GTM-TKW58K8`  
 **Prod sGTM (later):** `GTM-N45F3JCC`
 
+Detailed checkbox list: [`docs/GCW_DEV_GTM_WH3W368X_VALIDATION.md`](./GCW_DEV_GTM_WH3W368X_VALIDATION.md)
+
 ## Preconditions
 
 - [ ] Synapse theme embed enabled on gcw-dev
 - [ ] Synapse web pixel active with beacon URL
 - [ ] Dual-run browser parity ≥ 95% on core funnel (`dl_view_item`, `dl_add_to_cart`, `dl_begin_checkout`, `dl_purchase`)
-- [ ] Purchase shadow parity GO on `/launch/readiness?phase=validation`
+- [ ] Purchase shadow parity GO on `/launch/readiness`
 - [ ] GTM Preview shows Synapse `dl_*` events without Elevar script
 
 ## Cutover steps
@@ -18,7 +20,7 @@
 2. Disable Elevar app embed / scripts on gcw-dev.
 3. Re-check event volumes for 24h in GA4/Meta test properties wired to `GTM-WH3W368X`.
 4. When ready for server purchase forward: set real `GTM_SERVER_URL`, flip Worker `RUNTIME_MODE=forward`.
-5. Re-check `/launch/readiness?phase=cutover`.
+5. Re-check `/launch/readiness`.
 
 ## Rollback
 
@@ -28,6 +30,4 @@
 
 ## Prod (only after gcw-dev sign-off)
 
-1. Deploy same Synapse app version to prod shop.
-2. Dual-run against Elevar on prod.
-3. Cut web container tags only after parity; keep sGTM destination ownership.
+Follow [`docs/PROD_ELEVAR_CUTOVER_PLAYBOOK.md`](./PROD_ELEVAR_CUTOVER_PLAYBOOK.md).

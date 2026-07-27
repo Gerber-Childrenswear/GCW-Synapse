@@ -1,13 +1,17 @@
-import * as esbuild from "esbuild";
-import { mkdirSync } from "node:fs";
+import { copyFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
+import * as esbuild from "esbuild";
 
-const outDir = path.resolve("extensions/theme-app-extension/assets");
-mkdirSync(outDir, { recursive: true });
+const themeOutDir = path.resolve("extensions/theme-app-extension/assets");
+const cdnOutDir = path.resolve("apps/admin/public");
+mkdirSync(themeOutDir, { recursive: true });
+mkdirSync(cdnOutDir, { recursive: true });
+
+const outfile = path.join(themeOutDir, "gcw-synapse.js");
 
 await esbuild.build({
   entryPoints: ["src/browser/index.ts"],
-  outfile: path.join(outDir, "gcw-synapse.js"),
+  outfile,
   bundle: true,
   minify: true,
   sourcemap: true,
@@ -17,4 +21,13 @@ await esbuild.build({
   legalComments: "none"
 });
 
+// Worker ASSETS serves apps/admin/dist (built from public/); keep CDN in sync.
+copyFileSync(outfile, path.join(cdnOutDir, "gcw-synapse.js"));
+try {
+  copyFileSync(`${outfile}.map`, path.join(cdnOutDir, "gcw-synapse.js.map"));
+} catch {
+  // map optional
+}
+
 console.log("Built extensions/theme-app-extension/assets/gcw-synapse.js");
+console.log("Synced apps/admin/public/gcw-synapse.js (Worker CDN)");
