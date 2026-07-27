@@ -28,30 +28,24 @@ function pair(
   minutesAgo: number,
   extras?: { pixel_id?: string; transaction_id?: string }
 ): DemoSample[] {
-  return [
-    {
-      channel,
-      surface: "pixel",
-      destination: browserDest,
-      event_name: eventName,
-      status: "ok",
-      pixel_id: extras?.pixel_id,
-      event_id: eventId,
-      transaction_id: extras?.transaction_id,
-      minutesAgo
-    },
-    {
-      channel,
-      surface: "server",
-      destination: serverDest,
-      event_name: eventName,
-      status: "ok",
-      pixel_id: extras?.pixel_id,
-      event_id: eventId,
-      transaction_id: extras?.transaction_id,
-      minutesAgo
-    }
-  ];
+  const shared: DemoSample = {
+    channel,
+    surface: "pixel",
+    destination: browserDest,
+    event_name: eventName,
+    status: "ok",
+    event_id: eventId,
+    minutesAgo
+  };
+  if (extras?.pixel_id) shared.pixel_id = extras.pixel_id;
+  if (extras?.transaction_id) shared.transaction_id = extras.transaction_id;
+
+  const server: DemoSample = {
+    ...shared,
+    surface: "server",
+    destination: serverDest
+  };
+  return [shared, server];
 }
 
 /** Full green seed — Meta/TikTok/Pinterest/etc with confirmed dedupe. */
