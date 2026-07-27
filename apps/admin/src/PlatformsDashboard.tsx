@@ -436,9 +436,11 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
           ? "GO"
           : launchStatusRaw.toUpperCase() === "READY"
             ? "READY"
-          : launchStatusRaw.toUpperCase() === "HOLD"
-            ? "HOLD"
-            : launchStatusRaw;
+            : launchStatusRaw.toUpperCase() === "WAITING"
+              ? "WAITING"
+              : launchStatusRaw.toUpperCase() === "HOLD"
+                ? "HOLD"
+                : launchStatusRaw;
 
   return (
     <section className="platforms-dashboard">
@@ -543,7 +545,9 @@ export function PlatformsDashboard({ uiModel, matrix, loading, onRefresh }: Prop
                 ? "HOLD — Synapse behind Elevar on core funnel volume"
                 : launchStatus === "READY"
                   ? "Connected — waiting for storefront dual-run traffic"
-                  : "GO / HOLD from readiness + browser parity"}
+                  : launchStatus === "WAITING"
+                    ? "Synapse live — enable/keep Elevar dual-run to compare"
+                    : "GO / HOLD from readiness + browser parity"}
           </small>
         </div>
       </div>
