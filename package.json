@@ -22,6 +22,7 @@
     "simulate:dual-run:dev:full": "tsx scripts/simulateGcwDevDualRun.ts --seed-platforms",
     "cutover:status": "tsx scripts/cutoverStatus.ts",
     "cutover:status:full": "tsx scripts/cutoverStatus.ts --simulate",
+    "verify:storefront:dev": "tsx scripts/verifyGcwDevStorefront.ts",
     "gtm:bundle:elevar": "node scripts/generateElevarRebuildBundle.js",
     "gtm:validate:elevar": "node scripts/validateElevarRebuildBundle.js",
     "gtm:smoke:elevar": "node scripts/smokeTestElevarBundle.js",

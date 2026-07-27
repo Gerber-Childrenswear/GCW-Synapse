@@ -29,7 +29,15 @@ npm run simulate:dual-run:dev    # Synapse + Elevar-mirror funnel beacons
 npm run cutover:status:full      # install/wire + lean + simulate
 ```
 
-Wiring smoke ≠ GTM Preview sign-off. Still browse password-unlocked gcw-dev with both embeds on.
+With the gcw-dev storefront password (do **not** commit it):
+
+```bash
+export GCW_DEV_STOREFRONT_PASSWORD='…'
+npm run verify:storefront:dev    # unlock + confirm Synapse/Elevar embeds on a PDP
+npm run cutover:status -- --simulate
+```
+
+Wiring smoke ≠ GTM Preview sign-off. Still use a real browser for Preview.
 ## Theme script cache bust
 
 In **Theme → App embeds → GCW Synapse**, set script URL to:
