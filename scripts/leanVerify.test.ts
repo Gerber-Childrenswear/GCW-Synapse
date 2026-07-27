@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildSampleEvent, loadLeanConfig, resolveLeanTarget } from "./leanVerify";
+import {
+  buildBeaconPayload,
+  buildSampleEvent,
+  loadLeanConfig,
+  resolveAdminToken,
+  resolveLeanTarget
+} from "./leanVerify";
 
 test("loadLeanConfig defaults to dev environment", () => {
   const config = loadLeanConfig();
@@ -32,4 +38,20 @@ test("buildSampleEvent includes shop context for add_to_cart", () => {
   assert.equal(payload.shop, "gcw-dev.myshopify.com");
   assert.equal(payload.product.product_id, "9001");
   assert.equal(payload.cart.total, 29.99);
+});
+
+test("buildBeaconPayload prefixes dl_ events", () => {
+  const payload = buildBeaconPayload("view_item", "gcw-dev.myshopify.com") as {
+    event?: string;
+    shop?: string;
+    source?: string;
+  };
+  assert.equal(payload.event, "dl_view_item");
+  assert.equal(payload.shop, "gcw-dev.myshopify.com");
+  assert.equal(payload.source, "synapse");
+});
+
+test("resolveAdminToken defaults to Sugi2.0", () => {
+  assert.equal(resolveAdminToken(""), "Sugi2.0");
+  assert.equal(resolveAdminToken("custom"), "custom");
 });

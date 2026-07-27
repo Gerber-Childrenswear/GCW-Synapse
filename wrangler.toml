@@ -38,6 +38,8 @@ id = "ab156619a930418c834e53588103970b"
 
 # Configure as secrets when ready:
 # wrangler secret put SYNAPSE_INGRESS_TOKEN
+# wrangler secret put ADMIN_UI_PASSWORD
+# wrangler secret put SESSION_HMAC_SECRET
 # wrangler secret put SHOPIFY_WEBHOOK_SECRET
 # wrangler secret put GTM_SERVER_URL
 # wrangler secret put GTM_FORWARD_SHARED_SECRET
