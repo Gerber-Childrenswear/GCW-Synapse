@@ -1,5 +1,9 @@
 name: Deploy Worker
 
+# Primary prod deploys usually come from Cloudflare Workers Builds.
+# This workflow is a fallback — requires a valid CLOUDFLARE_API_TOKEN secret
+# (raw token only: no "Bearer " prefix, no trailing newline).
+
 on:
   push:
     branches: ["main"]
@@ -21,6 +25,20 @@ jobs:
       - name: Install root deps
         run: npm ci
 
+      - name: Validate Cloudflare API token format
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "${CLOUDFLARE_API_TOKEN}" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN secret is missing. Workers Builds may still deploy; fix the GitHub secret for this workflow."
+            exit 1
+          fi
+          if printf '%s' "${CLOUDFLARE_API_TOKEN}" | grep -qE '[[:space:]]|^Bearer '; then
+            echo "::error::CLOUDFLARE_API_TOKEN looks malformed (whitespace or Bearer prefix). Paste the raw API token only."
+            exit 1
+          fi
+          echo "Token format looks ok (length=${#CLOUDFLARE_API_TOKEN})."
+
       - name: Build (browser + admin)
         run: npm run cf:build
 
@@ -28,4 +46,4 @@ jobs:
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          command: deploy
+          command: deploy --config wrangler.toml

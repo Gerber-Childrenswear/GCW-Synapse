@@ -138,6 +138,25 @@ export function buildSampleEvent(eventName: string, origin: string, shopifyShop?
   };
 }
 
+export function buildBeaconPayload(eventName: string, shopifyShop: string): Record<string, unknown> {
+  return {
+    event: eventName.startsWith("dl_") ? eventName : `dl_${eventName}`,
+    shop: shopifyShop,
+    source: "synapse",
+    event_id: `lean_beacon_${eventName}_${Date.now()}`
+  };
+}
+
+export function resolveAdminToken(explicit?: string): string {
+  return (
+    explicit?.trim() ||
+    process.env.ADMIN_UI_PASSWORD?.trim() ||
+    process.env.SYNAPSE_INGRESS_TOKEN?.trim() ||
+    process.env.INGRESS_SHARED_TOKEN?.trim() ||
+    "Sugi2.0"
+  );
+}
+
 async function runCheck(name: string, fn: () => Promise<string>): Promise<CheckResult> {
   try {
     const detail = await fn();
@@ -159,7 +178,7 @@ async function main(): Promise<void> {
     baseUrl: args.get("base_url"),
     origin: args.get("origin")
   });
-  const token = args.get("token") ?? process.env.SYNAPSE_INGRESS_TOKEN ?? process.env.INGRESS_SHARED_TOKEN;
+  const adminToken = resolveAdminToken(args.get("token"));
   const envConfig = config.environments[target.environment];
 
   const checks: CheckResult[] = [];
@@ -172,6 +191,49 @@ async function main(): Promise<void> {
         throw new Error(`HTTP ${response.status}: ${body}`);
       }
       return body;
+    })
+  );
+
+  checks.push(
+    await runCheck("compatibility_ids_public", async () => {
+      const response = await fetch(`${target.baseUrl}/compatibility/ids`);
+      const body = await response.text();
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${body}`);
+      }
+      const json = JSON.parse(body) as { ok?: boolean; ids?: { ga4_measurement_id?: string } };
+      if (!json.ok || !json.ids?.ga4_measurement_id) {
+        throw new Error("compatibility payload missing ids");
+      }
+      return `ga4=${json.ids.ga4_measurement_id}`;
+    })
+  );
+
+  checks.push(
+    await runCheck("cdn_script", async () => {
+      const response = await fetch(`${target.baseUrl}/gcw-synapse.js`);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const body = await response.text();
+      if (body.length < 100) {
+        throw new Error("CDN script too small");
+      }
+      return `bytes=${body.length}`;
+    })
+  );
+
+  checks.push(
+    await runCheck("admin_gate", async () => {
+      const response = await fetch(`${target.baseUrl}/`, { redirect: "manual" });
+      if (response.status !== 302) {
+        throw new Error(`expected 302 login redirect, got ${response.status}`);
+      }
+      const location = response.headers.get("location") || "";
+      if (!location.includes("/login")) {
+        throw new Error(`unexpected Location: ${location}`);
+      }
+      return location;
     })
   );
 
@@ -195,22 +257,51 @@ async function main(): Promise<void> {
     );
   }
 
-  if (token) {
-    checks.push(
-      await runCheck("launch_readiness", async () => {
-        const response = await fetch(`${target.baseUrl}/launch/readiness`, {
-          headers: {
-            "X-Synapse-Token": token
-          }
-        });
-        const body = await response.text();
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${body}`);
-        }
-        return body.slice(0, 240);
-      })
-    );
-  }
+  checks.push(
+    await runCheck("browser_beacon", async () => {
+      const response = await fetch(`${target.baseUrl}/browser/beacon`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: target.origin
+        },
+        body: JSON.stringify(buildBeaconPayload("view_item", target.shopifyShop))
+      });
+      const body = await response.text();
+      if (response.status !== 202 && !response.ok) {
+        throw new Error(`HTTP ${response.status}: ${body}`);
+      }
+      return body.slice(0, 180);
+    })
+  );
+
+  checks.push(
+    await runCheck("ops_connection", async () => {
+      const response = await fetch(`${target.baseUrl}/ops/connection`, {
+        headers: { "X-Synapse-Token": adminToken }
+      });
+      const body = await response.text();
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${body}`);
+      }
+      const json = JSON.parse(body) as { status?: string; incomplete?: string[] };
+      const incomplete = Array.isArray(json.incomplete) ? json.incomplete : [];
+      return `${json.status || "unknown"}; incomplete=${incomplete.join(",") || "none"}`;
+    })
+  );
+
+  checks.push(
+    await runCheck("launch_readiness", async () => {
+      const response = await fetch(`${target.baseUrl}/launch/readiness`, {
+        headers: { "X-Synapse-Token": adminToken }
+      });
+      const body = await response.text();
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${body}`);
+      }
+      return body.slice(0, 240);
+    })
+  );
 
   const failed = checks.filter((check) => !check.passed);
 

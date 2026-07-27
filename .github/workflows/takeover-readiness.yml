@@ -1,5 +1,8 @@
 name: Takeover Readiness
 
+# Full Elevar-takeover gates — not required for lean go-live.
+# Manual only so missing cutover secrets do not fail every main push / cron.
+
 permissions:
   contents: read
   actions: read
@@ -28,8 +31,6 @@ on:
         description: Confidence threshold override
         required: false
         default: ""
-  schedule:
-    - cron: "0 */6 * * *"
 
 jobs:
   readiness:

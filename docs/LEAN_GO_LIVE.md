@@ -139,22 +139,25 @@ Disable Elevar app embed. Soak 24–48h. Watch ad platforms + Bloomreach.
 | URL | Auth |
 |---|---|
 | `/health` | None |
-| `/event` | Public (CORS + rate limit) |
-| `/` (admin UI) | Optional |
-| `/ops/dashboard` | `X-Synapse-Token` |
-| `/launch/readiness` | `X-Synapse-Token` |
+| `/event`, `/browser/beacon` | Public (CORS allowlist + rate limit) |
+| `/gcw-synapse.js` | None (storefront CDN) |
+| `/compatibility/*` | None (public pixel/measurement IDs for GTM) |
+| `/login` | None (form); unlock with admin password |
+| `/` (admin UI) + `/ops/*` + `/launch/readiness` | Session cookie, `X-Synapse-Token`, or Basic — default password `Sugi2.0` (override via `ADMIN_UI_PASSWORD`) |
+
+**Deploy note:** Cloudflare **Workers Builds** is the reliable prod path today. GitHub **Deploy Worker** needs a valid raw `CLOUDFLARE_API_TOKEN` secret (no `Bearer ` prefix / newlines) or it fails while Builds still ship.
 
 ---
 
-## Phase 2 (when you need server purchase dedupe)
+## Phase 2 (server purchase → sGTM)
 
-Point Shopify webhooks `orders/paid` → persistent Node host (Render) or extend Worker + KV:
+Edge Worker already accepts Shopify purchase/refund webhooks and can forward when secrets are set:
 
-- `GTM_SERVER_URL` → sGTM collect URL
-- `SHOPIFY_WEBHOOK_SECRET`
+- `SHOPIFY_WEBHOOK_SECRET` (required in `RUNTIME_MODE=forward`)
+- `GTM_SERVER_URL` → sGTM collect URL (`GTM-N45F3JCC`)
 - `GTM_FORWARD_SHARED_SECRET`
 
-Until then, **checkout pixel + browser purchase** covers most client-side tags.
+Until webhooks are live on the shop, **checkout pixel + browser purchase** covers most client-side tags.
 
 ---
 
@@ -164,8 +167,10 @@ Until then, **checkout pixel + browser purchase** covers most client-side tags.
 |---|---|
 | No `gcw_synapse_event` in Preview | Theme Synapse embed off or wrong endpoint |
 | Double events | Elevar + Synapse both on — disable one |
-| `403` on `/event` | Add storefront origin to `PUBLIC_EVENT_ALLOWED_ORIGINS` in `wrangler.toml`, redeploy |
+| `403` on `/event` or `/browser/beacon` | Add storefront origin to `PUBLIC_EVENT_ALLOWED_ORIGINS` in `wrangler.toml`, redeploy |
+| `/compatibility/ids` returns `401` | Redeploy main (password gate must keep compatibility public) |
 | Tags fire but variables empty | Repoint GTM variables to Synapse runtime DLVs (incremental) |
+| Admin UI locked | Unlock at `/login` with `Sugi2.0` or send `X-Synapse-Token` |
 
 ---
 
@@ -176,7 +181,7 @@ npm run lean:verify:dev        # gcw-dev storefront origin (default)
 npm run lean:verify:prod       # gerberchildrenswear.com origins
 npm run lean:verify            # same as lean:verify:dev
 npm run lean:deploy            # build + Cloudflare deploy
-npm test                     # 119 tests
+npm test                       # unit tests
 ```
 
-Full cutover tooling (`gtm:*:takeover`) remains for later — not required for lean go-live.
+Full cutover tooling (`gtm:*:takeover`) remains for later — not required for lean go-live. Manual workflow: **Takeover Readiness**.
