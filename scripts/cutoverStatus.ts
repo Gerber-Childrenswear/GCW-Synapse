@@ -22,7 +22,12 @@ function parseArgs(argv: string[]) {
     baseUrl: (get("base_url") ?? "https://gcw-synapse-super.gcwsynapse.workers.dev").replace(/\/$/, ""),
     token: resolveAdminToken(get("token")),
     simulate: argv.includes("--simulate"),
-    skipLean: argv.includes("--skip-lean")
+    skipLean: argv.includes("--skip-lean"),
+    storefrontPassword:
+      get("storefront_password")?.trim() ||
+      process.env.GCW_DEV_STOREFRONT_PASSWORD?.trim() ||
+      process.env.STOREFRONT_PASSWORD?.trim() ||
+      ""
   };
 }
 
@@ -173,7 +178,25 @@ async function main(): Promise<void> {
     });
   }
 
-  // Human-only remaining
+  // Storefront unlock + embed verify when password provided
+  let storefrontVerified = false;
+  if (args.storefrontPassword) {
+    const sf = spawnSync(
+      "npm",
+      ["run", "verify:storefront:dev", "--", "--password", args.storefrontPassword],
+      { cwd: process.cwd(), encoding: "utf8", env: process.env }
+    );
+    const out = `${sf.stdout ?? ""}\n${sf.stderr ?? ""}`;
+    storefrontVerified = sf.status === 0 && out.includes("Storefront unlock + embed wiring OK");
+    checks.push({
+      name: "gcw_dev_storefront_embeds",
+      passed: storefrontVerified,
+      detail: storefrontVerified
+        ? "unlocked; Synapse+Elevar embeds present on PDP"
+        : out.slice(-240)
+    });
+  }
+
   checks.push({
     name: "gtm_preview_gcw_dev",
     passed: false,
@@ -182,8 +205,10 @@ async function main(): Promise<void> {
   });
   checks.push({
     name: "real_storefront_browse",
-    passed: false,
-    detail: "Manual: browse PDP→ATC→checkout with Synapse+Elevar embeds on (not only simulate script)",
+    passed: storefrontVerified,
+    detail: storefrontVerified
+      ? "Password unlock + embed wiring verified (JS beacons still need browser or simulate:dual-run:dev)"
+      : "Manual: browse PDP→ATC→checkout — or set GCW_DEV_STOREFRONT_PASSWORD",
     human: true
   });
 
