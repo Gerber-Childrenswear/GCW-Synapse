@@ -16,12 +16,14 @@ The Shopify app / theme extension is only installed on **gcw-dev** today. Use it
 |---|---|
 | Shop | `gcw-dev.myshopify.com` |
 | Storefront origin | `https://gcw-dev.myshopify.com` |
-| Synapse `/event` URL | `https://gcw-synapse-super.gcwsynapse.workers.dev/event` |
+| Synapse beacon | `https://gcw-synapse-super.gcwsynapse.workers.dev/browser/beacon` |
 
 ### Verify Worker accepts gcw-dev traffic
 
 ```bash
 npm run lean:verify:dev
+npm run simulate:dual-run:dev      # wiring smoke (Synapse + Elevar-mirror beacons)
+npm run cutover:status:full        # automated checklist + dual-run sim
 ```
 
 ### Shopify gcw-dev admin
@@ -30,16 +32,17 @@ See **[SHOPIFY_GCW_DEV_EMBED.md](SHOPIFY_GCW_DEV_EMBED.md)** if the app is insta
 
 1. **Online Store → Themes → Customize → App embeds** (puzzle icon — not page “Apps” blocks)
 2. Enable **GCW Synapse**
-3. Endpoint: `https://gcw-synapse-super.gcwsynapse.workers.dev/event`
-4. Ingress token: **leave blank**
-5. If the embed is missing entirely, run `shopify app deploy` (theme extension not released to the store)
-6. If Elevar/Triple Whale are on the dev theme, disable one — avoid double-firing while testing
+3. Script: `https://gcw-synapse-super.gcwsynapse.workers.dev/gcw-synapse.js?v=1.4.1`
+4. Beacon: `https://gcw-synapse-super.gcwsynapse.workers.dev/browser/beacon` (sample rate 100%)
+5. Ingress token: **leave blank**
+6. If the embed is missing entirely, run `shopify app deploy` (theme extension not released to the store)
+7. Keep Elevar **ON** for dual-run until Preview is green
 
 ### GTM Preview on gcw-dev
 
-Use the **same web container** (`GTM-TKW58K8`) or your dev GTM container if you have one.
+Prefer **`GTM-WH3W368X`** for Synapse-only validation (see `docs/GCW_DEV_GTM_WH3W368X_VALIDATION.md`). Do not edit prod web `GTM-TKW58K8` until the prod cutover window.
 
-1. Import `docs/gtm/GTM-TKW58K8_synapse_runtime_companion_import.json` (once)
+1. Import companion tags if needed (`docs/gtm/GTM-TKW58K8_synapse_runtime_companion_import.json` for prod later)
 2. GTM Preview → connect to `https://gcw-dev.myshopify.com`
 3. Confirm: `dl_user_data`, `dl_view_item`, `dl_add_to_cart`, `dl_purchase`
 
