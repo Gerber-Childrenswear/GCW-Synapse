@@ -132,10 +132,15 @@ jobs:
           retention-days: 14
 
       - name: Notify takeover status
-        if: always() && secrets.TAKEOVER_NOTIFY_WEBHOOK_URL != ''
+        if: always()
         env:
           TAKEOVER_NOTIFY_WEBHOOK_URL: ${{ secrets.TAKEOVER_NOTIFY_WEBHOOK_URL }}
-        run: npm run gtm:notify:takeover
+        run: |
+          if [ -z "${TAKEOVER_NOTIFY_WEBHOOK_URL}" ]; then
+            echo "No TAKEOVER_NOTIFY_WEBHOOK_URL — skip notify"
+            exit 0
+          fi
+          npm run gtm:notify:takeover
 
       - name: Open or update takeover regression issue
         if: always() && steps.strict.outputs.strict_failed == 'true'

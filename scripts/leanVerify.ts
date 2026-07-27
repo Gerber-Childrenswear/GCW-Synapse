@@ -258,6 +258,20 @@ async function main(): Promise<void> {
   }
 
   checks.push(
+    await runCheck("cdn_elevar_mirror", async () => {
+      const response = await fetch(`${target.baseUrl}/gcw-synapse.js`);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const body = await response.text();
+      if (!body.includes("elevar-datalayer") && !body.includes("__synapseElevarMirror")) {
+        throw new Error("CDN bundle missing Elevar dual-run mirror markers");
+      }
+      return "mirror present";
+    })
+  );
+
+  checks.push(
     await runCheck("browser_beacon", async () => {
       const response = await fetch(`${target.baseUrl}/browser/beacon`, {
         method: "POST",
@@ -270,6 +284,33 @@ async function main(): Promise<void> {
       const body = await response.text();
       if (response.status !== 202 && !response.ok) {
         throw new Error(`HTTP ${response.status}: ${body}`);
+      }
+      return body.slice(0, 180);
+    })
+  );
+
+  checks.push(
+    await runCheck("browser_beacon_elevar", async () => {
+      const payload = {
+        ...buildBeaconPayload("view_item", target.shopifyShop),
+        source: "elevar-datalayer",
+        event_id: `lean_elevar_${Date.now()}`
+      };
+      const response = await fetch(`${target.baseUrl}/browser/beacon`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: target.origin
+        },
+        body: JSON.stringify(payload)
+      });
+      const body = await response.text();
+      if (response.status !== 202 && !response.ok) {
+        throw new Error(`HTTP ${response.status}: ${body}`);
+      }
+      const json = JSON.parse(body) as { source?: string; accepted?: boolean };
+      if (json.source !== "elevar") {
+        throw new Error(`expected source=elevar, got ${json.source}`);
       }
       return body.slice(0, 180);
     })
@@ -291,6 +332,28 @@ async function main(): Promise<void> {
   );
 
   checks.push(
+    await runCheck("shopify_install_status", async () => {
+      const response = await fetch(`${target.baseUrl}/ops/shopify-install-status`, {
+        headers: { "X-Synapse-Token": adminToken }
+      });
+      const body = await response.text();
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${body}`);
+      }
+      const json = JSON.parse(body) as {
+        status?: { installed_shops?: string[]; shop_status?: Array<{ shop: string; installed: boolean }> };
+      };
+      const installed = json.status?.installed_shops ?? [];
+      const shops = json.status?.shop_status ?? [];
+      if (!Array.isArray(shops) || shops.length === 0) {
+        // Older Worker builds before cutover-push — still surface installed_shops.
+        return `legacy installed=${installed.join(",") || "none"} (shop_status pending deploy)`;
+      }
+      return `installed=${installed.join(",") || "none"}`;
+    })
+  );
+
+  checks.push(
     await runCheck("launch_readiness", async () => {
       const response = await fetch(`${target.baseUrl}/launch/readiness`, {
         headers: { "X-Synapse-Token": adminToken }
@@ -299,7 +362,15 @@ async function main(): Promise<void> {
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${body}`);
       }
-      return body.slice(0, 240);
+      const json = JSON.parse(body) as { report?: { status?: string; browser_parity?: { elevar_events?: number } } };
+      const status = json.report?.status ?? "unknown";
+      const elevar = json.report?.browser_parity?.elevar_events ?? 0;
+      // After cutover-push gate (≥5/side), low-volume GO should not happen.
+      // Tolerate legacy Worker briefly so lean:verify stays green during rollouts.
+      if (status === "go" && elevar < 5) {
+        return `status=${status}; elevar=${elevar} (legacy gate — redeploy for min dual-run volume)`;
+      }
+      return `status=${status}; elevar=${elevar}`;
     })
   );
 
@@ -323,8 +394,14 @@ async function main(): Promise<void> {
   console.log("gcw-dev next: enable GCW Synapse app embed on gcw-dev theme, then GTM Preview (docs/LEAN_GO_LIVE.md).");
 }
 
-main().catch((error) => {
-  const message = error instanceof Error ? error.message : "Unknown error";
-  console.error(`Lean verify failed: ${message}`);
-  process.exitCode = 1;
-});
+const isDirectRun =
+  typeof process.argv[1] === "string" &&
+  (process.argv[1].endsWith("leanVerify.ts") || process.argv[1].endsWith("leanVerify.js"));
+
+if (isDirectRun) {
+  main().catch((error) => {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error(`Lean verify failed: ${message}`);
+    process.exitCode = 1;
+  });
+}

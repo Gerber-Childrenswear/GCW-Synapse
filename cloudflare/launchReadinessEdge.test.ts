@@ -19,7 +19,19 @@ describe("buildLaunchReadiness (edge)", () => {
     assert.equal(report.checks.find((c) => c.id === "browser_parity_threshold")?.status, "waiting");
   });
 
-  it("is go when both sides are healthy", () => {
+  it("is waiting when both sides exist but volume is below min (single probe)", () => {
+    const report = buildLaunchReadiness(purchaseOk, {
+      paired_events: 1,
+      synapse_events: 7,
+      elevar_events: 1,
+      status: "ok",
+      matched_rate_pct: 100,
+      volume_match_pct: 100
+    });
+    assert.equal(report.status, "waiting");
+  });
+
+  it("is go when both sides meet min volume and are healthy", () => {
     const report = buildLaunchReadiness(purchaseOk, {
       paired_events: 10,
       synapse_events: 12,

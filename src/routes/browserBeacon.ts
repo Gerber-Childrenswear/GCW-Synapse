@@ -88,7 +88,9 @@ router.post("/beacon", (req: Request, res: Response) => {
     return;
   }
 
-  const source = body.elevar || body.source === "elevar" ? "elevar" : "synapse";
+  const sourceRaw = typeof body.source === "string" ? body.source.toLowerCase() : "";
+  const source =
+    body.elevar || sourceRaw === "elevar" || sourceRaw.includes("elevar") ? "elevar" : "synapse";
   const record = ingestBrowserEvent({
     source,
     shop,
