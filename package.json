@@ -18,6 +18,8 @@
     "lean:verify": "tsx scripts/leanVerify.ts --env dev",
     "lean:verify:dev": "tsx scripts/leanVerify.ts --env dev",
     "lean:verify:prod": "tsx scripts/leanVerify.ts --env production",
+    "simulate:dual-run:dev": "tsx scripts/simulateGcwDevDualRun.ts",
+    "simulate:dual-run:dev:full": "tsx scripts/simulateGcwDevDualRun.ts --seed-platforms",
     "gtm:bundle:elevar": "node scripts/generateElevarRebuildBundle.js",
     "gtm:validate:elevar": "node scripts/validateElevarRebuildBundle.js",
     "gtm:smoke:elevar": "node scripts/smokeTestElevarBundle.js",
