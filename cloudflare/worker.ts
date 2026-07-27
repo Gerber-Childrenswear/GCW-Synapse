@@ -104,6 +104,7 @@ import {
   mutationOriginAllowed,
   redactSensitive
 } from "./securityHelpers";
+import { buildLaunchReadiness } from "./launchReadinessEdge";
 
 const PROXY_PREFIXES = [
   "/auth/",
@@ -874,44 +875,6 @@ function getAlertConfig(env: CloudflareEnv) {
     emailTo: env.ALERT_EMAIL_TO,
     emailFrom: env.ALERT_EMAIL_FROM,
     emailWebhookUrl: env.ALERT_EMAIL_WEBHOOK_URL
-  };
-}
-
-function buildLaunchReadiness(purchaseParity: ReturnType<typeof getParityModel>, browserParity: ReturnType<typeof getBrowserParityReport>) {
-  const hasVolume = browserParity.paired_events > 0 || browserParity.synapse_events > 0;
-  const bothSides =
-    browserParity.synapse_events > 0 && browserParity.elevar_events > 0;
-  // Dual-run GO uses volume match (event_ids intentionally differ across vendors).
-  const volumePct = browserParity.volume_match_pct ?? browserParity.matched_rate_pct;
-  const browserGo =
-    !hasVolume || (bothSides && browserParity.status === "ok" && volumePct >= 80);
-  const purchaseGo = purchaseParity.status === "ok";
-  const checks = [
-    {
-      id: "purchase_shadow_parity",
-      status: purchaseGo ? "pass" : "hold",
-      detail: `matched ${purchaseParity.matched_rate_pct}%`
-    },
-    {
-      id: "browser_parity_threshold",
-      status: browserGo ? "pass" : "hold",
-      detail: hasVolume
-        ? `Synapse covers ${volumePct}% of Elevar core funnel (fuzzy=${browserParity.fuzzy_paired ?? 0}, elevar_events=${browserParity.paired_events})`
-        : "waiting for storefront traffic (no dual-run volume yet)"
-    },
-    {
-      id: "browser_dual_run_volume",
-      status: bothSides ? "pass" : hasVolume ? "hold" : "waiting",
-      detail: `synapse=${browserParity.synapse_events} elevar=${browserParity.elevar_events}`
-    }
-  ];
-  const hold = checks.some((c) => c.status === "hold");
-  return {
-    status: hold ? "hold" : hasVolume ? "go" : "ready",
-    rationale: checks.filter((c) => c.status === "hold" || c.status === "waiting").map((c) => c.detail),
-    checks,
-    purchase_parity: purchaseParity,
-    browser_parity: browserParity
   };
 }
 
