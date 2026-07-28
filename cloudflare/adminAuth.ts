@@ -10,15 +10,21 @@ export type AdminAuthEnv = {
 
 const COOKIE_NAME = "synapse_gate";
 const SESSION_TTL_SECONDS = 60 * 60 * 12; // 12 hours
-/** Default password requested for the public admin / Shopify embed gate. */
-export const DEFAULT_ADMIN_UI_PASSWORD = "Sugi2.0";
 
+/**
+ * Admin password must come from Worker env/secret — never a repo default.
+ * Set with: `wrangler secret put ADMIN_UI_PASSWORD`
+ */
 export function resolveAdminPassword(env: AdminAuthEnv): string {
   const fromAdmin = env.ADMIN_UI_PASSWORD?.trim();
   if (fromAdmin) return fromAdmin;
   const fromIngress = env.SYNAPSE_INGRESS_TOKEN?.trim();
   if (fromIngress) return fromIngress;
-  return DEFAULT_ADMIN_UI_PASSWORD;
+  return "";
+}
+
+export function isAdminPasswordConfigured(env: AdminAuthEnv): boolean {
+  return resolveAdminPassword(env).length > 0;
 }
 
 /** Session HMAC key — derived so raw password reuse alone is not enough if rotated separately later. */
@@ -110,6 +116,8 @@ export async function isAdminAuthorized(
   env: AdminAuthEnv & { SESSION_HMAC_SECRET?: string }
 ): Promise<boolean> {
   const password = resolveAdminPassword(env);
+  if (!password) return false;
+
   const sessionKey = resolveSessionSigningKey(env);
   const token = request.headers.get("X-Synapse-Token")?.trim() ?? "";
   if (token && timingSafeEqualString(token, password)) return true;

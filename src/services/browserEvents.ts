@@ -12,6 +12,8 @@ export type BrowserEventRecord = {
   landing_site?: string | undefined;
   observed_at: string;
   key: string;
+  /** Demo-seed / dual-run simulator traffic — excluded from launch GO. */
+  synthetic?: boolean | undefined;
 };
 
 export type BrowserParityReport = {
@@ -130,12 +132,26 @@ export type IngestBrowserEventInput = {
       }
     | undefined;
   observed_at?: string | undefined;
+  synthetic?: boolean | undefined;
 };
+
+/** Demo-seed / simulator event_id prefixes (legacy rows without synthetic flag). */
+const SYNTHETIC_EVENT_ID_RE = /^(demo_|sim_)/i;
+
+export function isSyntheticBrowserEvent(
+  row: Pick<BrowserEventRecord, "synthetic" | "event_id">
+): boolean {
+  if (row.synthetic === true) return true;
+  const id = row.event_id?.trim() ?? "";
+  return Boolean(id && SYNTHETIC_EVENT_ID_RE.test(id));
+}
 
 export function ingestBrowserEvent(input: IngestBrowserEventInput): BrowserEventRecord {
   const shop = (input.shop || "unknown-shop").trim();
   const event = (input.event || "unknown").trim();
   const observedAt = input.observed_at || new Date().toISOString();
+  const synthetic =
+    input.synthetic === true || isSyntheticBrowserEvent({ synthetic: false, event_id: input.event_id });
   const record: BrowserEventRecord = {
     source: input.source,
     shop,
@@ -147,7 +163,8 @@ export function ingestBrowserEvent(input: IngestBrowserEventInput): BrowserEvent
     session_id: input.marketing?.session_id,
     landing_site: input.marketing?.landing_site,
     observed_at: observedAt,
-    key: buildKey(shop, event, input.event_id, observedAt)
+    key: buildKey(shop, event, input.event_id, observedAt),
+    ...(synthetic ? { synthetic: true } : {})
   };
 
   const map = input.source === "synapse" ? synapseByKey : elevarByKey;
@@ -192,7 +209,8 @@ export function hydrateBrowserEvents(records: BrowserEventRecord[]): number {
     const map = row.source === "synapse" ? synapseByKey : elevarByKey;
     const normalized: BrowserEventRecord = {
       ...row,
-      product_ids: Array.isArray(row.product_ids) ? row.product_ids : []
+      product_ids: Array.isArray(row.product_ids) ? row.product_ids : [],
+      ...(isSyntheticBrowserEvent(row) ? { synthetic: true } : {})
     };
     const existed = map.has(row.key);
     map.set(row.key, normalized);
@@ -207,35 +225,62 @@ export function hydrateBrowserEvents(records: BrowserEventRecord[]): number {
   return loaded;
 }
 
-export function getBrowserEventCounts(): {
+export function getBrowserEventCounts(options?: { excludeSynthetic?: boolean }): {
   synapse_events: number;
   elevar_events: number;
+  synthetic_excluded: number;
   by_event: Array<{ event: string; synapse: number; elevar: number }>;
 } {
+  const excludeSynthetic = options?.excludeSynthetic === true;
   const byEvent = new Map<string, { synapse: number; elevar: number }>();
+  let syntheticExcluded = 0;
 
   for (const row of synapseByKey.values()) {
+    if (excludeSynthetic && isSyntheticBrowserEvent(row)) {
+      syntheticExcluded += 1;
+      continue;
+    }
     const current = byEvent.get(row.event) ?? { synapse: 0, elevar: 0 };
     current.synapse += 1;
     byEvent.set(row.event, current);
   }
   for (const row of elevarByKey.values()) {
+    if (excludeSynthetic && isSyntheticBrowserEvent(row)) {
+      syntheticExcluded += 1;
+      continue;
+    }
     const current = byEvent.get(row.event) ?? { synapse: 0, elevar: 0 };
     current.elevar += 1;
     byEvent.set(row.event, current);
   }
 
+  let synapseEvents = 0;
+  let elevarEvents = 0;
+  for (const counts of byEvent.values()) {
+    synapseEvents += counts.synapse;
+    elevarEvents += counts.elevar;
+  }
+
   return {
-    synapse_events: synapseByKey.size,
-    elevar_events: elevarByKey.size,
+    synapse_events: synapseEvents,
+    elevar_events: elevarEvents,
+    synthetic_excluded: syntheticExcluded,
     by_event: [...byEvent.entries()]
       .map(([event, counts]) => ({ event, ...counts }))
       .sort((a, b) => a.event.localeCompare(b.event))
   };
 }
 
-export function getBrowserParityReport(thresholdPct = 5): BrowserParityReport {
-  const counts = getBrowserEventCounts();
+export type BrowserParityOptions = {
+  excludeSynthetic?: boolean;
+};
+
+export function getBrowserParityReport(
+  thresholdPct = 5,
+  options?: BrowserParityOptions
+): BrowserParityReport & { synthetic_excluded: number } {
+  const excludeSynthetic = options?.excludeSynthetic === true;
+  const counts = getBrowserEventCounts({ excludeSynthetic });
 
   // Beat-Elevar volume score: how much of Elevar's core funnel Synapse covers.
   // Synapse-only extras (ahead of Elevar) do not count as mismatch.
@@ -254,10 +299,12 @@ export function getBrowserParityReport(thresholdPct = 5): BrowserParityReport {
   let fuzzyPaired = 0;
   const usedElevar = new Set<string>();
   for (const syn of synapseByKey.values()) {
+    if (excludeSynthetic && isSyntheticBrowserEvent(syn)) continue;
     if (!CORE_FUNNEL.has(syn.event)) continue;
     const synMs = Date.parse(syn.observed_at);
     if (!Number.isFinite(synMs)) continue;
     for (const el of elevarByKey.values()) {
+      if (excludeSynthetic && isSyntheticBrowserEvent(el)) continue;
       if (usedElevar.has(el.key)) continue;
       if (el.shop !== syn.shop || el.event !== syn.event) continue;
       const elMs = Date.parse(el.observed_at);
@@ -287,6 +334,7 @@ export function getBrowserParityReport(thresholdPct = 5): BrowserParityReport {
   let productIdEligible = 0;
   let productIdPresent = 0;
   for (const syn of synapseByKey.values()) {
+    if (excludeSynthetic && isSyntheticBrowserEvent(syn)) continue;
     if (CART_TOTAL_EVENTS.has(syn.event)) {
       cartTotalEligible += 1;
       if (syn.cart_total != null && String(syn.cart_total).trim() !== "") {
@@ -320,7 +368,8 @@ export function getBrowserParityReport(thresholdPct = 5): BrowserParityReport {
     elevar_events: counts.elevar_events,
     alert_triggered: alert,
     status: alert ? "alert" : "ok",
-    by_event: counts.by_event
+    by_event: counts.by_event,
+    synthetic_excluded: counts.synthetic_excluded
   };
 }
 

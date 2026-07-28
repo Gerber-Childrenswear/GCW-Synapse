@@ -1355,6 +1355,14 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
       { id: "shopify_api_key", label: "Shopify API key (client id)", ok: apiKey, detail: apiKey ? "set" : "missing" },
       { id: "shopify_api_secret", label: "Shopify API secret", ok: apiSecret, detail: apiSecret ? "set" : "missing" },
       { id: "shopify_webhook_secret", label: "Shopify webhook HMAC secret", ok: webhookSecret, detail: webhookSecret ? "set" : "missing" },
+      {
+        id: "admin_ui_password",
+        label: "Admin UI password (secret)",
+        ok: Boolean((env.ADMIN_UI_PASSWORD || env.SYNAPSE_INGRESS_TOKEN || "").trim()),
+        detail: (env.ADMIN_UI_PASSWORD || env.SYNAPSE_INGRESS_TOKEN || "").trim()
+          ? "set"
+          : "missing — wrangler secret put ADMIN_UI_PASSWORD"
+      },
       { id: "shopify_scopes", label: "Install scopes (lean)", ok: scopes.length > 0 && !scopes.includes("read_all_orders"), detail: scopes },
       { id: "oauth_callback", label: "OAuth callback host", ok: appUrlOk, detail: `${url.origin}/auth/shopify/callback` },
       { id: "cdn_script", label: "Storefront CDN script", ok: true, detail: `${url.origin}/gcw-synapse.js?v=1.4.1` },
@@ -1776,14 +1784,16 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
             shop,
             event,
             event_id: `demo_syn_${event}_${i}`,
-            cart_total: event === "dl_view_item" ? undefined : "29.99"
+            cart_total: event === "dl_view_item" ? undefined : "29.99",
+            synthetic: true
           });
           const elv = ingestBrowserEvent({
             source: "elevar",
             shop,
             event,
             event_id: `demo_elv_${event}_${i}`,
-            cart_total: event === "dl_view_item" ? undefined : "29.99"
+            cart_total: event === "dl_view_item" ? undefined : "29.99",
+            synthetic: true
           });
           edgeBrowserEvents.unshift(
             {
@@ -1818,10 +1828,10 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
         scenario,
         note:
           scenario === "healthy"
-            ? "Healthy Meta/TikTok/platform pulses with confirmed dedupe + dual-run browser pairs (prior health cleared)"
+            ? "Healthy Meta/TikTok/platform pulses with confirmed dedupe + dual-run browser pairs (prior health cleared). Browser pairs are synthetic and do not count toward launch GO."
             : "Broken diagnostic pulses recorded (token failure + orphan dedupe)",
         launch_hint: browserSeeded
-          ? "Check /launch/readiness — dual-run volume should leave waiting"
+          ? "Synthetic dual-run pairs seeded — /launch/readiness stays waiting until real storefront beacons arrive"
           : undefined
       },
       202
@@ -1872,7 +1882,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
     const issues = getChannelTroubleshooting(healthSummary);
     const parity = getParityModel();
     await hydrateBrowserEventsFromCache(env);
-    const browserParity = getBrowserParityReport(5);
+    const browserParity = getBrowserParityReport(5, { excludeSynthetic: true });
     const launch = buildLaunchReadiness(parity, browserParity);
 
     return jsonResponse({
@@ -1947,7 +1957,8 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
           body.marketing && typeof body.marketing === "object"
             ? (body.marketing as { session_id?: string; landing_site?: string })
             : undefined,
-        observed_at: typeof body.observed_at === "string" ? body.observed_at : undefined
+        observed_at: typeof body.observed_at === "string" ? body.observed_at : undefined,
+        synthetic: body.synthetic === true
       });
       await persistBrowserEventsToCache(env);
       return jsonResponse({ ok: true, key: record.key }, 202);
@@ -1971,7 +1982,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
   if (request.method === "GET" && url.pathname === "/launch/readiness") {
     const parity = getParityModel();
     await hydrateBrowserEventsFromCache(env);
-    const browserParity = getBrowserParityReport(5);
+    const browserParity = getBrowserParityReport(5, { excludeSynthetic: true });
     const report = buildLaunchReadiness(parity, browserParity);
     return jsonResponse({
       ok: true,
@@ -2003,14 +2014,12 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
     // Refunds: HMAC verify (same as purchase), then accept + log.
     if (topic.toLowerCase().includes("refund")) {
       const secret = (env.SHOPIFY_WEBHOOK_SECRET || env.SHOPIFY_API_SECRET || "").trim();
-      if (secret) {
-        const valid = await verifyShopifyWebhookHmacEdge(rawBody, hmacHeader, secret);
-        if (!valid) {
-          return jsonResponse({ ok: false, error: "invalid_hmac" }, 401);
-        }
-      } else if ((env.RUNTIME_MODE || "").toLowerCase() === "forward") {
-        // Fail closed when forwarding is on but secret missing.
+      if (!secret) {
         return jsonResponse({ ok: false, error: "webhook_secret_not_configured" }, 401);
+      }
+      const valid = await verifyShopifyWebhookHmacEdge(rawBody, hmacHeader, secret);
+      if (!valid) {
+        return jsonResponse({ ok: false, error: "invalid_hmac" }, 401);
       }
       let payload: unknown = null;
       try {
@@ -2623,12 +2632,12 @@ export default {
       if (!returnTo.startsWith("/") || returnTo.startsWith("//")) returnTo = "/";
 
       const expected = resolveAdminPassword(env);
-      if (!timingSafeEqualString(password, expected)) {
+      if (!expected || !timingSafeEqualString(password, expected)) {
         return addSecurityHeaders(
           new Response(
             loginPageHtml({
               returnTo,
-              error: "Incorrect password",
+              error: expected ? "Incorrect password" : "Admin password not configured",
               embedded: returnTo.includes("embedded=1")
             }),
             {
@@ -2787,7 +2796,8 @@ export default {
         currency: typeof payload.currency === "string" ? payload.currency : undefined,
         cart_total: typeof payload.cart_total === "string" ? payload.cart_total : undefined,
         ecommerce: payload.ecommerce,
-        marketing
+        marketing,
+        synthetic: payload.synthetic === true
       });
 
       const record = {

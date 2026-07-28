@@ -191,13 +191,13 @@ export async function processPurchaseWebhookEdge(options: {
 }): Promise<EdgeWebhookResult> {
   const secret = options.env.SHOPIFY_WEBHOOK_SECRET || options.env.SHOPIFY_API_SECRET || "";
   const runtimeMode = (options.env.RUNTIME_MODE || "shadow_compare").toLowerCase();
-  if (secret) {
-    const valid = await verifyShopifyWebhookHmacEdge(options.rawBody, options.hmacHeader, secret);
-    if (!valid) {
-      return { ok: false, status: 401, body: { ok: false, error: "invalid_hmac" } };
-    }
-  } else if (runtimeMode === "forward") {
+  // Always fail closed — unsigned webhooks must never be accepted in any mode.
+  if (!secret) {
     return { ok: false, status: 401, body: { ok: false, error: "webhook_secret_not_configured" } };
+  }
+  const valid = await verifyShopifyWebhookHmacEdge(options.rawBody, options.hmacHeader, secret);
+  if (!valid) {
+    return { ok: false, status: 401, body: { ok: false, error: "invalid_hmac" } };
   }
 
   let order: ShopifyOrder;

@@ -148,13 +148,18 @@ export function buildBeaconPayload(eventName: string, shopifyShop: string): Reco
 }
 
 export function resolveAdminToken(explicit?: string): string {
-  return (
+  const token =
     explicit?.trim() ||
     process.env.ADMIN_UI_PASSWORD?.trim() ||
     process.env.SYNAPSE_INGRESS_TOKEN?.trim() ||
     process.env.INGRESS_SHARED_TOKEN?.trim() ||
-    "Sugi2.0"
-  );
+    "";
+  if (!token) {
+    throw new Error(
+      "Admin token required: pass --token or set ADMIN_UI_PASSWORD / SYNAPSE_INGRESS_TOKEN (no repo default)."
+    );
+  }
+  return token;
 }
 
 async function runCheck(name: string, fn: () => Promise<string>): Promise<CheckResult> {

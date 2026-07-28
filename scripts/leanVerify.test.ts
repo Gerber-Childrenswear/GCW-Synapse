@@ -51,7 +51,24 @@ test("buildBeaconPayload prefixes dl_ events", () => {
   assert.equal(payload.source, "synapse");
 });
 
-test("resolveAdminToken defaults to Sugi2.0", () => {
-  assert.equal(resolveAdminToken(""), "Sugi2.0");
-  assert.equal(resolveAdminToken("custom"), "custom");
+test("resolveAdminToken requires explicit token or env", () => {
+  const prevAdmin = process.env.ADMIN_UI_PASSWORD;
+  const prevIngress = process.env.SYNAPSE_INGRESS_TOKEN;
+  const prevShared = process.env.INGRESS_SHARED_TOKEN;
+  delete process.env.ADMIN_UI_PASSWORD;
+  delete process.env.SYNAPSE_INGRESS_TOKEN;
+  delete process.env.INGRESS_SHARED_TOKEN;
+  try {
+    assert.throws(() => resolveAdminToken(""), /Admin token required/);
+    assert.equal(resolveAdminToken("custom"), "custom");
+    process.env.ADMIN_UI_PASSWORD = "from-env";
+    assert.equal(resolveAdminToken(""), "from-env");
+  } finally {
+    if (prevAdmin === undefined) delete process.env.ADMIN_UI_PASSWORD;
+    else process.env.ADMIN_UI_PASSWORD = prevAdmin;
+    if (prevIngress === undefined) delete process.env.SYNAPSE_INGRESS_TOKEN;
+    else process.env.SYNAPSE_INGRESS_TOKEN = prevIngress;
+    if (prevShared === undefined) delete process.env.INGRESS_SHARED_TOKEN;
+    else process.env.INGRESS_SHARED_TOKEN = prevShared;
+  }
 });

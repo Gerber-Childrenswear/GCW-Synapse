@@ -141,3 +141,33 @@ test("browser parity does not alert when Synapse exceeds Elevar", () => {
   assert.equal(report.status, "ok");
   assert.equal(report.volume_match_pct, 100);
 });
+
+test("launch parity excludes synthetic / demo_ / sim_ events", () => {
+  resetBrowserEventsForTests();
+
+  for (let i = 0; i < 5; i += 1) {
+    ingestBrowserEvent({
+      source: "synapse",
+      shop: "gcw-dev.myshopify.com",
+      event: "dl_view_item",
+      event_id: `demo_syn_${i}`,
+      synthetic: true
+    });
+    ingestBrowserEvent({
+      source: "elevar",
+      shop: "gcw-dev.myshopify.com",
+      event: "dl_view_item",
+      event_id: `demo_elv_${i}`,
+      synthetic: true
+    });
+  }
+
+  const all = getBrowserParityReport(5);
+  assert.equal(all.synapse_events, 5);
+  assert.equal(all.elevar_events, 5);
+
+  const real = getBrowserParityReport(5, { excludeSynthetic: true });
+  assert.equal(real.synapse_events, 0);
+  assert.equal(real.elevar_events, 0);
+  assert.equal(real.synthetic_excluded, 10);
+});

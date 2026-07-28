@@ -1,19 +1,20 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
-  DEFAULT_ADMIN_UI_PASSWORD,
-  isPublicUnauthenticatedPath,
+  isAdminAuthorized,
+  isAdminPasswordConfigured,
   mintAdminSessionCookie,
   resolveAdminPassword,
   sessionCookieValid,
   timingSafeEqualString,
-  isAdminAuthorized
+  isPublicUnauthenticatedPath
 } from "./adminAuth";
 
 describe("adminAuth", () => {
-  it("defaults password to Sugi2.0", () => {
-    assert.equal(resolveAdminPassword({}), DEFAULT_ADMIN_UI_PASSWORD);
-    assert.equal(DEFAULT_ADMIN_UI_PASSWORD, "Sugi2.0");
+  it("requires env password — no repo default", () => {
+    assert.equal(resolveAdminPassword({}), "");
+    assert.equal(isAdminPasswordConfigured({}), false);
+    assert.equal(isAdminPasswordConfigured({ ADMIN_UI_PASSWORD: "Sugi2.0" }), true);
   });
 
   it("keeps storefront and webhook paths public", () => {
@@ -29,7 +30,7 @@ describe("adminAuth", () => {
   });
 
   it("mints a cookie that authorizes subsequent requests", async () => {
-    const password = "Sugi2.0";
+    const password = "test-admin-pass";
     const setCookie = await mintAdminSessionCookie(password);
     const value = setCookie.split(";")[0]?.split("=").slice(1).join("=") ?? "";
     const request = new Request("https://example.com/", {
@@ -41,13 +42,20 @@ describe("adminAuth", () => {
 
   it("accepts X-Synapse-Token matching password", async () => {
     const request = new Request("https://example.com/ops/connection", {
+      headers: { "X-Synapse-Token": "test-admin-pass" }
+    });
+    assert.equal(await isAdminAuthorized(request, { ADMIN_UI_PASSWORD: "test-admin-pass" }), true);
+  });
+
+  it("denies all admin auth when password is unset", async () => {
+    const request = new Request("https://example.com/ops/connection", {
       headers: { "X-Synapse-Token": "Sugi2.0" }
     });
-    assert.equal(await isAdminAuthorized(request, {}), true);
+    assert.equal(await isAdminAuthorized(request, {}), false);
   });
 
   it("timingSafeEqualString rejects mismatches", () => {
-    assert.equal(timingSafeEqualString("Sugi2.0", "Sugi2.0"), true);
-    assert.equal(timingSafeEqualString("Sugi2.0", "wrong"), false);
+    assert.equal(timingSafeEqualString("abc", "abc"), true);
+    assert.equal(timingSafeEqualString("abc", "wrong"), false);
   });
 });
