@@ -2,6 +2,8 @@
 
 Lean Elevar replacement for Shopify → GTM (web + server). **Start here:** [docs/LEAN_GO_LIVE.md](docs/LEAN_GO_LIVE.md)
 
+**Third-party handoff:** [docs/THIRD_PARTY_HANDOFF.md](docs/THIRD_PARTY_HANDOFF.md) (access, passwords, live state, production-ready checklist).
+
 ## Lean quick start
 
 Production Worker: `https://gcw-synapse-super.gcwsynapse.workers.dev`
