@@ -56,6 +56,20 @@ describe("buildLaunchReadiness (edge)", () => {
     assert.equal(report.status, "hold");
   });
 
+  it("is go when volume coverage clears 80% even if browser status is alert", () => {
+    const report = buildLaunchReadiness(purchaseOk, {
+      paired_events: 30,
+      synapse_events: 84,
+      elevar_events: 58,
+      status: "alert",
+      matched_rate_pct: 93,
+      volume_match_pct: 93.33,
+      fuzzy_paired: 28,
+      synthetic_excluded: 172
+    });
+    assert.equal(report.status, "go");
+  });
+
   it("stays waiting when only synthetic volume was excluded (real counts zero)", () => {
     const report = buildLaunchReadiness(purchaseOk, {
       paired_events: 0,

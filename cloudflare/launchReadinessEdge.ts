@@ -48,9 +48,10 @@ export function buildLaunchReadiness(
     browserParity.synapse_events >= minEvents && browserParity.elevar_events >= minEvents;
   const hasVolume = browserParity.paired_events > 0 || hasSynapse || hasElevar;
   // Dual-run GO uses volume match (event_ids intentionally differ across vendors).
+  // The 5% browser alert threshold is stricter than cutover's 80% volume bar — don't
+  // hold GO when volume coverage already clears the launch bar.
   const volumePct = browserParity.volume_match_pct ?? browserParity.matched_rate_pct;
-  const browserGo =
-    enoughVolume && browserParity.status === "ok" && volumePct >= 80;
+  const browserGo = enoughVolume && volumePct >= 80;
   const purchaseGo = purchaseParity.status === "ok";
   const syntheticNote =
     (browserParity.synthetic_excluded ?? 0) > 0
@@ -67,7 +68,7 @@ export function buildLaunchReadiness(
       id: "browser_parity_threshold",
       status: !enoughVolume ? "waiting" : browserGo ? "pass" : "hold",
       detail: enoughVolume
-        ? `Synapse covers ${volumePct}% of Elevar core funnel (fuzzy=${browserParity.fuzzy_paired ?? 0}, elevar_events=${browserParity.paired_events})${syntheticNote}`
+        ? `Synapse covers ${volumePct}% of Elevar core funnel (fuzzy=${browserParity.fuzzy_paired ?? 0}, elevar_events=${browserParity.paired_events}, browser_status=${browserParity.status})${syntheticNote}`
         : bothSides
           ? `waiting for real dual-run volume (need ≥${minEvents}/side; synapse=${browserParity.synapse_events} elevar=${browserParity.elevar_events})${syntheticNote}`
           : hasSynapse
