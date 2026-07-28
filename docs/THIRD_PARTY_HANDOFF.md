@@ -302,8 +302,27 @@ Follow `docs/PROD_ELEVAR_CUTOVER_PLAYBOOK.md`:
 | Role | Person / team | Notes |
 |---|---|---|
 | GCW product / analytics owner | Nicholas Cassidy (`ncassidy@gerberchildrenswear.com`) | Passwords, Shopify/GTM admin, CF access |
-| 3rd-party eng (this handoff) | *fill in* | Implementation + cutover execution |
+| 3rd-party eng lead | **Tashiq** (`tashiq@golim.com`) | Full implementer — needs Cloudflare + GitHub + Shopify/GTM access (same footprint as gcw-presets) |
 | Shopify Partners app | Client id `7d011b…e68d` | Ignore unrelated Dev Dashboard app `ad45451a…` for now |
+
+### Access to grant Tashiq (GCW admin — do in dashboards)
+
+Cloudflare and GitHub invites cannot be sent from the cloud agent token. GCW owner should:
+
+**Cloudflare (account — covers Worker `gcw-synapse-super`)**  
+1. https://dash.cloudflare.com → account `23988106841274c6bbb2e7c027233e13`  
+2. **Manage account → Members → Invite**  
+3. Email: `tashiq@golim.com`  
+4. Role: **Administrator** (or Workers Admin + ability to manage secrets/KV/Builds)  
+5. Send invite  
+
+**GitHub**  
+1. https://github.com/orgs/Gerber-Childrenswear/people  
+2. Invite `tashiq@golim.com` (or their GitHub user) to org **or** add as collaborator on `GCW-Synapse` with **Write** (Admin preferred for Actions secrets)  
+
+**Also grant (same as presets footprint)**  
+- Shopify Partners / store staff on `gcw-dev` (+ prod when cutover)  
+- GTM admin on accounts `4131312986` (`GTM-TKW58K8`) and `6348717123` (`GTM-N45F3JCC`)
 
 ---
 

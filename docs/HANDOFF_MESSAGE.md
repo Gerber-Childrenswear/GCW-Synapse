@@ -94,7 +94,8 @@ Deploy for real via Cloudflare **Workers Builds** on `main` (or `npm run cf:depl
 
 See §12 in the handoff brief. Short version: secret hygiene → gcw-dev Preview sign-off → prod install/wire/dual-run → channel validation → Elevar off → 24–48h volume check.
 
-GCW contact for access/questions: **Nicholas Cassidy** — ncassidy@gerberchildrenswear.com
+GCW contact for access/questions: **Nicholas Cassidy** — ncassidy@gerberchildrenswear.com  
+Implementer: **Tashiq** — tashiq@golim.com (invite to Cloudflare account + GitHub org/repo — same access footprint as gcw-presets)
 
 Thanks — the full brief has repo map, secret inventory, curls, and ordered cutover steps.
 
