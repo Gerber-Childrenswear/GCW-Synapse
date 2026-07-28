@@ -55,4 +55,21 @@ describe("buildLaunchReadiness (edge)", () => {
     });
     assert.equal(report.status, "hold");
   });
+
+  it("stays waiting when only synthetic volume was excluded (real counts zero)", () => {
+    const report = buildLaunchReadiness(purchaseOk, {
+      paired_events: 0,
+      synapse_events: 0,
+      elevar_events: 0,
+      status: "ok",
+      matched_rate_pct: 100,
+      volume_match_pct: 100,
+      synthetic_excluded: 88
+    });
+    assert.equal(report.status, "ready");
+    assert.match(
+      report.checks.find((c) => c.id === "browser_dual_run_volume")?.detail ?? "",
+      /excluded 88 synthetic/
+    );
+  });
 });

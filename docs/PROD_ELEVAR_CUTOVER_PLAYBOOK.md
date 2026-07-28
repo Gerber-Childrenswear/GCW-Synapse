@@ -2,6 +2,8 @@
 
 **Only after gcw-dev sign-off** (`docs/GCW_DEV_GTM_CUTOVER.md`).
 
+See also **[PROD_READY_HARDENING.md](PROD_READY_HARDENING.md)** (admin secret rotation, webhook fail-closed, synthetic-excluded launch gate) before treating Synapse as sole tracker.
+
 ## Containers
 
 | Env | Web GTM | Server GTM |

@@ -70,6 +70,7 @@ function beaconBody(
     event_id: `sim_${source === "synapse" ? "syn" : "elv"}_${event}_${round}_${Date.now()}`,
     currency: "USD",
     cart_total: needsCart ? "42.50" : undefined,
+    synthetic: true,
     ecommerce: {
       currencyCode: "USD",
       currency: "USD",

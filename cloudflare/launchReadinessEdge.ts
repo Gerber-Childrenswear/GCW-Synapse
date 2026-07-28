@@ -2,6 +2,7 @@
  * Edge launch-gate summary for dual-run (Synapse vs Elevar browser beacons).
  * Distinguishes "waiting for Elevar side" from a true parity hold.
  * Requires meaningful dual-run volume so a single probe cannot fake GO.
+ * Synthetic/demo/sim traffic is excluded from GO (pass via realParity counts).
  */
 
 export const MIN_DUAL_RUN_EVENTS_PER_SIDE = 5;
@@ -14,6 +15,7 @@ export type BrowserParityLike = {
   matched_rate_pct: number;
   volume_match_pct?: number;
   fuzzy_paired?: number;
+  synthetic_excluded?: number;
 };
 
 export type PurchaseParityLike = {
@@ -50,6 +52,10 @@ export function buildLaunchReadiness(
   const browserGo =
     enoughVolume && browserParity.status === "ok" && volumePct >= 80;
   const purchaseGo = purchaseParity.status === "ok";
+  const syntheticNote =
+    (browserParity.synthetic_excluded ?? 0) > 0
+      ? ` (excluded ${browserParity.synthetic_excluded} synthetic)`
+      : "";
 
   const checks: LaunchCheck[] = [
     {
@@ -61,19 +67,19 @@ export function buildLaunchReadiness(
       id: "browser_parity_threshold",
       status: !enoughVolume ? "waiting" : browserGo ? "pass" : "hold",
       detail: enoughVolume
-        ? `Synapse covers ${volumePct}% of Elevar core funnel (fuzzy=${browserParity.fuzzy_paired ?? 0}, elevar_events=${browserParity.paired_events})`
+        ? `Synapse covers ${volumePct}% of Elevar core funnel (fuzzy=${browserParity.fuzzy_paired ?? 0}, elevar_events=${browserParity.paired_events})${syntheticNote}`
         : bothSides
-          ? `waiting for dual-run volume (need ≥${minEvents}/side; synapse=${browserParity.synapse_events} elevar=${browserParity.elevar_events})`
+          ? `waiting for real dual-run volume (need ≥${minEvents}/side; synapse=${browserParity.synapse_events} elevar=${browserParity.elevar_events})${syntheticNote}`
           : hasSynapse
-            ? "waiting for Elevar dual-run beacons (Synapse-only so far)"
+            ? `waiting for Elevar dual-run beacons (Synapse-only so far)${syntheticNote}`
             : hasElevar
-              ? "waiting for Synapse storefront beacons"
-              : "waiting for storefront traffic (no dual-run volume yet)"
+              ? `waiting for Synapse storefront beacons${syntheticNote}`
+              : `waiting for real storefront traffic (no dual-run volume yet)${syntheticNote}`
     },
     {
       id: "browser_dual_run_volume",
       status: enoughVolume ? "pass" : "waiting",
-      detail: `synapse=${browserParity.synapse_events} elevar=${browserParity.elevar_events} (min ${minEvents}/side)`
+      detail: `real synapse=${browserParity.synapse_events} elevar=${browserParity.elevar_events} (min ${minEvents}/side)${syntheticNote}`
     }
   ];
 

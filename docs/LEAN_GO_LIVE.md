@@ -83,8 +83,9 @@ GA4 · Meta · Reddit · Bloomreach · etc.
 ```bash
 export CLOUDFLARE_API_TOKEN="<token>"
 export SYNAPSE_INGRESS_TOKEN="<strong-secret>"
-# Optional: override admin unlock password (default / wrangler var is Sugi2.0)
-# export ADMIN_UI_PASSWORD="Sugi2.0"
+# Required: admin unlock password (Worker secret — never commit)
+# wrangler secret put ADMIN_UI_PASSWORD
+# export ADMIN_UI_PASSWORD="<strong-secret>"
 npm run lean:deploy
 ```
 
@@ -146,7 +147,7 @@ Disable Elevar app embed. Soak 24–48h. Watch ad platforms + Bloomreach.
 | `/gcw-synapse.js` | None (storefront CDN) |
 | `/compatibility/*` | None (public pixel/measurement IDs for GTM) |
 | `/login` | None (form); unlock with admin password |
-| `/` (admin UI) + `/ops/*` + `/launch/readiness` | Session cookie, `X-Synapse-Token`, or Basic — default password `Sugi2.0` (override via `ADMIN_UI_PASSWORD`) |
+| `/` (admin UI) + `/ops/*` + `/launch/readiness` | Session cookie, `X-Synapse-Token`, or Basic — password from `ADMIN_UI_PASSWORD` Worker secret (no repo default) |
 
 **Deploy note:** Cloudflare **Workers Builds** is the reliable prod path today. GitHub **Deploy Worker** needs a valid raw `CLOUDFLARE_API_TOKEN` secret (no `Bearer ` prefix / newlines) or it fails while Builds still ship.
 
@@ -156,7 +157,7 @@ Disable Elevar app embed. Soak 24–48h. Watch ad platforms + Bloomreach.
 
 Edge Worker already accepts Shopify purchase/refund webhooks and can forward when secrets are set:
 
-- `SHOPIFY_WEBHOOK_SECRET` (required in `RUNTIME_MODE=forward`)
+- `SHOPIFY_WEBHOOK_SECRET` (required — webhooks fail closed without it in every runtime mode)
 - `GTM_SERVER_URL` → sGTM collect URL (`GTM-N45F3JCC`)
 - `GTM_FORWARD_SHARED_SECRET`
 
@@ -173,7 +174,7 @@ Until webhooks are live on the shop, **checkout pixel + browser purchase** cover
 | `403` on `/event` or `/browser/beacon` | Add storefront origin to `PUBLIC_EVENT_ALLOWED_ORIGINS` in `wrangler.toml`, redeploy |
 | `/compatibility/ids` returns `401` | Redeploy main (password gate must keep compatibility public) |
 | Tags fire but variables empty | Repoint GTM variables to Synapse runtime DLVs (incremental) |
-| Admin UI locked | Unlock at `/login` with `Sugi2.0` or send `X-Synapse-Token` |
+| Admin UI locked | Unlock at `/login` with the `ADMIN_UI_PASSWORD` secret, or send `X-Synapse-Token` |
 
 ---
 
