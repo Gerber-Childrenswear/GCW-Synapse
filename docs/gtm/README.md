@@ -1,6 +1,6 @@
 # GTM Hardening Artifacts
 
-## Cursor MCP (edit containers in chat)
+## GTM MCP (edit containers)
 
 - [GTM_MCP_SETUP.md](GTM_MCP_SETUP.md) — connect `user-gtm` MCP for live edits
 - [gtm-mcp-server/README.md](../../gtm-mcp-server/README.md) — container registry (web, sGTM, dev workspace)
