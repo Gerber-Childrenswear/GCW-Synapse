@@ -1,47 +1,36 @@
-# GTM MCP setup for Cursor
+# GTM MCP setup
 
-## Already connected in Cursor Settings?
+## Already connected?
 
-If **Settings → Tools & MCP** already shows a GTM server authenticated with the
-admin Google account, you are set for **local IDE / desktop Agent** work. You do
-**not** need to connect again on your machine.
+If your editor’s MCP client already shows `user-gtm` authenticated with the admin Google account, you are set for local work. You do **not** need to connect again on that machine.
 
-This cloud agent run does **not** inherit your personal MCP config. Check the tool
-list at the top of chat: if there is no `user-gtm` / GTM server, the agent cannot
-edit containers until Team MCP is wired (below).
+Shared/remote runners often do **not** inherit personal MCP config. If `user-gtm` is missing from the tool list there, register the same server in team/shared integrations (below).
 
-## One-time connect (if not already in Settings)
+## One-time connect (local)
 
-1. Repo ships `.cursor/mcp.json` with server name **`user-gtm`** →
-   `https://mcp.gtmeditor.com/authorize`
-2. Cursor **Settings → Tools & MCP** → connect `user-gtm` with your Google account.
+1. Use the example client config: `gtm-mcp-server/mcp.client.example.json`  
+   Server name **`user-gtm`** → `https://mcp.gtmeditor.com/authorize`
+2. Connect / authorize with the Google account that has GTM admin on both GCW accounts.
 3. Verify: *"List workspaces in GTM-TKW58K8"* and *"List tags in GTM-N45F3JCC workspace 40"*.
 
 Full container IDs and edit policies: [`gtm-mcp-server/README.md`](../../gtm-mcp-server/README.md).
 
-## Cloud Agents (required for agents like this one)
+## Shared runners / team MCP
 
-Personal Settings MCP **does not** flow to Cloud Agents. Add the same GTM server as
-**Team MCP**:
+Personal MCP settings usually do not flow to shared runners. Add the same GTM server in team integrations:
 
-1. **Cursor Dashboard → Integrations & MCP → Team MCP Servers**
-2. Add URL: `https://mcp.gtmeditor.com/authorize` (same as your local GTM MCP)
-3. Optionally **Add to Team Marketplace** so teammates get it from Customize
-4. Start a **new** cloud agent run on this repo after saving
+1. Add MCP URL: `https://mcp.gtmeditor.com/authorize`
+2. Optionally publish it to your team marketplace so teammates can install it
+3. Start a fresh session after saving
 
-Until Team MCP is configured, cloud agents only have Render/Cloudflare/etc. — not GTM.
+Until that is configured, shared runners only have whatever other MCP servers you registered — not GTM.
 
-## What agents can do after connect
+## What you can do after connect
 
 - Import / update Synapse runtime companion tags in **GTM-TKW58K8**
 - Audit Bloomreach placeholder variables before Elevar retirement
 - Adjust Commerce Shield forwarder tag in **GTM-N45F3JCC** workspace 40
 - Create versions and publish (with MCP confirmation prompts)
-
-## Cloud Agents
-
-If the cloud run does not show `user-gtm`, add the same MCP URL in **Cursor Dashboard →
-Integrations & MCP** for your team, then start a new agent on this repo.
 
 ## Without MCP (fallback)
 

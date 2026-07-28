@@ -1,5 +1,5 @@
 {
-  "description": "GCW GTM container registry for Cursor MCP (user-gtm). Update when adding containers.",
+  "description": "GCW GTM container registry for user-gtm MCP. Update when adding containers.",
   "defaultAccountByPublicId": {
     "GTM-TKW58K8": "4131312986",
     "GTM-N45F3JCC": "6348717123"

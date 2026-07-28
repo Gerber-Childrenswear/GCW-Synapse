@@ -1,10 +1,8 @@
-# GTM MCP smoke test (paste into new Cloud Agent with user-gtm connected)
+# GTM MCP smoke test
 
-Run these in order after Team MCP is wired and a **new** cloud agent starts.
+Run these in order after `user-gtm` is connected.
 
 ## 0. Confirm MCP is live
-
-Ask the agent:
 
 > List my GTM accounts and containers. Confirm you see GTM-TKW58K8 and GTM-N45F3JCC.
 

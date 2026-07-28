@@ -20,7 +20,7 @@ Use existing:
 
 Import into a **Synapse Preview** workspace on account `4131312986` / container `9938197` before publishing.
 
-`user-gtm` MCP is **not** available in this Cloud Agent environment — import manually or from a local Cursor session with GTM MCP connected.
+If `user-gtm` MCP is not connected in your environment, import manually via the GTM UI or from an editor session with GTM MCP connected.
 
 ## Prove Synapse-only later
 

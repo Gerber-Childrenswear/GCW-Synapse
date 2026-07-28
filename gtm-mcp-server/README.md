@@ -1,7 +1,7 @@
-# GTM MCP — edit all GCW containers from Cursor
+# GTM MCP — edit all GCW containers
 
 This folder documents the **three GTM surfaces** GCW works against and how to wire
-Cursor's `user-gtm` MCP server so agents can list, edit, and publish tags.
+the hosted `user-gtm` MCP server so you can list, edit, and publish tags.
 
 ## Containers (see `containers.json`)
 
@@ -16,26 +16,27 @@ container. All three are reachable once `user-gtm` is connected.
 
 ## Quick setup (recommended — hosted MCP, full read/write)
 
-### Local IDE (you may already be done)
+### Local editor
 
-If **Cursor Settings → Tools & MCP** already lists GTM authenticated with the
-admin Google account, skip OAuth — use chat to edit containers directly.
+If your MCP client already lists GTM authenticated with the admin Google account,
+skip OAuth — edit containers directly.
 
-### Cloud Agents (separate step)
+Example client config: `gtm-mcp-server/mcp.client.example.json`.
 
-Personal MCP settings **do not** apply to Cloud Agents. Add Team MCP:
+### Shared / remote runners
 
-1. **Cursor Dashboard → Integrations & MCP → Team MCP Servers**
-2. URL: `https://mcp.gtmeditor.com/authorize`
-3. Re-run or start a new cloud agent on this repo
+Personal MCP settings often do not apply to shared runners. Register Team/shared MCP:
+
+1. URL: `https://mcp.gtmeditor.com/authorize`
+2. Re-run or start a new session after saving
 
 ### First-time local connect
 
-1. Open **Cursor → Settings → Tools & MCP** (or confirm project `.cursor/mcp.json`).
-2. Confirm **`user-gtm`** points to `https://mcp.gtmeditor.com/authorize`.
-3. Click **Connect** / **Authorize** with the Google account that has GTM
-   **Administrator** on accounts `4131312986` and `6348717123`.
-4. In chat: *"List my GTM containers"* — expect `GTM-TKW58K8` and `GTM-N45F3JCC`.
+1. Point your editor MCP client at `https://mcp.gtmeditor.com/authorize` (see `mcp.client.example.json`).
+2. Confirm the server name is **`user-gtm`**.
+3. Connect / authorize with the Google account that has GTM **Administrator** on
+   accounts `4131312986` and `6348717123`.
+4. Verify: *"List my GTM containers"* — expect `GTM-TKW58K8` and `GTM-N45F3JCC`.
 
 ## Edit policies (do not skip)
 
@@ -56,7 +57,7 @@ both accounts:
 3. Download JSON key; set `GTM_SA_KEY_PATH` in `gtm-mcp-server/.env` (copy from
    `.env.example`).
 4. Self-host [paolobietolini/gtm-mcp-server](https://github.com/paolobietolini/gtm-mcp-server)
-   and point `.cursor/mcp.json` at your instance with `SERVICE_ACCOUNT_API_KEY`.
+   and point your MCP client at that instance with `SERVICE_ACCOUNT_API_KEY`.
 
 **Never commit** `credentials.json`, service-account keys, or `gtm-config.json`.
 
@@ -72,7 +73,7 @@ npm run gtm:report:placeholders    # Bloomreach / Elevar placeholder checklist
 
 | Symptom | Fix |
 |---------|-----|
-| `user-gtm` not in tool list | Restart Cursor; confirm `.cursor/mcp.json` committed; Cloud: add team MCP |
+| `user-gtm` not in tool list | Restart the editor; confirm MCP client config; shared runners: add team MCP |
 | OAuth fails | Use Google account with GTM admin on both accounts |
 | Container missing | Grant account access in tagmanager.google.com |
-| Agent can't publish | Hosted MCP asks confirmation; approve publish in chat |
+| Publish blocked | Hosted MCP asks confirmation; approve publish in the session |
