@@ -6,6 +6,8 @@
 **Branch to start from:** `main`  
 **Goal:** Make Synapse the sole Shopify → GTM tracking pipe; turn Elevar off without losing destination tags.
 
+**Ready-to-send partner message:** [HANDOFF_MESSAGE.md](HANDOFF_MESSAGE.md)
+
 This brief is written so an external team can investigate, operate, and finish production cutover without prior context.
 
 > **Security:** Treat everything in §2 as confidential. Rotate admin / storefront credentials after handoff. Do not commit new secrets. Prefer Cloudflare **secrets** over `wrangler.toml` `[vars]`.
