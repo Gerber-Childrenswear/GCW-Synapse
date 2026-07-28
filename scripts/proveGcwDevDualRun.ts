@@ -61,37 +61,132 @@ function parseArgs(argv: string[]): Args {
   };
 }
 
-async function unlockViaBrowser(page: Page, origin: string, password: string): Promise<void> {
-  await page.goto(`${origin}/password`, { waitUntil: "domcontentloaded", timeout: 60_000 });
-  const passwordInput = page.locator('input[type="password"], input[name="password"]').first();
-  await passwordInput.waitFor({ state: "visible", timeout: 20_000 });
-  await passwordInput.fill(password);
-  await Promise.all([
-    page.waitForURL((url) => !url.pathname.includes("/password"), { timeout: 30_000 }).catch(() => null),
-    page.locator('button[type="submit"], input[type="submit"], button:has-text("Enter")').first().click()
-  ]);
-  if (page.url().includes("/password")) {
-    // Some themes stay on /password until a second navigation.
-    await page.goto(`${origin}/`, { waitUntil: "domcontentloaded", timeout: 60_000 });
+function parseSetCookie(header: string | null): string[] {
+  if (!header) return [];
+  return header
+    .split(/,(?=\s*[^;]+=)/)
+    .map((part) => part.split(";")[0]?.trim() ?? "")
+    .filter(Boolean);
+}
+
+async function unlockCookies(origin: string, password: string): Promise<Array<{ name: string; value: string }>> {
+  const jar: string[] = [];
+  const remember = (response: Response) => {
+    const anyHeaders = response.headers as Headers & { getSetCookie?: () => string[] };
+    const cookies =
+      typeof anyHeaders.getSetCookie === "function"
+        ? anyHeaders.getSetCookie().map((c) => c.split(";")[0] ?? "")
+        : parseSetCookie(response.headers.get("set-cookie"));
+    for (const cookie of cookies) {
+      if (!cookie) continue;
+      const key = cookie.split("=")[0];
+      const idx = jar.findIndex((row) => row.startsWith(`${key}=`));
+      if (idx >= 0) jar[idx] = cookie;
+      else jar.push(cookie);
+    }
+  };
+  const cookieHeader = () => jar.join("; ");
+
+  const passwordPage = await fetch(`${origin}/password`, {
+    headers: { Cookie: cookieHeader(), "User-Agent": "GCW-Synapse-Prove/1.0" },
+    redirect: "manual"
+  });
+  remember(passwordPage);
+
+  const unlock = await fetch(`${origin}/password`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Origin: origin,
+      Referer: `${origin}/password`,
+      Cookie: cookieHeader(),
+      "User-Agent": "GCW-Synapse-Prove/1.0"
+    },
+    body: new URLSearchParams({
+      form_type: "storefront_password",
+      utf8: "✓",
+      password
+    }),
+    redirect: "manual"
+  });
+  remember(unlock);
+
+  if (unlock.status !== 302 && unlock.status !== 200) {
+    throw new Error(`Unlock failed HTTP ${unlock.status}`);
   }
+  const location = unlock.headers.get("location") || "";
+  if (unlock.status === 302 && location.includes("/password")) {
+    throw new Error("Unlock rejected — password incorrect or captcha required");
+  }
+
+  const home = await fetch(`${origin}/`, {
+    headers: { Cookie: cookieHeader(), "User-Agent": "GCW-Synapse-Prove/1.0" },
+    redirect: "manual"
+  });
+  remember(home);
+  if (home.status === 302 && (home.headers.get("location") || "").includes("/password")) {
+    throw new Error("Still gated after unlock — cookie not accepted");
+  }
+
+  return jar.map((row) => {
+    const eq = row.indexOf("=");
+    return { name: row.slice(0, eq), value: row.slice(eq + 1) };
+  });
+}
+
+async function unlockViaBrowser(
+  page: Page,
+  origin: string,
+  password: string
+): Promise<void> {
+  const cookies = await unlockCookies(origin, password);
+  await page.context().addCookies(
+    cookies.map((c) => ({
+      name: c.name,
+      value: c.value,
+      url: origin
+    }))
+  );
+  await page.goto(`${origin}/`, { waitUntil: "domcontentloaded", timeout: 60_000 });
   if (page.url().includes("/password")) {
-    throw new Error("Storefront still password-gated after unlock attempt");
+    throw new Error("Storefront still password-gated after cookie unlock");
   }
 }
 
 async function resolveProductHandle(page: Page, origin: string, preferred?: string): Promise<string> {
   if (preferred) return preferred;
-  const json = await page.evaluate(async (shopOrigin) => {
-    const res = await fetch(`${shopOrigin}/products.json?limit=5`, {
-      credentials: "same-origin",
-      headers: { Accept: "application/json" }
-    });
-    if (!res.ok) throw new Error(`products.json HTTP ${res.status}`);
-    return (await res.json()) as { products?: Array<{ handle?: string }> };
-  }, origin);
-  const handle = json.products?.find((p) => p.handle)?.handle;
-  if (!handle) throw new Error("No products found on storefront");
-  return handle;
+
+  // products.json is authoritative — theme HTML often links prod-store handles that 404 on gcw-dev.
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      const json = await page.evaluate(async (shopOrigin) => {
+        const res = await fetch(`${shopOrigin}/products.json?limit=5`, {
+          credentials: "same-origin",
+          headers: { Accept: "application/json" }
+        });
+        if (!res.ok) throw new Error(`products.json HTTP ${res.status}`);
+        return (await res.json()) as { products?: Array<{ handle?: string }> };
+      }, origin);
+      const handle = json.products?.find((p) => p.handle)?.handle;
+      if (handle) return handle;
+    } catch {
+      if (attempt === 4) break;
+      await page.waitForTimeout(2500 * (attempt + 1));
+    }
+  }
+
+  const fromHtml = await page.evaluate(() => {
+    const hrefs = [...document.querySelectorAll<HTMLAnchorElement>("a[href*='/products/']")].map(
+      (a) => a.getAttribute("href") || ""
+    );
+    for (const href of hrefs) {
+      const match = href.match(/\/products\/([a-z0-9\-]+)/i);
+      if (match?.[1]) return match[1];
+    }
+    return "";
+  });
+  if (fromHtml) return fromHtml;
+  throw new Error("No products found on storefront");
 }
 
 function attachBeaconSniffer(page: Page, hits: BeaconHit[]): void {
@@ -143,27 +238,33 @@ async function driveFunnel(page: Page, origin: string, handle: string): Promise<
     await page.waitForTimeout(2000);
   } else {
     // Fallback Ajax ATC using product.js
-    await page.evaluate(async (productHandle) => {
-      const res = await fetch(`/products/${productHandle}.js`, {
-        credentials: "same-origin",
-        headers: { Accept: "application/json" }
-      });
-      if (!res.ok) throw new Error(`product.js ${res.status}`);
-      const product = (await res.json()) as { variants?: Array<{ id?: number }> };
-      const id = product.variants?.[0]?.id;
-      if (!id) throw new Error("no variant");
-      const atc = await fetch("/cart/add.js", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Accept: "application/json"
-        },
-        body: new URLSearchParams({ id: String(id), quantity: "1" })
-      });
-      if (!atc.ok) throw new Error(`cart/add.js ${atc.status}`);
-    }, handle);
-    await page.waitForTimeout(2000);
+    try {
+      await page.evaluate(async (productHandle) => {
+        const res = await fetch(`/products/${productHandle}.js`, {
+          credentials: "same-origin",
+          headers: { Accept: "application/json" }
+        });
+        if (!res.ok) throw new Error(`product.js ${res.status}`);
+        const product = (await res.json()) as { variants?: Array<{ id?: number }> };
+        const id = product.variants?.[0]?.id;
+        if (!id) throw new Error("no variant");
+        const atc = await fetch("/cart/add.js", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            Accept: "application/json"
+          },
+          body: new URLSearchParams({ id: String(id), quantity: "1" })
+        });
+        if (!atc.ok) throw new Error(`cart/add.js ${atc.status}`);
+      }, handle);
+      await page.waitForTimeout(2000);
+    } catch (error) {
+      console.log(
+        `WARN  ATC fallback failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   }
 
   await page.goto(`${origin}/cart`, { waitUntil: "networkidle", timeout: 60_000 });
@@ -178,13 +279,30 @@ async function driveFunnel(page: Page, origin: string, handle: string): Promise<
   }
 }
 
-async function getJson(url: string, token: string): Promise<Record<string, unknown>> {
-  const response = await fetch(url, { headers: { "X-Synapse-Token": token } });
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(`${url} HTTP ${response.status}: ${text.slice(0, 160)}`);
+async function getJson(url: string, token: string, attempts = 8): Promise<Record<string, unknown>> {
+  let lastError = "unknown";
+  for (let i = 0; i < attempts; i += 1) {
+    const response = await fetch(url, {
+      headers: {
+        "X-Synapse-Token": token,
+        Authorization: `Basic ${Buffer.from(`admin:${token}`).toString("base64")}`,
+        "User-Agent":
+          "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36 GCW-Synapse-Prove/1.0"
+      }
+    });
+    const text = await response.text();
+    if (response.ok) {
+      return JSON.parse(text) as Record<string, unknown>;
+    }
+    lastError = `${url} HTTP ${response.status}: ${text.slice(0, 160)}`;
+    // Deploy rollout can flap 401 across isolates until all have ADMIN_UI_PASSWORD.
+    if (response.status === 401 || response.status === 403) {
+      await new Promise((r) => setTimeout(r, 1500 + i * 500));
+      continue;
+    }
+    throw new Error(lastError);
   }
-  return JSON.parse(text) as Record<string, unknown>;
+  throw new Error(lastError);
 }
 
 function summarizeHits(hits: BeaconHit[]): {
