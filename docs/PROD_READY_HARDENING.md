@@ -4,13 +4,13 @@ P0 remediations for sole-tracker readiness (SEC-001 / SEC-002 / DATA-001).
 
 ## Before next Worker deploy
 
-Admin password is **no longer** in `wrangler.toml` and has **no code default**.
+**Lesson from #14:** shipping without `ADMIN_UI_PASSWORD` as a Worker **secret** (and with the var removed from `wrangler.toml`) locks `/ops/*`. If that happens, temporarily restore the var, redeploy, then `wrangler secret put ADMIN_UI_PASSWORD` and remove plaintext again.
 
-1. Set (or rotate) the secret on the live Worker **before** deploying this branch:
+1. Set (or rotate) the secret on the live Worker **before** removing the var:
 
 ```bash
 wrangler secret put ADMIN_UI_PASSWORD --config wrangler.toml
-# paste a new strong password (do not reuse the old repo default)
+# paste a strong password (can keep Sugi2.0 until rotated)
 ```
 
 2. Optionally set a dedicated session key:
@@ -37,11 +37,15 @@ curl -sS -H "X-Synapse-Token: $ADMIN_UI_PASSWORD" \
   https://gcw-synapse-super.gcwsynapse.workers.dev/launch/readiness | jq '.report.status,.report.checks'
 ```
 
-## Launch gate honesty
+## Real dual-run proof (gcw-dev)
 
-- Demo-seed and `simulate:dual-run:dev` mark beacons `synthetic: true` (and `demo_` / `sim_` event ids).
-- `/launch/readiness` counts **real** storefront beacons only.
-- `/compare/browser` still shows all traffic (including synthetic) for wiring smoke tests.
+```bash
+# Chromium once: npx playwright install chromium
+GCW_DEV_STOREFRONT_PASSWORD='…' ADMIN_UI_PASSWORD='…' npm run prove:dual-run:dev
+# optional: --rounds 8 --headed --product <handle>
+```
+
+This drives a real browser funnel and checks `/launch/readiness` (synthetic demo/sim traffic does not count).
 
 ## Cutover still needs humans
 

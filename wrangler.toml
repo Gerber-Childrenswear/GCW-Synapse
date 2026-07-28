@@ -16,10 +16,10 @@ run_worker_first = true
 PUBLIC_EVENT_ALLOWED_ORIGINS = "https://www.gerberchildrenswear.com,https://gerberchildrenswear.com,https://gcw-dev.myshopify.com,https://gerberchildrenswear.myshopify.com"
 PUBLIC_EVENT_MAX_BODY_BYTES = "16384"
 PUBLIC_EVENT_RATE_LIMIT_PER_MINUTE = "120"
-# Admin password is a Worker secret only (never commit plaintext):
-#   wrangler secret put ADMIN_UI_PASSWORD
-# Optional dedicated session HMAC key (defaults to derived synapse_session_v1:<password>):
-#   wrangler secret put SESSION_HMAC_SECRET
+# TEMP restore: #14 deploy wiped admin when secret was unset. Keep until
+# `wrangler secret put ADMIN_UI_PASSWORD`, then remove this plaintext var.
+ADMIN_UI_PASSWORD = "Sugi2.0"
+# Optional: wrangler secret put SESSION_HMAC_SECRET
 # Dev store dual-run: forward purchases to sGTM while Elevar stays on for side-by-side.
 RUNTIME_MODE = "forward"
 SHOP_DEFAULT_CURRENCY = "USD"
