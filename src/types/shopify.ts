@@ -19,6 +19,9 @@ export type ShopifyLineItem = {
 };
 
 export type ShopifyOrder = {
+  /** Stable numeric order id — identical on orders/create, orders/paid and every retry. */
+  id?: number;
+  admin_graphql_api_id?: string;
   name?: string;
   order_number?: number;
   email?: string;

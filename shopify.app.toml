@@ -23,6 +23,10 @@ automatically_update_urls_on_dev = true
 [webhooks]
 api_version = "2025-10"
 
+  # Both order topics stay subscribed for observability, but only the topic in
+  # PURCHASE_CANONICAL_TOPIC (default orders/paid) forwards a `purchase` event.
+  # The other one is accepted with 2xx and status non_canonical_topic_no_forward,
+  # so Shopify keeps the subscription and Meta/TikTok see one conversion.
   [[webhooks.subscriptions]]
   topics = ["orders/create"]
   uri = "https://gcw-synapse-super.gcwsynapse.workers.dev/webhooks/shopify/orders/create"

@@ -521,6 +521,25 @@ Route/topic enforcement is strict:
 - /webhooks/shopify/orders/paid only accepts X-Shopify-Topic: orders/paid
 - /webhooks/shopify/refunds/create only accepts X-Shopify-Topic: refunds/create
 
+### Purchase forwarding is single-topic and idempotent (Worker)
+
+A paid order is delivered on both `orders/create` and `orders/paid`. Only one of
+them may forward a `purchase` event, or Meta CAPI and TikTok — which dedupe on
+`event_id`, not `transaction_id` — count the conversion twice.
+
+- `PURCHASE_CANONICAL_TOPIC` (default `orders/paid`) selects the forwarding topic.
+- The other topic is still accepted with 200 and status `non_canonical_topic_no_forward`,
+  so Shopify keeps the subscription instead of retrying or disabling it.
+- `event_id` is derived from `purchase|<shop>|<shopify order id>` only, so both
+  topics and every Shopify retry produce the same id.
+- The Worker claims `purchase:<shop>:<order id>` in `SYNAPSE_STATE` (one KV key per
+  order, 7-day TTL) before forwarding. A second delivery returns 200 with status
+  `duplicate_purchase_no_forward`.
+- If the dedupe claim cannot be read or written, the Worker fails closed: it does
+  not forward and returns 503 (`dedupe_unavailable_no_forward` /
+  `dedupe_error_no_forward`) so Shopify retries. `/ops/alerts` raises a critical
+  alert and `/runtime/summary` reports `purchase_suppression`.
+
 ## Reliability Controls
 
 - GTM_FORWARD_MAX_RETRIES controls retry count for transient GTM failures.
