@@ -27,6 +27,11 @@ RUNTIME_MODE = "forward"
 # absent from this map resolves to shadow and gets no sGTM destination, so one
 # shared Worker cannot leak gcw-dev traffic into production tags.
 SHOP_RUNTIME_MODES = "gerberchildrenswear.myshopify.com=forward,gcw-dev.myshopify.com=shadow"
+# The only order topic allowed to forward a `purchase` event. Shopify delivers a
+# paid order on both orders/create and orders/paid; forwarding both double-counts
+# in Meta CAPI and TikTok, which dedupe on event_id. Switch to "orders/create"
+# only if this shop starts taking unpaid/pending/COD orders that must convert.
+PURCHASE_CANONICAL_TOPIC = "orders/paid"
 # Per-shop sGTM collect URLs. Contains a private Cloud Run URL, so configure as
 # a secret rather than committing it:
 # wrangler secret put GTM_SERVER_URL_BY_SHOP

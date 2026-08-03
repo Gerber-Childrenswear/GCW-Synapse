@@ -3,9 +3,19 @@
  * Uses Web Crypto so it runs on Cloudflare Workers.
  */
 
+import {
+  claimPurchaseForward,
+  isCanonicalPurchaseTopic,
+  releasePurchaseClaim,
+  resolveCanonicalPurchaseTopic,
+  resolvePurchaseIdentity
+} from "./purchaseIdentity";
 import { attachSessionMarketing, extractSessionMarketing } from "./sessionEnrichment";
 import { resolveShopGtmServerUrl, resolveShopRuntimeMode } from "./shopRuntime";
+import type { PurchaseClaim, PurchaseDedupeStore } from "./purchaseIdentity";
 import type { ShopifyOrder, SynapseEventPayload } from "../types/shopify";
+
+export { resolveEdgeEventId } from "./purchaseIdentity";
 
 export async function verifyShopifyWebhookHmacEdge(
   rawBody: ArrayBuffer,
@@ -90,26 +100,6 @@ export async function forwardPurchaseToGtmEdge(options: {
   return { ok: response.ok, status: response.status, body: body.slice(0, 500) };
 }
 
-/** Deterministic event id without Node crypto (Workers-safe). */
-export function resolveEdgeEventId(parts: Array<string | number | undefined>): string {
-  const source = parts
-    .map((part) => (part == null ? "" : String(part).trim()))
-    .filter((part) => part.length > 0)
-    .join("|");
-  let hash = 2166136261;
-  for (let i = 0; i < source.length; i += 1) {
-    hash ^= source.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  const hex = (hash >>> 0).toString(16).padStart(8, "0");
-  let hash2 = 5381;
-  for (let i = 0; i < source.length; i += 1) {
-    hash2 = (hash2 * 33) ^ source.charCodeAt(i);
-  }
-  const hex2 = (hash2 >>> 0).toString(16).padStart(8, "0");
-  return `${hex}${hex2}${hex}${hex2}`.slice(0, 32);
-}
-
 function toNumber(value: unknown): number {
   const parsed = Number.parseFloat(String(value ?? "0"));
   return Number.isFinite(parsed) ? parsed : 0;
@@ -172,6 +162,7 @@ export type EdgeWebhookEnv = {
   RUNTIME_MODE?: string;
   SHOP_RUNTIME_MODES?: string;
   SHOP_DEFAULT_CURRENCY?: string;
+  PURCHASE_CANONICAL_TOPIC?: string;
 };
 
 export type EdgeWebhookResult = {
@@ -181,8 +172,25 @@ export type EdgeWebhookResult = {
 };
 
 /**
- * Full edge purchase webhook path:
- * HMAC verify → session marketing attach → shadow or forward to sGTM.
+ * Statuses where the purchase was accepted but deliberately not forwarded.
+ * The Worker uses this to keep suppressed deliveries out of parity/forward
+ * counters instead of scoring them as real conversions.
+ */
+export const PURCHASE_NO_FORWARD_STATUSES = new Set([
+  "non_canonical_topic_no_forward",
+  "missing_order_identity_no_forward",
+  "duplicate_purchase_no_forward",
+  "dedupe_unavailable_no_forward",
+  "dedupe_error_no_forward"
+]);
+
+/**
+ * Full edge purchase webhook path: HMAC verify → stable order identity →
+ * canonical-topic gate → per-shop mode → forward-once claim → forward to sGTM.
+ *
+ * Everything after the identity step is a reason not to forward. Each reason has
+ * its own greppable status so a suppressed delivery is never confused with a
+ * conversion.
  */
 export async function processPurchaseWebhookEdge(options: {
   env: EdgeWebhookEnv;
@@ -191,6 +199,8 @@ export async function processPurchaseWebhookEdge(options: {
   shop: string;
   topic: string;
   webhookId?: string | null;
+  /** KV namespace used for per-order forward-once claims (SYNAPSE_STATE in the Worker). */
+  dedupeStore?: PurchaseDedupeStore | undefined;
 }): Promise<EdgeWebhookResult> {
   const secret = options.env.SHOPIFY_WEBHOOK_SECRET || options.env.SHOPIFY_API_SECRET || "";
   // Per-shop and default-deny: an unmapped shop never forwards, whatever the global mode says.
@@ -212,29 +222,57 @@ export async function processPurchaseWebhookEdge(options: {
     return { ok: false, status: 400, body: { ok: false, error: "invalid_json" } };
   }
 
-  const eventId =
-    options.webhookId ||
-    resolveEdgeEventId([options.shop, options.topic, order.order_number, order.name]);
+  // Identity comes from the order alone, so both topics and every Shopify retry
+  // of either topic produce one event_id and one dedupe key.
+  const identity = resolvePurchaseIdentity(options.shop, order);
+  const canonicalTopic = resolveCanonicalPurchaseTopic(options.env);
   const marketing = extractSessionMarketing(order);
-  const base = mapOrderToPurchaseEdge(order, eventId, options.env.SHOP_DEFAULT_CURRENCY || "USD");
+  const base = mapOrderToPurchaseEdge(
+    order,
+    identity.event_id,
+    options.env.SHOP_DEFAULT_CURRENCY || "USD"
+  );
   const payload = attachSessionMarketing(base, marketing);
+
+  const baseBody = {
+    runtime_mode: runtimeMode,
+    topic: options.topic,
+    canonical_topic: canonicalTopic,
+    shop: options.shop,
+    event_id: payload.event_id,
+    transaction_id: payload.transaction_id,
+    order_key: identity.order_key,
+    order_key_source: identity.order_key_source,
+    idempotency_key: identity.idempotency_key,
+    session_attached: Boolean(marketing.session_id || marketing.landing_site),
+    marketing
+  };
+
+  // The non-canonical topic still gets a 2xx so Shopify keeps the subscription
+  // alive and stops retrying, but it never reaches a destination.
+  if (!isCanonicalPurchaseTopic(options.topic, options.env)) {
+    return {
+      ok: true,
+      status: 200,
+      body: { ok: true, status: "non_canonical_topic_no_forward", ...baseBody, payload }
+    };
+  }
 
   if (runtimeMode === "shadow") {
     return {
       ok: true,
       status: 200,
-      body: {
-        ok: true,
-        status: "shadow_captured_no_forward",
-        runtime_mode: runtimeMode,
-        topic: options.topic,
-        shop: options.shop,
-        event_id: payload.event_id,
-        transaction_id: payload.transaction_id,
-        session_attached: Boolean(marketing.session_id || marketing.landing_site),
-        marketing,
-        payload
-      }
+      body: { ok: true, status: "shadow_captured_no_forward", ...baseBody, payload }
+    };
+  }
+
+  // Without a stable order key the dedupe key would collide across orders, so
+  // forwarding would either double-count or suppress unrelated purchases.
+  if (identity.order_key_source === "none") {
+    return {
+      ok: true,
+      status: 200,
+      body: { ok: true, status: "missing_order_identity_no_forward", ...baseBody, payload }
     };
   }
 
@@ -243,17 +281,41 @@ export async function processPurchaseWebhookEdge(options: {
     return {
       ok: true,
       status: 200,
+      body: { ok: true, status: "accepted_no_gtm_url", ...baseBody, payload }
+    };
+  }
+
+  const claim = await claimPurchaseForward({
+    store: options.dedupeStore,
+    key: identity.idempotency_key,
+    eventId: identity.event_id,
+    topic: options.topic,
+    webhookId: options.webhookId
+  });
+
+  if (claim.status === "duplicate") {
+    return {
+      ok: true,
+      status: 200,
       body: {
         ok: true,
-        status: "accepted_no_gtm_url",
-        runtime_mode: runtimeMode,
-        topic: options.topic,
-        shop: options.shop,
-        event_id: payload.event_id,
-        session_attached: Boolean(marketing.session_id || marketing.landing_site),
-        marketing,
+        status: "duplicate_purchase_no_forward",
+        ...baseBody,
+        dedupe: claim,
         payload
       }
+    };
+  }
+
+  // Fail closed: an unproven first delivery is exactly the double-count this
+  // path exists to prevent. 503 keeps the delivery retryable rather than lost.
+  if (claim.status !== "claimed") {
+    const status =
+      claim.status === "unavailable" ? "dedupe_unavailable_no_forward" : "dedupe_error_no_forward";
+    return {
+      ok: false,
+      status: 503,
+      body: { ok: false, status, ...baseBody, dedupe: claim, payload }
     };
   }
 
@@ -265,19 +327,23 @@ export async function processPurchaseWebhookEdge(options: {
       : {})
   });
 
+  // A failed forward must not burn the order's only claim, or the Shopify retry
+  // would be dropped as a duplicate and the conversion lost for the whole TTL.
+  const dedupe: PurchaseClaim & { released?: boolean; release_error?: string } = { ...claim };
+  if (!forward.ok) {
+    const release = await releasePurchaseClaim(options.dedupeStore, identity.idempotency_key);
+    dedupe.released = release.released;
+    if (release.error) dedupe.release_error = release.error;
+  }
+
   return {
     ok: forward.ok,
     status: forward.ok ? 200 : 502,
     body: {
       ok: forward.ok,
       status: forward.ok ? "forwarded" : "forward_failed",
-      runtime_mode: runtimeMode,
-      topic: options.topic,
-      shop: options.shop,
-      event_id: payload.event_id,
-      transaction_id: payload.transaction_id,
-      session_attached: Boolean(marketing.session_id || marketing.landing_site),
-      marketing,
+      ...baseBody,
+      dedupe,
       gtm_forward: { ok: forward.ok, status: forward.status, body: forward.body },
       payload
     }

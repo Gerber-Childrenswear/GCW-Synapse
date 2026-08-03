@@ -19,6 +19,7 @@ type CloudflareEnv = {
   RUNTIME_MODE?: string;
   SHOP_RUNTIME_MODES?: string;
   SHOP_DEFAULT_CURRENCY?: string;
+  PURCHASE_CANONICAL_TOPIC?: string;
   FACEBOOK_PIXEL_ID?: string;
   PINTEREST_ID?: string;
   GA4_MEASUREMENT_ID?: string;
@@ -83,7 +84,11 @@ import {
   resetBrowserEventsForTests
 } from "../src/services/browserEvents";
 import { resolveCurrencyCode } from "../src/services/currencyCode";
-import { processPurchaseWebhookEdge, verifyShopifyWebhookHmacEdge } from "../src/services/edgeWebhook";
+import {
+  PURCHASE_NO_FORWARD_STATUSES,
+  processPurchaseWebhookEdge,
+  verifyShopifyWebhookHmacEdge
+} from "../src/services/edgeWebhook";
 import { maybeAlertOnParity } from "../src/services/alerts";
 import { resolveGa4MeasurementId } from "../src/services/ga4Measurement";
 import { describeShopRuntime, parseShopScopedConfig } from "../src/services/shopRuntime";
@@ -122,6 +127,20 @@ const edgeBrowserEvents: Array<Record<string, unknown>> = [];
 let edgeEventsGenerated = 0;
 let edgeEventsSuppressed = 0;
 let edgeBrowserBeaconsAccepted = 0;
+/**
+ * Purchase deliveries that were accepted but deliberately not forwarded.
+ * Kept separate from edgeEventsSuppressed, which /runtime/summary reports as
+ * Commerce Shield bot sessions.
+ */
+const edgePurchaseSuppression = {
+  total: 0,
+  /** Same order already forwarded from another delivery of either topic. */
+  duplicates: 0,
+  /** Delivered on the topic that is not PURCHASE_CANONICAL_TOPIC. */
+  non_canonical_topic: 0,
+  /** Dedupe read/write failed, so the delivery was refused rather than risked. */
+  dedupe_errors: 0
+};
 
 const DUAL_RUN_KV_KEY = "dual-run:v1";
 
@@ -1426,6 +1445,10 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
     edgeEventsGenerated = 0;
     edgeEventsSuppressed = 0;
     edgeBrowserBeaconsAccepted = 0;
+    edgePurchaseSuppression.total = 0;
+    edgePurchaseSuppression.duplicates = 0;
+    edgePurchaseSuppression.non_canonical_topic = 0;
+    edgePurchaseSuppression.dedupe_errors = 0;
     await clearChannelEventsCache(env);
     return jsonResponse({
       ok: true,
@@ -1513,6 +1536,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
         forwarded: edgeEventsGenerated,
         suppressed: edgeEventsSuppressed
       },
+      purchase_suppression: edgePurchaseSuppression,
       commerce_shield: {
         human_sessions: edgeEventsGenerated,
         bot_sessions: edgeEventsSuppressed,
@@ -2061,7 +2085,8 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
       hmacHeader,
       shop,
       topic,
-      webhookId
+      webhookId,
+      dedupeStore: env.SYNAPSE_STATE
     });
 
     edgeWebhookLog.unshift({
@@ -2081,7 +2106,27 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
           ? result.body.event_id
           : undefined;
 
-    if (result.ok) {
+    // A suppressed delivery is not a conversion: keep it out of parity and the
+    // forwarded counters, and count it where operators can see it.
+    const purchaseStatus = typeof result.body.status === "string" ? result.body.status : "";
+    const suppressedPurchase = PURCHASE_NO_FORWARD_STATUSES.has(purchaseStatus);
+    if (suppressedPurchase) {
+      edgePurchaseSuppression.total += 1;
+      if (purchaseStatus === "duplicate_purchase_no_forward") {
+        edgePurchaseSuppression.duplicates += 1;
+      }
+      if (purchaseStatus === "non_canonical_topic_no_forward") {
+        edgePurchaseSuppression.non_canonical_topic += 1;
+      }
+      if (
+        purchaseStatus === "dedupe_error_no_forward" ||
+        purchaseStatus === "dedupe_unavailable_no_forward"
+      ) {
+        edgePurchaseSuppression.dedupe_errors += 1;
+      }
+    }
+
+    if (result.ok && !suppressedPurchase) {
       edgeShadowComparisons.unshift({
         type: "synapse_only",
         comparedAt: new Date().toISOString(),
@@ -2153,6 +2198,13 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
         message: `Browser dual-run mismatch ${browserParity.mismatch_rate_pct}% (paired=${browserParity.paired_events})`
       });
     }
+    // Dedupe failures refuse the delivery, so they are lost revenue until fixed.
+    if (edgePurchaseSuppression.dedupe_errors > 0) {
+      alerts.push({
+        severity: "critical",
+        message: `Purchase dedupe unavailable for ${edgePurchaseSuppression.dedupe_errors} delivery(s) — purchases refused with 503 and awaiting Shopify retry`
+      });
+    }
 
     void maybeAlertOnParity({
       config: getAlertConfig(env),
@@ -2178,6 +2230,7 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
       alerts,
       browser_parity: browserParity,
       purchase_parity: parity,
+      purchase_suppression: edgePurchaseSuppression,
       quick_actions: ["GET /runtime/summary", "GET /compare/parity", "GET /compare/browser", "GET /ops/dead-letter"]
     });
   }
@@ -2201,7 +2254,10 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
       metrics: {
         webhooks_received: edgeWebhookLog.length,
         runtime_events_forwarded: edgeEventsGenerated,
-        runtime_events_suppressed: edgeEventsSuppressed
+        runtime_events_suppressed: edgeEventsSuppressed,
+        purchase_suppressed: edgePurchaseSuppression.total,
+        purchase_duplicates_suppressed: edgePurchaseSuppression.duplicates,
+        purchase_dedupe_errors: edgePurchaseSuppression.dedupe_errors
       },
       next_actions: ["If parity is alert, review /compare/parity mismatches."]
     });
