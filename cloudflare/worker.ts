@@ -87,6 +87,7 @@ import { resolveCurrencyCode } from "../src/services/currencyCode";
 import {
   PURCHASE_NO_FORWARD_STATUSES,
   processPurchaseWebhookEdge,
+  resolveWebhookTopic,
   verifyShopifyWebhookHmacEdge
 } from "../src/services/edgeWebhook";
 import { maybeAlertOnParity } from "../src/services/alerts";
@@ -2039,17 +2040,28 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
 
   if (request.method === "POST" && url.pathname.startsWith("/webhooks/")) {
     const hmacHeader = request.headers.get("X-Shopify-Hmac-Sha256");
-    const shop = request.headers.get("X-Shopify-Shop-Domain") || "unknown-shop";
+    const shopHeader = request.headers.get("X-Shopify-Shop-Domain") || "";
+    const shop = SHOP_DOMAIN_PATTERN.test(shopHeader.trim())
+      ? shopHeader.trim().toLowerCase()
+      : "unknown-shop";
     const webhookId = request.headers.get("X-Shopify-Webhook-Id");
     const topicHeader = request.headers.get("X-Shopify-Topic") || "";
     const rawBody = await request.arrayBuffer();
-    const topic =
-      topicHeader ||
-      (url.pathname.includes("refund")
-        ? "refunds/create"
-        : url.pathname.includes("create")
-          ? "orders/create"
-          : "orders/paid");
+    // Fail closed: never default an ambiguous path to orders/paid (the
+    // canonical forward topic). Header/path mismatches are rejected too.
+    const topicResolution = resolveWebhookTopic(topicHeader, url.pathname);
+    if ("error" in topicResolution) {
+      return jsonResponse(
+        {
+          ok: false,
+          error: topicResolution.error,
+          header: topicResolution.header,
+          path_topic: topicResolution.path_topic
+        },
+        400
+      );
+    }
+    const topic = topicResolution.topic;
 
     // Refunds: HMAC verify (same as purchase), then accept + log.
     if (topic.toLowerCase().includes("refund")) {
@@ -2798,7 +2810,9 @@ export default {
         );
       }
 
-      const shop = typeof payload.shop === "string" ? payload.shop : "unknown-shop";
+      const shopRaw = typeof payload.shop === "string" ? payload.shop.trim() : "";
+      // Spoofed / missing shops must not attribute GO evidence to a real shop.
+      const shop = SHOP_DOMAIN_PATTERN.test(shopRaw) ? shopRaw.toLowerCase() : "unknown-shop";
       // Resolved at event time so operators can see which side of the dev/prod
       // split a beacon landed on. Beacons are captured only — they never forward.
       const shopRuntime = describeShopRuntime(shop, env);

@@ -32,8 +32,10 @@ SHOP_RUNTIME_MODES = "gerberchildrenswear.myshopify.com=forward,gcw-dev.myshopif
 # in Meta CAPI and TikTok, which dedupe on event_id. Switch to "orders/create"
 # only if this shop starts taking unpaid/pending/COD orders that must convert.
 PURCHASE_CANONICAL_TOPIC = "orders/paid"
-# Per-shop sGTM collect URLs. Contains a private Cloud Run URL, so configure as
-# a secret rather than committing it:
+# Per-shop sGTM collect URLs (REQUIRED for forwarding). The legacy global
+# GTM_SERVER_URL secret is intentionally NOT used as a fallback — a forward
+# shop with no BY_SHOP entry returns accepted_no_gtm_url. gcw-dev is also on a
+# hard denylist and can never forward even if mis-mapped here.
 # wrangler secret put GTM_SERVER_URL_BY_SHOP
 #   value: gerberchildrenswear.myshopify.com=https://<sgtm-host>/g/collect
 SHOP_DEFAULT_CURRENCY = "USD"

@@ -6,6 +6,7 @@
 import {
   claimPurchaseForward,
   isCanonicalPurchaseTopic,
+  isStrongPurchaseIdentity,
   releasePurchaseClaim,
   resolveCanonicalPurchaseTopic,
   resolvePurchaseIdentity
@@ -16,6 +17,39 @@ import type { PurchaseClaim, PurchaseDedupeStore } from "./purchaseIdentity";
 import type { ShopifyOrder, SynapseEventPayload } from "../types/shopify";
 
 export { resolveEdgeEventId } from "./purchaseIdentity";
+
+/**
+ * Resolve the Shopify topic from the header and URL path. Fail closed when
+ * neither is decisive, and reject header/path mismatches so a mis-registered
+ * subscription cannot be promoted to the canonical topic by path fallback.
+ */
+export function resolveWebhookTopic(
+  topicHeader: string | null | undefined,
+  pathname: string
+): { topic: string } | { error: "missing_topic" | "topic_path_mismatch"; header: string; path_topic: string } {
+  const header = (topicHeader ?? "").trim().toLowerCase();
+  const path = pathname.toLowerCase();
+
+  let pathTopic = "";
+  if (path.includes("refund")) {
+    pathTopic = "refunds/create";
+  } else if (path.includes("/orders/create") || /\/create\/?$/.test(path)) {
+    pathTopic = "orders/create";
+  } else if (path.includes("/orders/paid") || /\/paid\/?$/.test(path)) {
+    pathTopic = "orders/paid";
+  }
+
+  if (header && pathTopic && header !== pathTopic) {
+    return { error: "topic_path_mismatch", header, path_topic: pathTopic };
+  }
+  if (header) {
+    return { topic: header };
+  }
+  if (pathTopic) {
+    return { topic: pathTopic };
+  }
+  return { error: "missing_topic", header: "", path_topic: "" };
+}
 
 export async function verifyShopifyWebhookHmacEdge(
   rawBody: ArrayBuffer,
@@ -179,6 +213,7 @@ export type EdgeWebhookResult = {
 export const PURCHASE_NO_FORWARD_STATUSES = new Set([
   "non_canonical_topic_no_forward",
   "missing_order_identity_no_forward",
+  "weak_order_identity_no_forward",
   "duplicate_purchase_no_forward",
   "dedupe_unavailable_no_forward",
   "dedupe_error_no_forward"
@@ -273,6 +308,15 @@ export async function processPurchaseWebhookEdge(options: {
       ok: true,
       status: 200,
       body: { ok: true, status: "missing_order_identity_no_forward", ...baseBody, payload }
+    };
+  }
+
+  // order_number / name alone are not strong enough to authorize a forward.
+  if (!isStrongPurchaseIdentity(identity)) {
+    return {
+      ok: true,
+      status: 200,
+      body: { ok: true, status: "weak_order_identity_no_forward", ...baseBody, payload }
     };
   }
 

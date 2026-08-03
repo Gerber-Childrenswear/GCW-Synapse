@@ -5,6 +5,7 @@ import {
   mapOrderToPurchaseEdge,
   processPurchaseWebhookEdge,
   resolveEdgeEventId,
+  resolveWebhookTopic,
   verifyShopifyWebhookHmacEdge
 } from "./edgeWebhook";
 import type { PurchaseDedupeStore } from "./purchaseIdentity";
@@ -502,6 +503,82 @@ test("an order without any stable identity is accepted but never forwarded", asy
   assert.equal(result.ok, true);
   assert.equal(result.status, 200);
   assert.equal(result.body.status, "missing_order_identity_no_forward");
+  assert.deepEqual(requestedUrls, []);
+});
+
+test("an order with only order_number/name is accepted but never forwarded", async () => {
+  const { result, requestedUrls } = await deliverPurchase({
+    topic: "orders/paid",
+    webhookId: "wh_weak_identity",
+    dedupeStore: memoryDedupeStore(),
+    order: { id: undefined, name: "#4004", order_number: 4004 }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.status, "weak_order_identity_no_forward");
+  assert.equal(result.body.order_key_source, "order_number");
+  assert.deepEqual(requestedUrls, []);
+});
+
+test("resolveWebhookTopic fails closed on missing topic and rejects header/path mismatch", () => {
+  assert.deepEqual(resolveWebhookTopic("orders/paid", "/webhooks/shopify/orders/paid"), {
+    topic: "orders/paid"
+  });
+  assert.deepEqual(resolveWebhookTopic("", "/webhooks/shopify/orders/create"), {
+    topic: "orders/create"
+  });
+  assert.deepEqual(resolveWebhookTopic(null, "/webhooks/unknown"), {
+    error: "missing_topic",
+    header: "",
+    path_topic: ""
+  });
+  assert.deepEqual(resolveWebhookTopic("orders/paid", "/webhooks/shopify/orders/create"), {
+    error: "topic_path_mismatch",
+    header: "orders/paid",
+    path_topic: "orders/create"
+  });
+});
+
+test("hard denylist: misconfigured gcw-dev=forward still never reaches sGTM", async () => {
+  const { result, requestedUrls } = await deliverPurchase({
+    topic: "orders/paid",
+    webhookId: "wh_denylist",
+    dedupeStore: memoryDedupeStore(),
+    shop: DEV_SHOP,
+    env: {
+      SHOP_RUNTIME_MODES: `${DEV_SHOP}=forward,${PROD_SHOP}=forward`,
+      GTM_SERVER_URL_BY_SHOP: `${DEV_SHOP}=${PROD_COLLECT},${PROD_SHOP}=${PROD_COLLECT}`,
+      GTM_SERVER_URL: PROD_COLLECT
+    }
+  });
+
+  assert.equal(result.body.runtime_mode, "shadow");
+  assert.equal(result.body.status, "shadow_captured_no_forward");
+  assert.deepEqual(requestedUrls, []);
+});
+
+test("forward shop without GTM_SERVER_URL_BY_SHOP cannot inherit global collect URL", async () => {
+  const { rawBody, hmacHeader } = signedOrder();
+  const { result, requestedUrls } = await withFetchSpy(() =>
+    processPurchaseWebhookEdge({
+      env: {
+        SHOPIFY_WEBHOOK_SECRET: WEBHOOK_SECRET,
+        RUNTIME_MODE: "forward",
+        SHOP_RUNTIME_MODES: `${PROD_SHOP}=forward`,
+        GTM_SERVER_URL: PROD_COLLECT
+      },
+      rawBody,
+      hmacHeader,
+      shop: PROD_SHOP,
+      topic: "orders/paid",
+      webhookId: "wh_no_by_shop",
+      dedupeStore: memoryDedupeStore()
+    })
+  );
+
+  assert.equal(result.body.runtime_mode, "forward");
+  assert.equal(result.body.status, "accepted_no_gtm_url");
   assert.deepEqual(requestedUrls, []);
 });
 

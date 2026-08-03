@@ -87,6 +87,26 @@ export type PurchaseIdentity = {
   idempotency_key: string;
 };
 
+/**
+ * Only Shopify's numeric order id (and its GID form) is guaranteed identical
+ * across topics, retries, and the checkout pixel. `order_number` / `name` are
+ * kept for shadow capture and diagnostics but are too weak to authorize a
+ * forward — they can collide across shops if the shop header is spoofed, and
+ * they do not match the browser pixel's order id.
+ */
+export const STRONG_PURCHASE_IDENTITY_SOURCES = new Set<PurchaseOrderKeySource>([
+  "id",
+  "admin_graphql_api_id"
+]);
+
+export function isStrongPurchaseIdentity(identity: PurchaseIdentity): boolean {
+  return (
+    identity.order_key_source !== "none" &&
+    identity.order_key.length > 0 &&
+    STRONG_PURCHASE_IDENTITY_SOURCES.has(identity.order_key_source)
+  );
+}
+
 /** `gid://shopify/Order/123` → `123`, so it agrees with the numeric `order.id`. */
 function stripOrderGid(value: string): string {
   const tail = value.split("/").pop();
@@ -155,6 +175,8 @@ type PurchaseClaimRecord = {
   topic?: string;
   webhook_id?: string;
   claimed_at?: string;
+  /** Random nonce written with the claim; used to detect lost put races. */
+  claim_nonce?: string;
 };
 
 function describeError(error: unknown): string {
@@ -170,11 +192,26 @@ function readClaimRecord(raw: string): PurchaseClaimRecord {
   }
 }
 
+function newClaimNonce(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  let hex = "";
+  for (const b of bytes) hex += b.toString(16).padStart(2, "0");
+  return hex;
+}
+
 /**
  * Claim the right to forward one order exactly once. Callers must treat
  * `unavailable` and `error` as "do not forward": we cannot prove this is the
  * first delivery, and a silently forwarded unknown is exactly the double-count
  * this module exists to prevent.
+ *
+ * KV has no compare-and-swap, so two near-simultaneous claims can both observe
+ * a miss and both put. After writing we re-read and require our `claim_nonce`
+ * to still be the stored value — the loser of the last-write race treats the
+ * delivery as a duplicate and does not forward. This is not a Durable Object
+ * guarantee across every colo lag, but it closes the common dual-put race that
+ * a bare get-then-put leaves open.
  */
 export async function claimPurchaseForward(options: {
   store?: PurchaseDedupeStore | undefined;
@@ -207,11 +244,13 @@ export async function claimPurchaseForward(options: {
   }
 
   const claimedAt = new Date().toISOString();
+  const claimNonce = newClaimNonce();
   const record: PurchaseClaimRecord = {
     event_id: options.eventId,
     topic: options.topic,
     ...(options.webhookId ? { webhook_id: options.webhookId } : {}),
-    claimed_at: claimedAt
+    claimed_at: claimedAt,
+    claim_nonce: claimNonce
   };
 
   try {
@@ -220,6 +259,31 @@ export async function claimPurchaseForward(options: {
     });
   } catch (error) {
     return { status: "error", key: options.key, error: describeError(error) };
+  }
+
+  // Confirm we still own the key after the put. If another delivery won the
+  // last-write race, treat this as a duplicate rather than forward twice.
+  let confirmed: string | null = null;
+  try {
+    confirmed = await store.get(options.key);
+  } catch (error) {
+    // Cannot prove ownership — fail closed and release our put if possible.
+    try {
+      await store.delete(options.key);
+    } catch {
+      // best-effort
+    }
+    return { status: "error", key: options.key, error: describeError(error) };
+  }
+
+  const confirmedRecord = confirmed ? readClaimRecord(confirmed) : {};
+  if (!confirmed || confirmedRecord.claim_nonce !== claimNonce) {
+    return {
+      status: "duplicate",
+      key: options.key,
+      ...(confirmedRecord.claimed_at ? { first_seen_at: confirmedRecord.claimed_at } : {}),
+      ...(confirmedRecord.topic ? { first_seen_topic: confirmedRecord.topic } : {})
+    };
   }
 
   return { status: "claimed", key: options.key, claimed_at: claimedAt };

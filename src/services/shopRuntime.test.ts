@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   describeShopRuntime,
+  isAllowedGtmDestination,
+  isNeverForwardShop,
   parseShopScopedConfig,
   resolveShopGtmServerUrl,
   resolveShopRuntimeMode
@@ -92,11 +94,55 @@ test("describeShopRuntime reports the resolved mode and whether a destination ex
   assert.deepEqual(describeShopRuntime("gcw-dev.myshopify.com", env), {
     shop: "gcw-dev.myshopify.com",
     runtime_mode: "shadow",
-    destination_configured: false
+    destination_configured: false,
+    never_forward: true,
+    valid_shop_domain: true
   });
   assert.deepEqual(describeShopRuntime(undefined, env), {
     shop: "unknown-shop",
     runtime_mode: "shadow",
-    destination_configured: false
+    destination_configured: false,
+    never_forward: false,
+    valid_shop_domain: false
   });
+});
+
+test("hard denylist: gcw-dev never forwards even if SHOP_RUNTIME_MODES says forward", () => {
+  const env = {
+    SHOP_RUNTIME_MODES: "gcw-dev.myshopify.com=forward,gerberchildrenswear.myshopify.com=forward",
+    GTM_SERVER_URL_BY_SHOP: `gcw-dev.myshopify.com=${PROD_COLLECT},${DEST_BY_SHOP}`,
+    GTM_SERVER_URL: PROD_COLLECT,
+    RUNTIME_MODE: "forward"
+  };
+
+  assert.equal(isNeverForwardShop("gcw-dev.myshopify.com"), true);
+  assert.equal(resolveShopRuntimeMode("gcw-dev.myshopify.com", env), "shadow");
+  assert.equal(resolveShopGtmServerUrl("gcw-dev.myshopify.com", env), undefined);
+});
+
+test("forward shops cannot inherit the legacy global GTM_SERVER_URL", () => {
+  const env = {
+    SHOP_RUNTIME_MODES: SHOP_MODES,
+    GTM_SERVER_URL: PROD_COLLECT,
+    RUNTIME_MODE: "forward"
+  };
+
+  assert.equal(resolveShopRuntimeMode("gerberchildrenswear.myshopify.com", env), "forward");
+  assert.equal(resolveShopGtmServerUrl("gerberchildrenswear.myshopify.com", env), undefined);
+});
+
+test("invalid shop domains and non-https destinations never forward", () => {
+  const env = {
+    SHOP_RUNTIME_MODES: "not-a-shop=forward,evil.com=forward,gerberchildrenswear.myshopify.com=forward",
+    GTM_SERVER_URL_BY_SHOP:
+      "gerberchildrenswear.myshopify.com=http://insecure.example/g/collect,not-a-shop=https://x",
+    RUNTIME_MODE: "forward"
+  };
+
+  assert.equal(resolveShopRuntimeMode("not-a-shop", env), "shadow");
+  assert.equal(resolveShopRuntimeMode("evil.com", env), "shadow");
+  assert.equal(resolveShopGtmServerUrl("gerberchildrenswear.myshopify.com", env), undefined);
+  assert.equal(isAllowedGtmDestination("https://sgtm.example.com/g/collect"), true);
+  assert.equal(isAllowedGtmDestination("http://sgtm.example.com/g/collect"), false);
+  assert.equal(isAllowedGtmDestination("javascript:alert(1)"), false);
 });
