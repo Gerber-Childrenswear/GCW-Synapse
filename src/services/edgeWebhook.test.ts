@@ -112,3 +112,129 @@ test("processPurchaseWebhookEdge fail-closed in shadow_compare without webhook s
   assert.equal(result.status, 401);
   assert.equal(result.body.error, "webhook_secret_not_configured");
 });
+
+const WEBHOOK_SECRET = "whsec-isolation";
+const PROD_SHOP = "gerberchildrenswear.myshopify.com";
+const DEV_SHOP = "gcw-dev.myshopify.com";
+const PROD_COLLECT = "https://sgtm.example.com/g/collect";
+
+const ISOLATION_ENV = {
+  SHOPIFY_WEBHOOK_SECRET: WEBHOOK_SECRET,
+  RUNTIME_MODE: "forward",
+  SHOP_RUNTIME_MODES: `${PROD_SHOP}=forward,${DEV_SHOP}=shadow`,
+  GTM_SERVER_URL_BY_SHOP: `${PROD_SHOP}=${PROD_COLLECT}`,
+  GTM_SERVER_URL: PROD_COLLECT
+};
+
+function signedOrder(): { rawBody: ArrayBuffer; hmacHeader: string } {
+  const raw = new TextEncoder().encode(
+    JSON.stringify({
+      name: "#4004",
+      order_number: 4004,
+      currency: "USD",
+      total_price: "25.00",
+      line_items: [{ title: "Bib", price: "25.00", quantity: 1, sku: "BIB" }]
+    })
+  );
+  return {
+    rawBody: raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength),
+    hmacHeader: createHmac("sha256", WEBHOOK_SECRET).update(Buffer.from(raw)).digest("base64")
+  };
+}
+
+/** Capture forward attempts so a test can assert nothing left the Worker. */
+async function withFetchSpy<T>(
+  run: () => Promise<T>
+): Promise<{ result: T; requestedUrls: string[] }> {
+  const originalFetch = globalThis.fetch;
+  const requestedUrls: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    requestedUrls.push(typeof input === "string" ? input : String(input));
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  }) as typeof globalThis.fetch;
+
+  try {
+    return { result: await run(), requestedUrls };
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+test("per-shop isolation: known production shop forwards to its own sGTM destination", async () => {
+  const { rawBody, hmacHeader } = signedOrder();
+  const { result, requestedUrls } = await withFetchSpy(() =>
+    processPurchaseWebhookEdge({
+      env: ISOLATION_ENV,
+      rawBody,
+      hmacHeader,
+      shop: PROD_SHOP,
+      topic: "orders/paid",
+      webhookId: "wh_prod"
+    })
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.body.status, "forwarded");
+  assert.equal(result.body.runtime_mode, "forward");
+  assert.deepEqual(requestedUrls, [PROD_COLLECT]);
+});
+
+test("per-shop isolation: known dev shop shadows and never forwards", async () => {
+  const { rawBody, hmacHeader } = signedOrder();
+  const { result, requestedUrls } = await withFetchSpy(() =>
+    processPurchaseWebhookEdge({
+      env: ISOLATION_ENV,
+      rawBody,
+      hmacHeader,
+      shop: DEV_SHOP,
+      topic: "orders/paid",
+      webhookId: "wh_dev"
+    })
+  );
+
+  assert.equal(result.body.status, "shadow_captured_no_forward");
+  assert.equal(result.body.runtime_mode, "shadow");
+  assert.deepEqual(requestedUrls, []);
+});
+
+test("per-shop isolation: missing or unknown shop never forwards", async () => {
+  for (const shop of ["unknown-shop", "attacker.myshopify.com"]) {
+    const { rawBody, hmacHeader } = signedOrder();
+    const { result, requestedUrls } = await withFetchSpy(() =>
+      processPurchaseWebhookEdge({
+        env: ISOLATION_ENV,
+        rawBody,
+        hmacHeader,
+        shop,
+        topic: "orders/paid",
+        webhookId: `wh_${shop}`
+      })
+    );
+
+    assert.equal(result.body.status, "shadow_captured_no_forward", shop);
+    assert.equal(result.body.runtime_mode, "shadow", shop);
+    assert.deepEqual(requestedUrls, [], shop);
+  }
+});
+
+test("per-shop isolation: unmapped shop never forwards even with a global collect URL set", async () => {
+  const { rawBody, hmacHeader } = signedOrder();
+  const { result, requestedUrls } = await withFetchSpy(() =>
+    processPurchaseWebhookEdge({
+      env: {
+        SHOPIFY_WEBHOOK_SECRET: WEBHOOK_SECRET,
+        RUNTIME_MODE: "forward",
+        GTM_SERVER_URL: PROD_COLLECT
+      },
+      rawBody,
+      hmacHeader,
+      shop: PROD_SHOP,
+      topic: "orders/paid",
+      webhookId: "wh_unmapped"
+    })
+  );
+
+  assert.equal(result.body.status, "shadow_captured_no_forward");
+  assert.equal(result.body.runtime_mode, "shadow");
+  assert.deepEqual(requestedUrls, []);
+});

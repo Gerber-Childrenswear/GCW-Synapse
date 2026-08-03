@@ -4,6 +4,7 @@
  */
 
 import { attachSessionMarketing, extractSessionMarketing } from "./sessionEnrichment";
+import { resolveShopGtmServerUrl, resolveShopRuntimeMode } from "./shopRuntime";
 import type { ShopifyOrder, SynapseEventPayload } from "../types/shopify";
 
 export async function verifyShopifyWebhookHmacEdge(
@@ -166,8 +167,10 @@ export type EdgeWebhookEnv = {
   SHOPIFY_WEBHOOK_SECRET?: string;
   SHOPIFY_API_SECRET?: string;
   GTM_SERVER_URL?: string;
+  GTM_SERVER_URL_BY_SHOP?: string;
   GTM_FORWARD_SHARED_SECRET?: string;
   RUNTIME_MODE?: string;
+  SHOP_RUNTIME_MODES?: string;
   SHOP_DEFAULT_CURRENCY?: string;
 };
 
@@ -190,7 +193,8 @@ export async function processPurchaseWebhookEdge(options: {
   webhookId?: string | null;
 }): Promise<EdgeWebhookResult> {
   const secret = options.env.SHOPIFY_WEBHOOK_SECRET || options.env.SHOPIFY_API_SECRET || "";
-  const runtimeMode = (options.env.RUNTIME_MODE || "shadow_compare").toLowerCase();
+  // Per-shop and default-deny: an unmapped shop never forwards, whatever the global mode says.
+  const runtimeMode = resolveShopRuntimeMode(options.shop, options.env);
   // Always fail closed — unsigned webhooks must never be accepted in any mode.
   if (!secret) {
     return { ok: false, status: 401, body: { ok: false, error: "webhook_secret_not_configured" } };
@@ -215,13 +219,14 @@ export async function processPurchaseWebhookEdge(options: {
   const base = mapOrderToPurchaseEdge(order, eventId, options.env.SHOP_DEFAULT_CURRENCY || "USD");
   const payload = attachSessionMarketing(base, marketing);
 
-  if (runtimeMode === "shadow_compare" || runtimeMode === "shadow") {
+  if (runtimeMode === "shadow") {
     return {
       ok: true,
       status: 200,
       body: {
         ok: true,
         status: "shadow_captured_no_forward",
+        runtime_mode: runtimeMode,
         topic: options.topic,
         shop: options.shop,
         event_id: payload.event_id,
@@ -233,7 +238,7 @@ export async function processPurchaseWebhookEdge(options: {
     };
   }
 
-  const gtmUrl = options.env.GTM_SERVER_URL;
+  const gtmUrl = resolveShopGtmServerUrl(options.shop, options.env);
   if (!gtmUrl) {
     return {
       ok: true,
@@ -241,6 +246,7 @@ export async function processPurchaseWebhookEdge(options: {
       body: {
         ok: true,
         status: "accepted_no_gtm_url",
+        runtime_mode: runtimeMode,
         topic: options.topic,
         shop: options.shop,
         event_id: payload.event_id,
@@ -265,6 +271,7 @@ export async function processPurchaseWebhookEdge(options: {
     body: {
       ok: forward.ok,
       status: forward.ok ? "forwarded" : "forward_failed",
+      runtime_mode: runtimeMode,
       topic: options.topic,
       shop: options.shop,
       event_id: payload.event_id,
