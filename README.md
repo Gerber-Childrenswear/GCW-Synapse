@@ -561,6 +561,22 @@ Use this mode to run Synapse and Elevar in parallel for a few days without sendi
 - In this mode, Shopify webhooks are verified and mapped, but Synapse does not forward events to GTM server.
 - Synapse captures local comparable records only.
 
+### Per-shop runtime isolation (Cloudflare Worker)
+
+One Worker serves both `gcw-dev.myshopify.com` and the production storefront, so
+forwarding is resolved per shop at event time, default-deny:
+
+- `SHOP_RUNTIME_MODES` — e.g. `gerberchildrenswear.myshopify.com=forward,gcw-dev.myshopify.com=shadow`.
+  Only an exact, explicit `forward` entry enables forwarding.
+- `GTM_SERVER_URL_BY_SHOP` — e.g. `gerberchildrenswear.myshopify.com=<sgtm collect url>`.
+  Configure as a secret. A shop in `shadow`, or absent from `SHOP_RUNTIME_MODES`,
+  gets no destination at all and cannot inherit the legacy global `GTM_SERVER_URL`.
+- `RUNTIME_MODE` is now a global kill switch only: `shadow_compare` forces every
+  shop to shadow, but it can no longer promote an unmapped shop to `forward`.
+
+A shop that is missing, malformed, unknown or unmapped always resolves to
+`shadow`. `GET /ops/connection` reports the resolved mode per configured shop.
+
 Comparison flow:
 
 1. Synapse captures your mapped payload automatically from Shopify webhooks.

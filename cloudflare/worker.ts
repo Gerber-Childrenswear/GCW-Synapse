@@ -14,8 +14,10 @@ type CloudflareEnv = {
   SHOPIFY_APP_URL?: string;
   SHOPIFY_WEBHOOK_SECRET?: string;
   GTM_SERVER_URL?: string;
+  GTM_SERVER_URL_BY_SHOP?: string;
   GTM_FORWARD_SHARED_SECRET?: string;
   RUNTIME_MODE?: string;
+  SHOP_RUNTIME_MODES?: string;
   SHOP_DEFAULT_CURRENCY?: string;
   FACEBOOK_PIXEL_ID?: string;
   PINTEREST_ID?: string;
@@ -84,6 +86,7 @@ import { resolveCurrencyCode } from "../src/services/currencyCode";
 import { processPurchaseWebhookEdge, verifyShopifyWebhookHmacEdge } from "../src/services/edgeWebhook";
 import { maybeAlertOnParity } from "../src/services/alerts";
 import { resolveGa4MeasurementId } from "../src/services/ga4Measurement";
+import { describeShopRuntime, parseShopScopedConfig } from "../src/services/shopRuntime";
 import {
   clearAdminSessionCookie,
   isAdminAuthorized,
@@ -1374,6 +1377,19 @@ async function handleNativeApi(request: Request, env: CloudflareEnv): Promise<Re
         detail: env.GTM_SERVER_URL
           ? `configured (${env.RUNTIME_MODE || "shadow_compare"})`
           : "optional — set GTM_SERVER_URL when flipping RUNTIME_MODE=forward"
+      },
+      {
+        id: "shop_runtime_isolation",
+        label: "Per-shop runtime isolation (default-deny)",
+        ok: Boolean((env.SHOP_RUNTIME_MODES || "").trim()),
+        detail: (env.SHOP_RUNTIME_MODES || "").trim()
+          ? Object.keys(parseShopScopedConfig(env.SHOP_RUNTIME_MODES))
+              .map((shop) => {
+                const resolved = describeShopRuntime(shop, env);
+                return `${resolved.shop}=${resolved.runtime_mode}${resolved.destination_configured ? "+dest" : ""}`;
+              })
+              .join(" · ")
+          : "missing — set SHOP_RUNTIME_MODES; every shop currently resolves to shadow (no forward)"
       },
       {
         id: "elevar_ids",
@@ -2727,6 +2743,9 @@ export default {
       }
 
       const shop = typeof payload.shop === "string" ? payload.shop : "unknown-shop";
+      // Resolved at event time so operators can see which side of the dev/prod
+      // split a beacon landed on. Beacons are captured only — they never forward.
+      const shopRuntime = describeShopRuntime(shop, env);
       const eventId = typeof payload.event_id === "string" ? payload.event_id : undefined;
       const marketing =
         payload.marketing && typeof payload.marketing === "object"
@@ -2837,6 +2856,7 @@ export default {
               key: ingested.key,
               event: eventName,
               source: browserSource,
+              runtime_mode: shopRuntime.runtime_mode,
               ingested: true
             },
             202

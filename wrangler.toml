@@ -20,8 +20,17 @@ PUBLIC_EVENT_RATE_LIMIT_PER_MINUTE = "120"
 # `wrangler secret put ADMIN_UI_PASSWORD`, then remove this plaintext var.
 ADMIN_UI_PASSWORD = "Sugi2.0"
 # Optional: wrangler secret put SESSION_HMAC_SECRET
-# Dev store dual-run: forward purchases to sGTM while Elevar stays on for side-by-side.
+# Global kill switch only. Set to "shadow_compare" to stop ALL forwarding.
+# It can no longer promote a shop to forward — that is SHOP_RUNTIME_MODES' job.
 RUNTIME_MODE = "forward"
+# Per-shop runtime isolation (default-deny). A shop that is missing, unknown or
+# absent from this map resolves to shadow and gets no sGTM destination, so one
+# shared Worker cannot leak gcw-dev traffic into production tags.
+SHOP_RUNTIME_MODES = "gerberchildrenswear.myshopify.com=forward,gcw-dev.myshopify.com=shadow"
+# Per-shop sGTM collect URLs. Contains a private Cloud Run URL, so configure as
+# a secret rather than committing it:
+# wrangler secret put GTM_SERVER_URL_BY_SHOP
+#   value: gerberchildrenswear.myshopify.com=https://<sgtm-host>/g/collect
 SHOP_DEFAULT_CURRENCY = "USD"
 # Stolen from Elevar GTM-TKW58K8 constants (public pixel / measurement IDs — not API secrets)
 FACEBOOK_PIXEL_ID = "823006016363458"
